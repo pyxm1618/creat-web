@@ -1,0 +1,38 @@
+name: Bootstrap retained subject migration
+
+on:
+  push:
+    branches: ["feat/authentication"]
+    paths:
+      - src/platform/database/account-subject-schema.ts
+      - src/platform/database/schema.ts
+      - .github/workflows/bootstrap-account-subject-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/authentication
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run db:generate
+      - name: Commit generated migration
+        run: |
+          if git diff --quiet -- drizzle; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add drizzle
+          git commit -m "chore: generate retained subject migration"
+          git push origin HEAD:feat/authentication
