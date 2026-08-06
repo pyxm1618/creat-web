@@ -14,6 +14,7 @@ export type RuntimeEnv = {
   readonly emailTransport: EmailTransport;
   readonly emailFrom: string | undefined;
   readonly supportEmail: string | undefined;
+  readonly testEmailDirectory: string | undefined;
   readonly googleClientId: string | undefined;
   readonly googleClientSecret: string | undefined;
   readonly resendApiKey: string | undefined;
@@ -29,6 +30,7 @@ const baseSchema = z.object({
   EMAIL_TRANSPORT: z.enum(["test", "resend"]).optional(),
   EMAIL_FROM: z.string().optional(),
   SUPPORT_EMAIL: z.email().optional(),
+  TEST_EMAIL_DIR: z.string().min(1).optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
@@ -101,6 +103,7 @@ export function loadRuntimeEnv(
   let resendApiKey: string | undefined;
   let emailFrom: string | undefined;
   let supportEmail: string | undefined;
+  let testEmailDirectory: string | undefined;
   let waffoPrivateKey: string | undefined;
   let ga4MeasurementId: string | undefined;
 
@@ -123,6 +126,7 @@ export function loadRuntimeEnv(
   } else if (emailTransport === "test") {
     emailFrom = parsed.EMAIL_FROM ?? "test@localhost.invalid";
     supportEmail = parsed.SUPPORT_EMAIL ?? "support@localhost.invalid";
+    testEmailDirectory = parsed.TEST_EMAIL_DIR ?? "/tmp/creat-web-test-emails";
   }
 
   if (features.commerce.enabled) {
@@ -141,6 +145,7 @@ export function loadRuntimeEnv(
     emailTransport,
     emailFrom,
     supportEmail,
+    testEmailDirectory,
     googleClientId,
     googleClientSecret,
     resendApiKey,
