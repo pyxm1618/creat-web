@@ -54,6 +54,8 @@ jobs:
         run: bun run typecheck
       - name: Lint and architecture boundaries
         run: bun run verify:architecture
+      - name: Repository secret scan
+        run: bun run verify:secrets
       - name: Optional-provider build matrix
         run: bun run test:build-matrix
       - name: Release verification
