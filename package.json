@@ -16,9 +16,12 @@
     "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests",
     "test:contract": "vitest run --config vitest.contract.config.ts --passWithNoTests",
     "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun scripts/db-migrate.ts",
+    "db:verify": "bun scripts/verify-migrations.ts",
     "verify:architecture": "eslint src tests scripts",
     "verify:release": "bun scripts/verify-release.ts",
-    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run build:test && bun run verify:architecture && bun run verify:release"
+    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run build:test && bun run verify:architecture && bun run verify:release"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
