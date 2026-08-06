@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { accountSubjects, type AccountSubjectRow } from "@/platform/database/schema";
@@ -18,7 +18,7 @@ function mapSubject(row: AccountSubjectRow): AccountSubject {
   };
 }
 
-async function requireSubject(rows: AccountSubjectRow[], message: string): Promise<AccountSubject> {
+function requireSubject(rows: AccountSubjectRow[], message: string): AccountSubject {
   const row = rows[0];
   if (!row) throw new Error(message);
   return mapSubject(row);
@@ -84,7 +84,20 @@ export function createPostgresAccountSubjectRepository(
           ),
         )
         .returning();
-      return requireSubject(rows, "account subject identity detach failed");
+
+      if (rows[0]) return mapSubject(rows[0]);
+      const detached = await database
+        .select()
+        .from(accountSubjects)
+        .where(
+          and(
+            eq(accountSubjects.id, subjectId),
+            isNull(accountSubjects.authUserId),
+            eq(accountSubjects.status, "deletion_pending"),
+          ),
+        )
+        .limit(1);
+      return requireSubject(detached, "account subject identity detach failed");
     },
 
     async completeDeletion(subjectId) {
