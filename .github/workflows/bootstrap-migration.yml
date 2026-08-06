@@ -1,0 +1,40 @@
+name: Bootstrap migration
+
+on:
+  push:
+    branches: ["feat/foundation"]
+    paths:
+      - src/platform/database/schema.ts
+      - drizzle.config.ts
+      - package.json
+      - bun.lock
+      - .github/workflows/bootstrap-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/foundation
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run db:generate
+      - name: Commit generated migration
+        run: |
+          if git diff --quiet -- drizzle && git ls-files drizzle | grep -q .; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add drizzle
+          git commit -m "chore: generate foundation migration"
+          git push origin HEAD:feat/foundation
