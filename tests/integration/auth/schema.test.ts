@@ -33,6 +33,6 @@ it("installs canonical Better Auth and durable rate-limit tables", async () => {
   const names = rows.map((row) => row.table_name);
 
   expect(names).toEqual(
-    expect.arrayContaining(["user", "session", "account", "verification", "rateLimit"]),
+    expect.arrayContaining(["user", "session", "account", "verification", "rate_limit"]),
   );
 });
