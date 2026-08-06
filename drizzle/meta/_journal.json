@@ -8,6 +8,13 @@
       "when": 1786028125663,
       "tag": "0000_swift_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786031685873,
+      "tag": "0001_funny_makkari",
+      "breakpoints": true
     }
   ]
 }

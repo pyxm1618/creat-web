@@ -8,3 +8,5 @@ export const platformMeta = pgTable("platform_meta", {
 
 export type PlatformMeta = typeof platformMeta.$inferSelect;
 export type NewPlatformMeta = typeof platformMeta.$inferInsert;
+
+export * from "./auth-schema";
