@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ProductConfig } from "./types";
 
 export type AppEnvironment = "local" | "test" | "staging" | "production";
+export type EnvironmentSource = Readonly<Record<string, string | undefined>>;
 
 export type RuntimeEnv = {
   readonly appEnv: AppEnvironment;
@@ -38,7 +39,7 @@ function requireSecret(value: string | undefined, label: string): string {
 }
 
 export function loadRuntimeEnv(
-  source: NodeJS.ProcessEnv,
+  source: EnvironmentSource,
   features: ProductConfig["features"],
 ): RuntimeEnv {
   const parsed = baseSchema.parse(source);
