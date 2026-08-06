@@ -12,6 +12,7 @@
 
 - `pyxm1618/quickiching` is read-only; never create a branch, commit, refactor, or shared dependency there.
 - Application code may begin only after independent design review findings are resolved and the owner approves the reviewed design.
+- Read and apply the binding execution preflight before any phase plan. It supersedes conflicting illustrative snippets.
 - Use a dedicated Git worktree and branch for every implementation plan.
 - Keep one deployable Next.js application; do not introduce a monorepo, runtime plugin loader, CLI generator, or second provider implementation in v1.
 - Better Auth `user` is the canonical identity; do not create a second synchronized generic users table.
@@ -29,8 +30,10 @@
 
 ## Plan Suite
 
-Execute the plans in this order. A later plan may not begin until the previous plan's exit gate is met and reviewed.
+Execute the documents in this order. A later phase may not begin until the previous phase's exit gate is met and reviewed.
 
+0. [`2026-08-06-creat-web-execution-preflight.md`](./2026-08-06-creat-web-execution-preflight.md)
+   - Binding self-review corrections covering versions, `APP_ENV`, migrations, Better Auth token hashing, route fixtures, provider contract capture, commerce types, credit finalization, and route-scoped CSP.
 1. [`2026-08-06-creat-web-foundation-plan.md`](./2026-08-06-creat-web-foundation-plan.md)
    - Repository scaffold, toolchain, configuration, dependency boundaries, PostgreSQL migration harness, CI, logging/redaction.
 2. [`2026-08-06-creat-web-authentication-plan.md`](./2026-08-06-creat-web-authentication-plan.md)
@@ -44,11 +47,11 @@ Execute the plans in this order. A later plan may not begin until the previous p
 6. [`2026-08-06-creat-web-subscriptions-plan.md`](./2026-08-06-creat-web-subscriptions-plan.md)
    - Waffo subscriptions, period fulfillment, past-due/canceling/canceled policies, refunds and restoration.
 7. [`2026-08-06-creat-web-security-operations-release-plan.md`](./2026-08-06-creat-web-security-operations-release-plan.md)
-   - Consent/analytics, Turnstile, CSP, observability, dead-letter operations, backup/restore/key rotation, clean-project validation and staging release.
+   - Consent/analytics, Turnstile, route-scoped CSP, observability, dead-letter operations, backup/restore/key rotation, clean-project validation and staging release.
 
 ## Branch and Review Protocol
 
-For each plan:
+For each implementation phase:
 
 - [ ] Create an isolated worktree using `superpowers:using-git-worktrees`.
 - [ ] Create a branch named `feat/<plan-short-name>` from the latest reviewed `main`.
@@ -62,7 +65,7 @@ For each plan:
 
 ## Repository-Level Exit Gate
 
-The starter is complete only when all seven plans have merged and a clean validation run proves:
+The starter is complete only when all seven implementation phases have merged and a clean validation run proves:
 
 ```bash
 bun install --frozen-lockfile
@@ -85,9 +88,10 @@ Expected: every command exits `0`; PostgreSQL tests use a real isolated database
 
 This plan suite is executable but not yet authorization to code. Before Task 1 of the foundation plan:
 
-- [ ] Independent review of all design documents is complete.
+- [ ] Independent review of all design documents and this complete plan suite is complete.
 - [ ] Findings are classified as `BLOCKING`, `IMPORTANT`, `OPTIONAL`, or `INCORRECT/NOT A FINDING`.
-- [ ] Every blocking and important finding is resolved in the design documents.
-- [ ] The owner approves the reviewed design.
-- [ ] Current Waffo test-account capabilities, event names, signature requirements, and test/live identifiers are recorded in a reviewed provider note.
+- [ ] Every blocking and important finding is resolved in the design documents and, where relevant, the plans.
+- [ ] The owner approves the reviewed design and execution plans.
+- [ ] Current Waffo test-account capabilities, event names, signature requirements, and test/live identifiers are recorded in a reviewed provider contract without secrets or placeholder values.
+- [ ] The execution-preflight checklist is copied into the first PR and every item is confirmed.
 - [ ] The assistant states exactly: **“设计已经定稿，现在可以开始写代码。”**
