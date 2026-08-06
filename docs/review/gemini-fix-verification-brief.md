@@ -12,12 +12,14 @@ Quick I Ching remains read-only.
 
 1. The five original documents under `docs/specs/`.
 2. `docs/specs/creat-web-v1-gemini-review-resolution.md`.
-3. `docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md`.
-4. `docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md`.
-5. `docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md`.
-6. Every phase plan linked by the master execution plan.
+3. `docs/specs/creat-web-v1-auth-critical-clarifications.md`.
+4. `docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md`.
+5. `docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md`.
+6. `docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md`.
+7. `docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md`.
+8. Every phase plan linked by the corrected master execution plan.
 
-The Gemini resolution and execution-corrections documents supersede conflicting older statements.
+The critical auth clarification, Gemini resolution and execution-corrections documents supersede conflicting older statements in that order.
 
 ## Required verdict
 
@@ -46,6 +48,8 @@ For each finding:
 - Is `account_subjects` clearly non-authentication data rather than an accidental second user system?
 - Can Better Auth identity be hard-deleted without cascading or restricting retained commerce records?
 - Does a random pseudonymous key avoid retaining an email-derived identifier?
+- Is provisioning idempotently ensured and repaired rather than falsely assumed to share a transaction with Better Auth?
+- Can concurrent ensure calls create exactly one subject?
 - Can deletion retry after partial failure without duplicate subscription cancellation or credit mutation?
 - Is access impossible after session revocation even though retained subject/ledger records survive?
 
@@ -54,9 +58,19 @@ For each finding:
 - Does an email scanner GET leave the token unused?
 - Is the token kept out of the HTTP request URL by using a fragment?
 - Can the public POST route safely call Better Auth's reviewed manual verification API without reimplementing token validation?
+- Does the route return the Better Auth Response or forward every Set-Cookie header so successful consumption creates a usable session?
 - Are Origin, callback allowlist, rate limiting, no-store, no-referrer, noindex and logging controls sufficient?
 - Are all third-party requests absent from the confirmation page?
 - Does the design avoid exposing the token through hydration data, error reporting or browser history?
+- Can an ambiguous first response cause a dangerous automatic retry after token consumption?
+
+### Account deletion confirmation
+
+- Is Better Auth's destructive direct delete link excluded from email?
+- Does repeated scanner GET perform no deletion and schedule no workflow?
+- Does deletion require a fresh session or a two-step explicit POST confirmation?
+- Is the local retryable deletion workflow established before Better Auth hard deletion?
+- Can downstream failure prevent hard deletion while preserving a safe retry path?
 
 ### Optional integration evaluation
 
