@@ -6,6 +6,8 @@ on:
     paths:
       - src/platform/auth/auth-cli.ts
       - src/platform/auth/create-auth.ts
+      - src/platform/database/auth-schema.ts
+      - src/platform/database/account-subject-schema.ts
       - src/platform/database/schema.ts
       - package.json
       - bun.lock
@@ -44,9 +46,14 @@ jobs:
           from pathlib import Path
           path = Path('src/platform/database/schema.ts')
           content = path.read_text()
-          line = 'export * from "./auth-schema";\n'
-          if line not in content:
-              path.write_text(content.rstrip() + '\n\n' + line)
+          lines = [
+              'export * from "./auth-schema";\n',
+              'export * from "./account-subject-schema";\n',
+          ]
+          for line in lines:
+              if line not in content:
+                  content = content.rstrip() + '\n\n' + line
+          path.write_text(content)
           PY
       - name: Generate Drizzle migration
         run: bun run db:generate
@@ -58,5 +65,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/platform/database/auth-schema.ts src/platform/database/schema.ts drizzle
-          git commit -m "chore: generate Better Auth schema and migration"
+          git commit -m "chore: generate authentication migrations"
           git push origin HEAD:feat/authentication
