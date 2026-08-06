@@ -17,6 +17,11 @@ export function createAuth(input: {
     readonly token: string;
     readonly returnTo: string;
   }) => Promise<void>;
+  readonly ensureAccountSubject?: (authUserId: string) => Promise<void>;
+  readonly onAccountSubjectProvisioningError?: (input: {
+    readonly authUserId: string;
+    readonly error: unknown;
+  }) => void;
 }) {
   const socialProviders = input.google ? { google: input.google } : {};
 
@@ -28,6 +33,24 @@ export function createAuth(input: {
       provider: "pg",
       ...(input.schema ? { schema: input.schema } : {}),
     }),
+    databaseHooks: input.ensureAccountSubject
+      ? {
+          user: {
+            create: {
+              after: async (user) => {
+                try {
+                  await input.ensureAccountSubject?.(user.id);
+                } catch (error) {
+                  input.onAccountSubjectProvisioningError?.({
+                    authUserId: user.id,
+                    error,
+                  });
+                }
+              },
+            },
+          },
+        }
+      : undefined,
     trustedOrigins: [input.baseURL],
     emailAndPassword: { enabled: false },
     socialProviders,
