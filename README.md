@@ -18,8 +18,8 @@ Later binding corrections supersede conflicting older statements.
 
 1. Read the five original design documents.
 2. Read [Gemini review design resolution](docs/specs/creat-web-v1-gemini-review-resolution.md).
-3. Read the master execution plan and original execution preflight.
-4. Read [Gemini review execution corrections](docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md).
+3. Read the [corrected master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md).
+4. Read the original master plan, original execution preflight, and Gemini execution corrections in the order stated by the corrected master.
 5. Read the relevant phase plan.
 
 ## Design documents
@@ -36,9 +36,13 @@ Later binding corrections supersede conflicting older statements.
 
 ## Superpowers execution plans
 
-Start with these documents in order:
+Authoritative entrypoint:
 
-- [Master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md)
+- [Corrected master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md)
+
+Binding supporting documents:
+
+- [Original master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md)
 - [Binding execution preflight](docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md)
 - [Binding Gemini review execution corrections](docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md)
 
