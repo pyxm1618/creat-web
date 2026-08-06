@@ -65,6 +65,25 @@ export default async function AccountSecurityPage() {
         <form action={revokeAllSessionsAction}>
           <button type="submit">Revoke every session</button>
         </form>
+
+        <hr />
+        <h2>Delete account</h2>
+        <p>
+          This revokes all access and permanently removes your authentication identity. Required
+          financial or security records may remain pseudonymized according to the published policy.
+        </p>
+        <form action="/api/account/delete" method="post">
+          <label htmlFor="delete-confirmation">Type DELETE to confirm</label>
+          <input
+            id="delete-confirmation"
+            name="confirmation"
+            type="text"
+            autoComplete="off"
+            pattern="DELETE"
+            required
+          />
+          <button type="submit">Permanently delete account</button>
+        </form>
       </section>
     </main>
   );
