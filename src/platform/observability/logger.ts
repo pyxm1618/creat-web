@@ -11,12 +11,14 @@ export function createLogger(
   base: Readonly<Record<string, unknown>> = {},
   sink: LogSink = consoleSink,
 ) {
+  const safeBase = (redactForLogging(base) as Record<string, unknown>) ?? {};
+
   function write(level: LogLevel, event: string, data?: unknown) {
     sink({
+      ...safeBase,
       timestamp: new Date().toISOString(),
       level,
       event,
-      ...((redactForLogging(base) as Record<string, unknown>) ?? {}),
       ...(data === undefined ? {} : { data: redactForLogging(data) }),
     });
   }
