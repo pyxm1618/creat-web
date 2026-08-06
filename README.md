@@ -6,7 +6,7 @@ Private, SEO-first Next.js starter for repeatedly launching overseas web product
 
 **Design and execution-plan review only. No application code has been approved for implementation.**
 
-The repository contains the architecture, risk-control design, Gemini review corrections, and Superpowers executable development plans for `creat-web v1`. Implementation remains blocked until the corrected design and plans are independently reviewed, blocking/important findings are resolved, and the owner explicitly approves coding.
+The repository contains the architecture, risk-control design, Gemini review corrections, critical authentication clarifications, and Superpowers executable development plans for `creat-web v1`. Implementation remains blocked until the corrected design and plans are independently reviewed, blocking/important findings are resolved, and the owner explicitly approves coding.
 
 ## Non-negotiable boundary
 
@@ -18,9 +18,10 @@ Later binding corrections supersede conflicting older statements.
 
 1. Read the five original design documents.
 2. Read [Gemini review design resolution](docs/specs/creat-web-v1-gemini-review-resolution.md).
-3. Read the [corrected master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md).
-4. Read the original master plan, original execution preflight, and Gemini execution corrections in the order stated by the corrected master.
-5. Read the relevant phase plan.
+3. Read [critical authentication clarifications](docs/specs/creat-web-v1-auth-critical-clarifications.md).
+4. Read the [corrected master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md).
+5. Read the original master plan, original execution preflight, and Gemini execution corrections in the order stated by the corrected master.
+6. Read the relevant phase plan.
 
 ## Design documents
 
@@ -30,6 +31,7 @@ Later binding corrections supersede conflicting older statements.
 - [SEO, homepage, and legal foundation](docs/specs/seo-home-legal-design.md)
 - [Migration boundaries, quality gates, and release plan](docs/specs/quality-migration-release-design.md)
 - [Binding Gemini review resolution](docs/specs/creat-web-v1-gemini-review-resolution.md)
+- [Critical authentication clarifications](docs/specs/creat-web-v1-auth-critical-clarifications.md)
 - [Independent design review brief](docs/review/ai-review-brief.md)
 - [Independent execution-plan review brief](docs/review/implementation-plan-review-brief.md)
 - [Post-fix Gemini verification brief](docs/review/gemini-fix-verification-brief.md)
@@ -58,10 +60,13 @@ Phase plans:
 
 ## Corrected design highlights
 
-The binding Gemini resolution adds:
+The binding corrections add:
 
 - a retained non-authentication `account_subjects` identity anchor so account deletion cannot cascade-delete or be blocked by financial records;
+- idempotent retained-subject provisioning and repair rather than assuming a cross-system transaction;
 - two-step Magic Link confirmation resistant to mail-security prefetch;
+- explicit forwarding of Better Auth `Set-Cookie` headers after successful verification;
+- a ban on destructive account-deletion links in email;
 - side-effect-free optional provider factories and a feature build matrix;
 - Waffo display-string to `BIGINT` minor-unit money conversion with reviewed currency exponents;
 - no canonical output outside production;
