@@ -46,7 +46,7 @@ jobs:
       - name: Verify Better Auth schema generation
         run: >-
           bunx auth@1.6.25 generate
-          --config src/platform/auth/auth.ts
+          --config src/platform/auth/auth-cli.ts
           --output /tmp/auth-schema.ts
           --yes
       - name: Formatting
