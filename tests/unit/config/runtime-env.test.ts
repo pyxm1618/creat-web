@@ -26,6 +26,41 @@ describe("loadRuntimeEnv", () => {
     expect(env.waffoPrivateKey).toBeUndefined();
   });
 
+  it("uses the test email transport for magic link without Resend credentials", () => {
+    const env = loadRuntimeEnv(
+      {
+        APP_ENV: "test",
+        APP_ORIGIN: "http://localhost:3000",
+        DATABASE_URL: "postgres://test:test@localhost:5432/test",
+      },
+      {
+        ...disabledFeatures,
+        auth: { ...disabledFeatures.auth, enabled: true, magicLink: true },
+        email: { enabled: true },
+      },
+    );
+
+    expect(env.emailTransport).toBe("test");
+    expect(env.resendApiKey).toBeUndefined();
+  });
+
+  it("requires Resend credentials for production magic link", () => {
+    expect(() =>
+      loadRuntimeEnv(
+        {
+          APP_ENV: "production",
+          APP_ORIGIN: "https://example.com",
+          DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+        },
+        {
+          ...disabledFeatures,
+          auth: { ...disabledFeatures.auth, enabled: true, magicLink: true },
+          email: { enabled: true },
+        },
+      ),
+    ).toThrow("Resend credentials are required");
+  });
+
   it("requires HTTPS origin in staging and production", () => {
     expect(() =>
       loadRuntimeEnv(
