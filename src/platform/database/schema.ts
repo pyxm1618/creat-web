@@ -10,3 +10,4 @@ export type PlatformMeta = typeof platformMeta.$inferSelect;
 export type NewPlatformMeta = typeof platformMeta.$inferInsert;
 
 export * from "./auth-schema";
+export * from "./account-subject-schema";
