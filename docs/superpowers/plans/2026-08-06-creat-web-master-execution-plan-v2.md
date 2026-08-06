@@ -12,14 +12,16 @@ Read and apply in this exact order:
 
 1. Five original specifications under `docs/specs/`.
 2. `docs/specs/creat-web-v1-gemini-review-resolution.md`.
-3. `docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md`.
-4. `docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md`.
-5. `docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md`.
-6. The current phase plan.
+3. `docs/specs/creat-web-v1-auth-critical-clarifications.md`.
+4. `docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md`.
+5. `docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md`.
+6. `docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md`.
+7. The current phase plan.
 
 Precedence, highest first:
 
 ```text
+critical authentication clarifications
 Gemini review execution corrections
 Gemini review design resolution
 original execution preflight
@@ -47,7 +49,10 @@ No later phase starts before the prior phase exit gate is reviewed.
 - Quick I Ching remains read-only.
 - Better Auth `user` is the active canonical authentication identity.
 - Retained financial/credit/subscription records reference non-authentication `account_subjects.id`.
+- Retained-subject provisioning is idempotently ensured and repaired; cross-system atomic creation is not assumed.
 - Magic Link email opens a non-consuming fragment-based confirmation page; only explicit POST consumes the token.
+- Magic Link confirmation returns or forwards every Better Auth `Set-Cookie` header so successful consumption creates a usable session.
+- Direct destructive account-deletion URLs are never emailed; deletion requires fresh-session or two-step explicit POST confirmation.
 - Disabled integrations cannot require secrets or instantiate clients during import/build.
 - Waffo display amounts are converted to internal `BIGINT` minor units using a reviewed currency exponent registry.
 - Non-production deployments emit no canonical and no sitemap, and use layered noindex/access controls.
@@ -72,7 +77,7 @@ For every phase:
 
 Application code remains prohibited until all are true:
 
-- [ ] The five original specs and Gemini resolution have been independently reviewed.
+- [ ] The five original specs, Gemini resolution and critical auth clarification have been independently reviewed.
 - [ ] The old plan suite, old preflight, Gemini execution corrections and this v2 entrypoint have been independently reviewed.
 - [ ] Every resulting `BLOCKING` and `IMPORTANT` finding has been resolved in documentation.
 - [ ] The owner explicitly approves the corrected design and plan suite.
