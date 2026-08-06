@@ -4,7 +4,8 @@ on:
   push:
     branches: ["feat/authentication"]
     paths:
-      - src/platform/auth/auth.ts
+      - src/platform/auth/auth-cli.ts
+      - src/platform/auth/create-auth.ts
       - src/platform/database/schema.ts
       - package.json
       - bun.lock
@@ -34,7 +35,7 @@ jobs:
       - name: Generate Better Auth schema
         run: >-
           bunx auth@1.6.25 generate
-          --config src/platform/auth/auth.ts
+          --config src/platform/auth/auth-cli.ts
           --output src/platform/database/auth-schema.ts
           --yes
       - name: Export generated schema
