@@ -1,0 +1,61 @@
+name: Bootstrap auth schema
+
+on:
+  push:
+    branches: ["feat/authentication"]
+    paths:
+      - src/platform/auth/auth.ts
+      - src/platform/database/schema.ts
+      - package.json
+      - bun.lock
+      - .github/workflows/bootstrap-auth-schema.yml
+
+permissions:
+  contents: write
+
+jobs:
+  schema:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    env:
+      APP_ENV: test
+      APP_ORIGIN: http://localhost:3000
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_test
+      BETTER_AUTH_SECRET: schema-generation-secret-with-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/authentication
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Generate Better Auth schema
+        run: >-
+          bunx auth@1.6.25 generate
+          --config src/platform/auth/auth.ts
+          --output src/platform/database/auth-schema.ts
+          --yes
+      - name: Export generated schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/platform/database/schema.ts')
+          content = path.read_text()
+          line = 'export * from "./auth-schema";\n'
+          if line not in content:
+              path.write_text(content.rstrip() + '\n\n' + line)
+          PY
+      - name: Generate Drizzle migration
+        run: bun run db:generate
+      - name: Commit generated artifacts
+        run: |
+          if git diff --quiet -- src/platform/database drizzle; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/platform/database/auth-schema.ts src/platform/database/schema.ts drizzle
+          git commit -m "chore: generate Better Auth schema and migration"
+          git push origin HEAD:feat/authentication
