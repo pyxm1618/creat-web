@@ -6,7 +6,7 @@ Private, SEO-first Next.js starter for repeatedly launching overseas web product
 
 **Design and execution-plan review only. No application code has been approved for implementation.**
 
-The repository contains the architecture, risk-control design, Gemini review corrections, critical authentication clarifications, and Superpowers executable development plans for `creat-web v1`. Implementation remains blocked until the corrected design and plans are independently reviewed, blocking/important findings are resolved, and the owner explicitly approves coding.
+The repository contains the architecture, risk-control design, independent-review corrections, and Superpowers executable development plans for `creat-web v1`. Implementation remains blocked until the complete corrected design and plan stack is independently reviewed, blocking/important findings are resolved, and the owner explicitly approves coding.
 
 ## Non-negotiable boundary
 
@@ -14,14 +14,11 @@ The repository contains the architecture, risk-control design, Gemini review cor
 
 ## Binding reading order
 
-Later binding corrections supersede conflicting older statements.
+Later binding corrections supersede conflicting older statements. The authoritative order is defined by:
 
-1. Read the five original design documents.
-2. Read [Gemini review design resolution](docs/specs/creat-web-v1-gemini-review-resolution.md).
-3. Read [critical authentication clarifications](docs/specs/creat-web-v1-auth-critical-clarifications.md).
-4. Read the [corrected master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md).
-5. Read the original master plan, original execution preflight, and Gemini execution corrections in the order stated by the corrected master.
-6. Read the relevant phase plan.
+- [Corrected master execution plan v3](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v3.md)
+
+No implementation agent may begin from an older phase plan without first reading v3 and every binding correction it references.
 
 ## Design documents
 
@@ -30,23 +27,22 @@ Later binding corrections supersede conflicting older statements.
 - [Payments, subscriptions, and credits](docs/specs/payments-subscriptions-credits-design.md)
 - [SEO, homepage, and legal foundation](docs/specs/seo-home-legal-design.md)
 - [Migration boundaries, quality gates, and release plan](docs/specs/quality-migration-release-design.md)
-- [Binding Gemini review resolution](docs/specs/creat-web-v1-gemini-review-resolution.md)
+- [First Gemini review resolution](docs/specs/creat-web-v1-gemini-review-resolution.md)
 - [Critical authentication clarifications](docs/specs/creat-web-v1-auth-critical-clarifications.md)
-- [Independent design review brief](docs/review/ai-review-brief.md)
-- [Independent execution-plan review brief](docs/review/implementation-plan-review-brief.md)
-- [Post-fix Gemini verification brief](docs/review/gemini-fix-verification-brief.md)
+- [Second independent review resolution](docs/specs/creat-web-v1-second-review-resolution.md)
 
 ## Superpowers execution plans
 
 Authoritative entrypoint:
 
-- [Corrected master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v2.md)
+- [Corrected master execution plan v3](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v3.md)
 
 Binding supporting documents:
 
 - [Original master execution plan](docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan.md)
-- [Binding execution preflight](docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md)
-- [Binding Gemini review execution corrections](docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md)
+- [Original execution preflight](docs/superpowers/plans/2026-08-06-creat-web-execution-preflight.md)
+- [First review execution corrections](docs/superpowers/plans/2026-08-06-creat-web-gemini-review-corrections.md)
+- [Second review execution corrections](docs/superpowers/plans/2026-08-06-creat-web-second-review-corrections.md)
 
 Phase plans:
 
@@ -58,21 +54,27 @@ Phase plans:
 - [Subscriptions and refunds](docs/superpowers/plans/2026-08-06-creat-web-subscriptions-plan.md)
 - [Security, operations, and release](docs/superpowers/plans/2026-08-06-creat-web-security-operations-release-plan.md)
 
+## Review documents
+
+- [Independent design review brief](docs/review/ai-review-brief.md)
+- [Independent execution-plan review brief](docs/review/implementation-plan-review-brief.md)
+- [Post-fix verification brief](docs/review/gemini-fix-verification-brief.md)
+
 ## Corrected design highlights
 
-The binding corrections add:
+The binding corrections require:
 
-- a retained non-authentication `account_subjects` identity anchor so account deletion cannot cascade-delete or be blocked by financial records;
-- idempotent retained-subject provisioning and repair rather than assuming a cross-system transaction;
-- two-step Magic Link confirmation resistant to mail-security prefetch;
-- explicit forwarding of Better Auth `Set-Cookie` headers after successful verification;
-- a ban on destructive account-deletion links in email;
-- side-effect-free optional provider factories and a feature build matrix;
-- Waffo display-string to `BIGINT` minor-unit money conversion with reviewed currency exponents;
-- no canonical output outside production;
-- network-level proof that analytics does not load before consent or on sensitive routes;
+- retained non-authentication account subjects for deletion-safe financial records;
+- two-step Magic Link and destructive-action confirmation resistant to mail prefetch;
+- exact Better Auth session-cookie forwarding;
+- side-effect-free optional providers and build-matrix tests;
+- Waffo display-string to `BIGINT` minor-unit conversion;
+- minimized normalized webhook persistence, encrypted bounded exceptional retention, and purge jobs;
+- serialized Credit reserve/commit/release/expiry operations with explicit boundary-time behavior;
+- no canonical or sitemap outside production;
+- zero third-party analytics requests before consent;
 - persisted subscription `past_due` grace deadlines;
-- test-only recording fulfillment and a production ban on successful no-op fulfillment.
+- no successful production no-op fulfillment.
 
 ## Intended v1
 
