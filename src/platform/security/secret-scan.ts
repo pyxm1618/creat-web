@@ -26,7 +26,7 @@ const SECRET_PATTERNS: readonly SecretPattern[] = [
   {
     kind: "nonempty_secret_assignment",
     pattern:
-      /\b(?:[A-Z0-9_]*(?:CLIENT_SECRET|API_KEY|PRIVATE_KEY|WEBHOOK_SECRET|AUTH_SECRET))\s*=\s*([^\s#"']+)/g,
+      /\b(?:[A-Z0-9_]*(?:CLIENT_SECRET|API_KEY|PRIVATE_KEY|WEBHOOK_SECRET|AUTH_SECRET))[ \t]*=[ \t]*([^\s#"'=]+)/g,
   },
 ];
 
