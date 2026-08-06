@@ -48,5 +48,7 @@ export function findPotentialSecrets(file: string, content: string): SecretFindi
     }
   }
 
-  return findings.sort((left, right) => left.line - right.line || left.kind.localeCompare(right.kind));
+  return findings.sort(
+    (left, right) => left.line - right.line || left.kind.localeCompare(right.kind),
+  );
 }
