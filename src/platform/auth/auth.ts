@@ -2,9 +2,11 @@ import "server-only";
 
 import { featuresConfig } from "@/config/features.config";
 import { siteConfig } from "@/config/site.config";
+import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
 import { env } from "@/platform/config/env";
 import { db } from "@/platform/database/application-database";
 import * as schema from "@/platform/database/schema";
+import { createLogger } from "@/platform/observability/logger";
 
 import { createAuth } from "./create-auth";
 import { sendMagicLinkEmail } from "./magic-link-email";
@@ -21,6 +23,9 @@ const google =
       }
     : undefined;
 
+const subjects = createPostgresAccountSubjectRepository(db);
+const logger = createLogger({ component: "auth" });
+
 export const auth = createAuth({
   appName: siteConfig.name,
   baseURL: env.appOrigin,
@@ -31,5 +36,11 @@ export const auth = createAuth({
   ...(google ? { google } : {}),
   sendMagicLink: async ({ email, token, returnTo }) => {
     await sendMagicLinkEmail({ email, token, returnTo });
+  },
+  ensureAccountSubject: async (authUserId) => {
+    await subjects.ensureForAuthUser(authUserId);
+  },
+  onAccountSubjectProvisioningError: ({ authUserId, error }) => {
+    logger.error("account_subject_provisioning_failed", { authUserId, error });
   },
 });
