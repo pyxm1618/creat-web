@@ -26,7 +26,7 @@ describe("loadRuntimeEnv", () => {
     expect(env.waffoPrivateKey).toBeUndefined();
   });
 
-  it("uses the test email transport for magic link without Resend credentials", () => {
+  it("uses test-only auth and email configuration without production credentials", () => {
     const env = loadRuntimeEnv(
       {
         APP_ENV: "test",
@@ -41,10 +41,12 @@ describe("loadRuntimeEnv", () => {
     );
 
     expect(env.emailTransport).toBe("test");
+    expect(env.betterAuthSecret).toMatch(/^test-only-/);
     expect(env.resendApiKey).toBeUndefined();
+    expect(env.emailFrom).toBe("test@localhost.invalid");
   });
 
-  it("requires Resend credentials for production magic link", () => {
+  it("requires production authentication and email secrets", () => {
     expect(() =>
       loadRuntimeEnv(
         {
@@ -58,7 +60,46 @@ describe("loadRuntimeEnv", () => {
           email: { enabled: true },
         },
       ),
+    ).toThrow("Better Auth secret is required");
+
+    expect(() =>
+      loadRuntimeEnv(
+        {
+          APP_ENV: "production",
+          APP_ORIGIN: "https://example.com",
+          DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+          BETTER_AUTH_SECRET: "a".repeat(48),
+        },
+        {
+          ...disabledFeatures,
+          auth: { ...disabledFeatures.auth, enabled: true, magicLink: true },
+          email: { enabled: true },
+        },
+      ),
     ).toThrow("Resend credentials are required");
+  });
+
+  it("loads complete production auth configuration", () => {
+    const env = loadRuntimeEnv(
+      {
+        APP_ENV: "production",
+        APP_ORIGIN: "https://example.com",
+        DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+        BETTER_AUTH_SECRET: "a".repeat(48),
+        RESEND_API_KEY: "re_test_not_a_live_key",
+        EMAIL_FROM: "Example <login@example.com>",
+        SUPPORT_EMAIL: "support@example.com",
+      },
+      {
+        ...disabledFeatures,
+        auth: { ...disabledFeatures.auth, enabled: true, magicLink: true },
+        email: { enabled: true },
+      },
+    );
+
+    expect(env.emailTransport).toBe("resend");
+    expect(env.emailFrom).toBe("Example <login@example.com>");
+    expect(env.supportEmail).toBe("support@example.com");
   });
 
   it("requires HTTPS origin in staging and production", () => {
@@ -81,6 +122,7 @@ describe("loadRuntimeEnv", () => {
           APP_ENV: "production",
           APP_ORIGIN: "https://example.com",
           DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+          BETTER_AUTH_SECRET: "a".repeat(48),
         },
         {
           ...disabledFeatures,
@@ -97,6 +139,7 @@ describe("loadRuntimeEnv", () => {
           APP_ENV: "production",
           APP_ORIGIN: "https://example.com",
           DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+          BETTER_AUTH_SECRET: "replace-me",
           GOOGLE_CLIENT_ID: "replace-me",
           GOOGLE_CLIENT_SECRET: "replace-me",
         },
