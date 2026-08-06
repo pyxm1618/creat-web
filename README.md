@@ -19,7 +19,8 @@ The repository contains the architecture, risk-control design, and Superpowers e
 - [Payments, subscriptions, and credits](docs/specs/payments-subscriptions-credits-design.md)
 - [SEO, homepage, and legal foundation](docs/specs/seo-home-legal-design.md)
 - [Migration boundaries, quality gates, and release plan](docs/specs/quality-migration-release-design.md)
-- [Independent AI review brief](docs/review/ai-review-brief.md)
+- [Independent design review brief](docs/review/ai-review-brief.md)
+- [Independent execution-plan review brief](docs/review/implementation-plan-review-brief.md)
 
 ## Superpowers execution plans
 
