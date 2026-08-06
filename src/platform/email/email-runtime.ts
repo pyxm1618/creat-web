@@ -3,17 +3,21 @@ import "server-only";
 import { env } from "@/platform/config/env";
 
 import type { EmailSender } from "./email-sender";
+import { createFileTestEmailSender } from "./file-test-email-sender";
 import { createProductionResendEmailSender } from "./resend-email-sender";
-import { createTestEmailSender, type TestEmailSender } from "./test-email-sender";
 
-let testSender: TestEmailSender | undefined;
+let testSender: EmailSender | undefined;
 let productionSender: Promise<EmailSender> | undefined;
 
-export function getTestEmailSender(): TestEmailSender {
-  if (env.emailTransport !== "test") {
-    throw new Error("test email sender is unavailable outside test transport mode");
+export function getTestEmailDirectory(): string {
+  if (env.emailTransport !== "test" || !env.testEmailDirectory) {
+    throw new Error("test email mailbox is unavailable outside test transport mode");
   }
-  testSender ??= createTestEmailSender();
+  return env.testEmailDirectory;
+}
+
+export function getTestEmailSender(): EmailSender {
+  testSender ??= createFileTestEmailSender(getTestEmailDirectory());
   return testSender;
 }
 
