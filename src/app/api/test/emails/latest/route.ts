@@ -1,5 +1,6 @@
 import { env } from "@/platform/config/env";
-import { getTestEmailSender } from "@/platform/email/email-runtime";
+import { getTestEmailDirectory } from "@/platform/email/email-runtime";
+import { readLatestTestEmail } from "@/platform/email/file-test-email-sender";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,8 +15,7 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "recipient_required" }, { status: 400 });
   }
 
-  const sender = getTestEmailSender();
-  const message = [...sender.messages].reverse().find((candidate) => candidate.to === recipient);
+  const message = await readLatestTestEmail(getTestEmailDirectory(), recipient);
   if (!message) {
     return Response.json({ error: "message_not_found" }, { status: 404 });
   }
