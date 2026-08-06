@@ -42,7 +42,10 @@ try {
 } catch (error) {
   productionFailure = error;
 }
-if (!(productionFailure instanceof Error) || !productionFailure.message.includes("Google credentials")) {
+if (
+  !(productionFailure instanceof Error) ||
+  !productionFailure.message.includes("Google credentials")
+) {
   throw new Error("production negative fixture did not fail closed");
 }
 

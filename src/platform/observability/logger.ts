@@ -7,7 +7,10 @@ const consoleSink: LogSink = (record) => {
   console.log(JSON.stringify(record));
 };
 
-export function createLogger(base: Readonly<Record<string, unknown>> = {}, sink: LogSink = consoleSink) {
+export function createLogger(
+  base: Readonly<Record<string, unknown>> = {},
+  sink: LogSink = consoleSink,
+) {
   function write(level: LogLevel, event: string, data?: unknown) {
     sink({
       timestamp: new Date().toISOString(),

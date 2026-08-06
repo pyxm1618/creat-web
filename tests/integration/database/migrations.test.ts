@@ -24,14 +24,9 @@ it("applies the complete migration chain repeatedly", async () => {
   await migrate(database.db, { migrationsFolder: "drizzle" });
 
   await database.db.insert(platformMeta).values({ key: "schema", value: "foundation" });
-  const rows = await database.db
-    .select()
-    .from(platformMeta)
-    .where(eq(platformMeta.key, "schema"));
+  const rows = await database.db.select().from(platformMeta).where(eq(platformMeta.key, "schema"));
 
-  expect(rows).toEqual([
-    expect.objectContaining({ key: "schema", value: "foundation" }),
-  ]);
+  expect(rows).toEqual([expect.objectContaining({ key: "schema", value: "foundation" })]);
 });
 
 it("creates the Drizzle migration history outside application tables", async () => {
