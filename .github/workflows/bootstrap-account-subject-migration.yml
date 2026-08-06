@@ -1,10 +1,11 @@
-name: Bootstrap retained subject migration
+name: Bootstrap account lifecycle migrations
 
 on:
   push:
     branches: ["feat/authentication"]
     paths:
       - src/platform/database/account-subject-schema.ts
+      - src/platform/database/account-lifecycle-schema.ts
       - src/platform/database/schema.ts
       - .github/workflows/bootstrap-account-subject-migration.yml
 
@@ -34,5 +35,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add drizzle
-          git commit -m "chore: generate retained subject migration"
+          git commit -m "chore: generate account lifecycle migrations"
           git push origin HEAD:feat/authentication
