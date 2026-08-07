@@ -11,7 +11,7 @@ import { createPostgresAccountSubjectRepository } from "./postgres-account-subje
 const subjects = createPostgresAccountSubjectRepository(db);
 const identityDeletion = createBetterAuthIdentityDeletion({
   database: db,
-  invokeDeleteUser: (headers) => auth.api.deleteUser({ headers, asResponse: true }),
+  invokeDeleteUser: (headers) => auth.api.deleteUser({ body: {}, headers, asResponse: true }),
 });
 
 export const accountDeletionService = createAccountDeletionService({
