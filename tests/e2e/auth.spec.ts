@@ -31,7 +31,7 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
   );
   await page.getByRole("button", { name: "Send secure sign-in link" }).click();
   const sendResponse = await sendResponsePromise;
-  expect(sendResponse.status(), await sendResponse.text()).toBe(202);
+  expect(sendResponse.status()).toBe(202);
   await expect(page.getByText(/a sign-in link has been sent/i)).toBeVisible();
 
   const mailbox = await request.get(`/api/test/emails/latest?to=${encodeURIComponent(email)}`);
