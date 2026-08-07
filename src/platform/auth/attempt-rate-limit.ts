@@ -21,6 +21,12 @@ function counterKey(secret: string, scope: string, identifier: string): string {
     .digest("hex");
 }
 
+function returnedCount(row: unknown, fallback: number): number {
+  if (!row || typeof row !== "object" || !("count" in row)) return fallback;
+  const value = (row as { count?: unknown }).count;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 export function createAuthAttemptLimiter(database: DatabaseClient, secret: string) {
   if (secret.length < 32) throw new Error("auth attempt limiter secret is too short");
 
@@ -38,7 +44,7 @@ export function createAuthAttemptLimiter(database: DatabaseClient, secret: strin
 
       await database.transaction(async (transaction) => {
         for (const key of uniqueKeys) {
-          const rows = await transaction.execute(sql<{ count: number }>`
+          const rows = await transaction.execute(sql`
             insert into "rate_limit" ("id", "key", "count", "last_request")
             values (${key}, ${key}, 1, ${nowMs})
             on conflict ("key") do update set
@@ -53,7 +59,7 @@ export function createAuthAttemptLimiter(database: DatabaseClient, secret: strin
             returning "count"
           `);
 
-          if ((rows[0]?.count ?? input.max + 1) > input.max) {
+          if (returnedCount(rows[0], input.max + 1) > input.max) {
             throw new Error("authentication attempt rate limited");
           }
         }
