@@ -72,4 +72,19 @@ describe("durable auth attempt limiter", () => {
       limiter.consume({ ...base, now: new Date("2026-08-06T12:02:02Z") }),
     ).resolves.toBeUndefined();
   });
+
+  it("keeps a fixed window start instead of extending it on each allowed request", async () => {
+    const base = {
+      scope: "magic-link-send-daily",
+      identifiers: ["email:fixed-window@example.com"],
+      windowMs: 10_000,
+      max: 2,
+    } as const;
+
+    await limiter.consume({ ...base, now: new Date("2026-08-06T12:03:00.000Z") });
+    await limiter.consume({ ...base, now: new Date("2026-08-06T12:03:09.000Z") });
+    await expect(
+      limiter.consume({ ...base, now: new Date("2026-08-06T12:03:11.000Z") }),
+    ).resolves.toBeUndefined();
+  });
 });
