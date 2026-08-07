@@ -29,6 +29,13 @@
       "when": 1786032604560,
       "tag": "0003_silly_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786095867544,
+      "tag": "0004_cheerful_flatman",
+      "breakpoints": true
     }
   ]
 }
