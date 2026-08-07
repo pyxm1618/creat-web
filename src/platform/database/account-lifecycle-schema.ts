@@ -1,4 +1,13 @@
-import { integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import { accountSubjects } from "./account-subject-schema";
 import { user } from "./auth-schema";
@@ -7,6 +16,7 @@ export const accountDeletionStatus = pgEnum("account_deletion_status", [
   "pending",
   "processing",
   "failed",
+  "dead_letter",
   "completed",
 ]);
 
@@ -19,21 +29,35 @@ export const accountDeletionStep = pgEnum("account_deletion_step", [
   "completed",
 ]);
 
-export const accountDeletionRequests = pgTable("account_deletion_requests", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  subjectId: uuid("subject_id")
-    .notNull()
-    .unique()
-    .references(() => accountSubjects.id, { onDelete: "restrict" }),
-  authUserId: text("auth_user_id").references(() => user.id, { onDelete: "set null" }),
-  status: accountDeletionStatus("status").default("pending").notNull(),
-  step: accountDeletionStep("step").default("requested").notNull(),
-  attempts: integer("attempts").default(0).notNull(),
-  lastErrorCode: text("last_error_code"),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
-  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
-});
+export const accountDeletionRequests = pgTable(
+  "account_deletion_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    subjectId: uuid("subject_id")
+      .notNull()
+      .unique()
+      .references(() => accountSubjects.id, { onDelete: "restrict" }),
+    authUserId: text("auth_user_id").references(() => user.id, { onDelete: "set null" }),
+    status: accountDeletionStatus("status").default("pending").notNull(),
+    step: accountDeletionStep("step").default("requested").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    lastErrorCode: text("last_error_code"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }).defaultNow(),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [
+    index("account_deletion_due_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.leaseExpiresAt,
+    ),
+  ],
+);
 
 export const authSecurityEvents = pgTable("auth_security_events", {
   id: uuid("id").defaultRandom().primaryKey(),
