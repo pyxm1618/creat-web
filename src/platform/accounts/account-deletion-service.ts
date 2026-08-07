@@ -143,7 +143,9 @@ export function createAccountDeletionService(input: {
 
     try {
       if (current.step === "requested") {
+        if (!current.authUserId) throw new Error("deletion identity is unavailable");
         await input.subjects.beginDeletion(current.subjectId);
+        await input.identityDeletion.prepareForDeletion?.(current.authUserId);
         current = await advance(current.id, leaseToken, "access_revoked");
       }
 
