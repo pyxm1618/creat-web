@@ -15,6 +15,7 @@ const build = spawnSync("bun", ["run", "build:test"], {
   env: {
     ...process.env,
     APP_ENV: "test",
+    VERCEL_ENV: undefined,
     APP_ORIGIN: "http://localhost:3000",
     DATABASE_URL: "postgres://test:test@localhost:5432/test",
     GOOGLE_CLIENT_ID: undefined,
@@ -33,6 +34,8 @@ try {
       APP_ENV: "production",
       APP_ORIGIN: "https://example.com",
       DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+      BETTER_AUTH_SECRET: "a".repeat(48),
+      CRON_SECRET: "b".repeat(32),
     },
     {
       ...disabled,
@@ -47,6 +50,31 @@ if (
   !productionFailure.message.includes("Google credentials")
 ) {
   throw new Error("production negative fixture did not fail closed");
+}
+
+let deploymentMismatch: unknown;
+try {
+  loadRuntimeEnv(
+    {
+      APP_ENV: "test",
+      VERCEL_ENV: "production",
+      APP_ORIGIN: "https://example.com",
+      DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+    },
+    {
+      ...disabled,
+      auth: { ...disabled.auth, enabled: true, magicLink: true },
+      email: { enabled: true },
+    },
+  );
+} catch (error) {
+  deploymentMismatch = error;
+}
+if (
+  !(deploymentMismatch instanceof Error) ||
+  !deploymentMismatch.message.includes("VERCEL_ENV=production requires APP_ENV=production")
+) {
+  throw new Error("Vercel production test-mode fixture did not fail closed");
 }
 
 console.log(JSON.stringify({ event: "feature_build_matrix_verified" }));

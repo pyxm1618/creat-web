@@ -8,6 +8,34 @@
       "when": 1786028125663,
       "tag": "0000_swift_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786031685873,
+      "tag": "0001_funny_makkari",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786032354719,
+      "tag": "0002_broken_madame_masque",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786032604560,
+      "tag": "0003_silly_bastion",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786095867544,
+      "tag": "0004_cheerful_flatman",
+      "breakpoints": true
     }
   ]
 }

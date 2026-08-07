@@ -26,11 +26,14 @@
     "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run db:verify && bun run test:build-matrix && bun run verify:architecture && bun run verify:secrets && bun run verify:release"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "1.6.25",
+    "better-auth": "1.6.25",
     "drizzle-orm": "0.45.2",
     "next": "16.2.12",
     "postgres": "3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "resend": "6.18.1",
     "server-only": "0.0.1",
     "zod": "4.1.13"
   },
