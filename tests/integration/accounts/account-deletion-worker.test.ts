@@ -43,7 +43,7 @@ describe("durable account deletion worker", () => {
     const subject = await subjects.ensureForAuthUser(authUserId);
 
     let prepareCalls = 0;
-    let clock = new Date("2026-08-07T04:00:00Z").getTime();
+    let clock = new Date("2030-08-07T04:00:00Z").getTime();
     const service = createAccountDeletionService({
       database: database.db,
       subjects,
