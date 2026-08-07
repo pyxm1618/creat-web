@@ -46,7 +46,10 @@ export function createAuthAttemptLimiter(database: DatabaseClient, secret: strin
                 when "rate_limit"."last_request" < ${windowStart} then 1
                 else "rate_limit"."count" + 1
               end,
-              "last_request" = ${nowMs}
+              "last_request" = case
+                when "rate_limit"."last_request" < ${windowStart} then ${nowMs}
+                else "rate_limit"."last_request"
+              end
             returning "count"
           `);
 
