@@ -1,14 +1,16 @@
 import type { EmailSender } from "./email-sender";
 
+export type ResendSendInput = {
+  readonly from: string;
+  readonly to: string[];
+  readonly replyTo: string;
+  readonly subject: string;
+  readonly html: string;
+};
+
 export type ResendClientLike = {
   readonly emails: {
-    send(input: {
-      readonly from: string;
-      readonly to: readonly string[];
-      readonly replyTo: string;
-      readonly subject: string;
-      readonly html: string;
-    }): Promise<{
+    send(input: ResendSendInput): Promise<{
       readonly data: { readonly id: string } | null;
       readonly error: { readonly name?: string } | null;
     }>;
@@ -45,9 +47,14 @@ export async function createProductionResendEmailSender(input: {
   readonly replyTo: string;
 }): Promise<EmailSender> {
   const { Resend } = await import("resend");
+  const resend = new Resend(input.apiKey);
   return createResendEmailSender({
     from: input.from,
     replyTo: input.replyTo,
-    client: new Resend(input.apiKey),
+    client: {
+      emails: {
+        send: (message) => resend.emails.send(message),
+      },
+    },
   });
 }
