@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Account deletion submitted",
@@ -17,7 +18,7 @@ export default function AccountDeletedPage() {
           unavailable.
         </p>
         <p>
-          <a href="/">Return to the homepage</a>
+          <Link href="/">Return to the homepage</Link>
         </p>
       </section>
     </main>
