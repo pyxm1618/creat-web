@@ -62,12 +62,7 @@ export function createBetterAuthIdentityDeletion(input: {
           updatedAt: refreshedAt,
           expiresAt: new Date(refreshedAt.getTime() + WORKER_SESSION_TTL_MS),
         })
-        .where(
-          and(
-            eq(session.userId, authUserId),
-            eq(session.userAgent, WORKER_SESSION_AGENT),
-          ),
-        )
+        .where(and(eq(session.userId, authUserId), eq(session.userAgent, WORKER_SESSION_AGENT)))
         .returning({ token: session.token });
       const workerSession = refreshed[0];
       if (!workerSession) {

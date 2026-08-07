@@ -65,7 +65,10 @@ describe("account deletion session revocation", () => {
     });
     await deletion.prepareForDeletion?.(authUserId);
 
-    const remaining = await database.db.select().from(session).where(eq(session.userId, authUserId));
+    const remaining = await database.db
+      .select()
+      .from(session)
+      .where(eq(session.userId, authUserId));
     expect(remaining).toHaveLength(1);
     expect(remaining[0]?.userAgent).toBe("creat-web-account-deletion-worker");
     expect(remaining[0]?.token).not.toContain("browser-one");
