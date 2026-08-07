@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
-  if (env.appEnv !== "test" || env.emailTransport !== "test") {
+  if (env.appEnv !== "test" || env.vercelEnv || env.emailTransport !== "test") {
     return new Response("Not Found", { status: 404 });
   }
 
