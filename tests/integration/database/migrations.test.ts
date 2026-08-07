@@ -10,10 +10,17 @@ if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
 
 const database = createDatabaseClient(databaseUrl);
 
+const migrationOptions = {
+  migrationsFolder: "drizzle",
+  migrationsSchema: "drizzle",
+  migrationsTable: "__drizzle_migrations",
+} as const;
+
 beforeAll(async () => {
   await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS public CASCADE"));
+  await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS drizzle CASCADE"));
   await database.db.execute(sql.raw("CREATE SCHEMA public"));
-  await migrate(database.db, { migrationsFolder: "drizzle" });
+  await migrate(database.db, migrationOptions);
 });
 
 afterAll(async () => {
@@ -21,7 +28,7 @@ afterAll(async () => {
 });
 
 it("applies the complete migration chain repeatedly", async () => {
-  await migrate(database.db, { migrationsFolder: "drizzle" });
+  await migrate(database.db, migrationOptions);
 
   await database.db.insert(platformMeta).values({ key: "schema", value: "foundation" });
   const rows = await database.db.select().from(platformMeta).where(eq(platformMeta.key, "schema"));
@@ -39,5 +46,7 @@ it("creates the Drizzle migration history outside application tables", async () 
     where table_name = '__drizzle_migrations'
   `);
 
-  expect(result.length).toBe(1);
+  expect(result).toEqual([
+    expect.objectContaining({ table_schema: "drizzle", table_name: "__drizzle_migrations" }),
+  ]);
 });
