@@ -32,7 +32,8 @@ const testAuth = createAuth({
 });
 const betterAuthIdentityDeletion = createBetterAuthIdentityDeletion({
   database: database.db,
-  invokeDeleteUser: (headers) => testAuth.api.deleteUser({ headers, asResponse: true }),
+  invokeDeleteUser: (headers) =>
+    testAuth.api.deleteUser({ body: {}, headers, asResponse: true }),
 });
 
 beforeAll(async () => {
