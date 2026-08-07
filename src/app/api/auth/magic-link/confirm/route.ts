@@ -34,9 +34,8 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "invalid_request" }, { status: 400 });
   }
 
-  let callbackURL: string;
   try {
-    callbackURL = assertAllowedRelativeCallback(parsed.data.returnTo);
+    assertAllowedRelativeCallback(parsed.data.returnTo);
   } catch {
     return Response.json({ error: "invalid_callback" }, { status: 400 });
   }
@@ -61,10 +60,11 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "rate_limited" }, { status: 429 });
   }
 
+  // Better Auth returns the session instead of a redirect when callbackURL is omitted.
+  // Navigation remains a client concern after the Set-Cookie response has been received.
   return auth.api.magicLinkVerify({
     query: {
       token: parsed.data.token,
-      callbackURL,
     },
     headers: request.headers,
     asResponse: true,
