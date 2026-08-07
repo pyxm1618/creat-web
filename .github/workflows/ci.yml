@@ -50,7 +50,7 @@ jobs:
             --config src/platform/auth/auth-cli.ts \
             --output /tmp/auth-schema.ts \
             --yes
-          bunx prettier --write /tmp/auth-schema.ts
+          bunx prettier --config .prettierrc.json --write /tmp/auth-schema.ts
           diff -u src/platform/database/auth-schema.ts /tmp/auth-schema.ts
       - name: Formatting
         run: bun run format:check
