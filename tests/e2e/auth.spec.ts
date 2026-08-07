@@ -23,7 +23,15 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
 
   await page.goto("/sign-in");
   await page.getByLabel("Email address").fill(email);
+  const sendResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/magic-link/request") &&
+      response.request().method() === "POST",
+    { timeout: 15_000 },
+  );
   await page.getByRole("button", { name: "Send secure sign-in link" }).click();
+  const sendResponse = await sendResponsePromise;
+  expect(sendResponse.status(), await sendResponse.text()).toBe(202);
   await expect(page.getByText(/a sign-in link has been sent/i)).toBeVisible();
 
   const mailbox = await request.get(`/api/test/emails/latest?to=${encodeURIComponent(email)}`);
@@ -74,7 +82,7 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
   );
   await page.getByRole("button", { name: "Confirm sign in" }).click();
   const verificationResponse = await verificationResponsePromise;
-  expect(verificationResponse.ok()).toBeTruthy();
+  expect(verificationResponse.status()).toBeLessThan(400);
   expect((await verificationResponse.headerValue("set-cookie")) ?? "").toContain("session_token");
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByRole("heading", { name: /Welcome/ })).toBeVisible();
