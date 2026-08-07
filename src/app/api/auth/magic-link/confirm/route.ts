@@ -1,3 +1,4 @@
+import { isAPIError } from "better-auth/api";
 import { z } from "zod";
 
 import { createAuthAttemptLimiter } from "@/platform/auth/attempt-rate-limit";
@@ -60,13 +61,26 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "rate_limited" }, { status: 429 });
   }
 
-  // Better Auth returns the session instead of a redirect when callbackURL is omitted.
-  // Navigation remains a client concern after the Set-Cookie response has been received.
-  return auth.api.magicLinkVerify({
-    query: {
-      token: parsed.data.token,
-    },
-    headers: request.headers,
-    asResponse: true,
-  });
+  try {
+    const { headers } = await auth.api.magicLinkVerify({
+      query: {
+        token: parsed.data.token,
+      },
+      headers: request.headers,
+      returnHeaders: true,
+    });
+
+    return new Response(null, {
+      status: 204,
+      headers,
+    });
+  } catch (error) {
+    if (isAPIError(error)) {
+      return Response.json(
+        { error: "invalid_or_expired_token" },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+    throw error;
+  }
 }
