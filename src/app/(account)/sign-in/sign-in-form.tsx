@@ -2,24 +2,32 @@
 
 import { useState, type FormEvent } from "react";
 
-import { authClient } from "@/platform/auth/auth-client";
-
 export function SignInForm() {
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "limited" | "error">(
+    "idle",
+  );
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("sending");
 
-    const result = await authClient.signIn.magicLink({
-      email,
-      callbackURL: "/account",
-      errorCallbackURL: "/sign-in?error=magic-link",
-      metadata: { returnTo: "/account" },
-    });
+    const response = await fetch("/api/auth/magic-link/request", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, returnTo: "/account" }),
+    }).catch(() => null);
 
-    setStatus(result.error ? "error" : "sent");
+    if (!response) {
+      setStatus("error");
+      return;
+    }
+    if (response.status === 429) {
+      setStatus("limited");
+      return;
+    }
+    setStatus(response.ok ? "sent" : "error");
   }
 
   return (
@@ -41,9 +49,11 @@ export function SignInForm() {
       <p id="sign-in-status" aria-live="polite">
         {status === "sent"
           ? "If this address can receive mail, a sign-in link has been sent."
-          : status === "error"
-            ? "The sign-in request could not be completed. Try again later."
-            : "The link expires after ten minutes and can be used once."}
+          : status === "limited"
+            ? "Too many sign-in requests. Try again later."
+            : status === "error"
+              ? "The sign-in request could not be completed. Try again later."
+              : "The link expires after ten minutes and can be used once."}
       </p>
     </form>
   );
