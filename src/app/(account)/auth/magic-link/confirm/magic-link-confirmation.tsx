@@ -8,19 +8,29 @@ export function MagicLinkConfirmation() {
   const [status, setStatus] = useState<"loading" | "ready" | "submitting" | "error">("loading");
 
   useEffect(() => {
+    let active = true;
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const fragmentToken = fragment.get("token");
     const fragmentReturnTo = fragment.get("returnTo") ?? "/account";
+
+    // Remove the token-bearing fragment before scheduling any React update.
     window.history.replaceState(null, "", window.location.pathname);
 
-    if (!fragmentToken) {
-      setStatus("error");
-      return;
-    }
+    queueMicrotask(() => {
+      if (!active) return;
+      if (!fragmentToken) {
+        setStatus("error");
+        return;
+      }
 
-    setToken(fragmentToken);
-    setReturnTo(fragmentReturnTo);
-    setStatus("ready");
+      setToken(fragmentToken);
+      setReturnTo(fragmentReturnTo);
+      setStatus("ready");
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function confirm() {
