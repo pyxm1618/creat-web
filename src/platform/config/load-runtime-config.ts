@@ -3,14 +3,17 @@ import { z } from "zod";
 import type { ProductConfig } from "./types";
 
 export type AppEnvironment = "local" | "test" | "staging" | "production";
+export type VercelEnvironment = "development" | "preview" | "production";
 export type EmailTransport = "disabled" | "test" | "resend";
 export type EnvironmentSource = Readonly<Record<string, string | undefined>>;
 
 export type RuntimeEnv = {
   readonly appEnv: AppEnvironment;
+  readonly vercelEnv: VercelEnvironment | undefined;
   readonly appOrigin: string;
   readonly databaseUrl: string;
   readonly betterAuthSecret: string | undefined;
+  readonly cronSecret: string | undefined;
   readonly emailTransport: EmailTransport;
   readonly emailFrom: string | undefined;
   readonly supportEmail: string | undefined;
@@ -24,9 +27,11 @@ export type RuntimeEnv = {
 
 const baseSchema = z.object({
   APP_ENV: z.enum(["local", "test", "staging", "production"]),
+  VERCEL_ENV: z.enum(["development", "preview", "production"]).optional(),
   APP_ORIGIN: z.url(),
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().optional(),
+  CRON_SECRET: z.string().optional(),
   EMAIL_TRANSPORT: z.enum(["test", "resend"]).optional(),
   EMAIL_FROM: z.string().optional(),
   SUPPORT_EMAIL: z.email().optional(),
@@ -39,6 +44,7 @@ const baseSchema = z.object({
 });
 
 const TEST_ONLY_AUTH_SECRET = "test-only-better-auth-secret-never-use-in-production";
+const TEST_ONLY_CRON_SECRET = "test-only-cron-secret-never-use-in-production";
 
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return false;
@@ -49,6 +55,24 @@ function requireSecret(value: string | undefined, label: string): string {
   if (!value) throw new Error(`${label} are required`);
   if (isPlaceholder(value)) throw new Error("placeholder secret");
   return value;
+}
+
+function assertDeploymentEnvironment(parsed: z.infer<typeof baseSchema>): void {
+  if (!parsed.VERCEL_ENV) return;
+
+  const expected: Record<VercelEnvironment, AppEnvironment> = {
+    development: "local",
+    preview: "staging",
+    production: "production",
+  };
+  if (parsed.APP_ENV !== expected[parsed.VERCEL_ENV]) {
+    throw new Error(
+      `VERCEL_ENV=${parsed.VERCEL_ENV} requires APP_ENV=${expected[parsed.VERCEL_ENV]}`,
+    );
+  }
+  if (parsed.APP_ENV === "test") {
+    throw new Error("APP_ENV=test is forbidden on Vercel deployments");
+  }
 }
 
 function resolveAuthSecret(
@@ -65,6 +89,19 @@ function resolveAuthSecret(
     throw new Error("Better Auth secret must contain at least 32 characters");
   }
   return parsed.BETTER_AUTH_SECRET;
+}
+
+function resolveCronSecret(
+  parsed: z.infer<typeof baseSchema>,
+  authEnabled: boolean,
+): string | undefined {
+  if (!authEnabled) return undefined;
+  if (parsed.APP_ENV === "local" || parsed.APP_ENV === "test") {
+    return parsed.CRON_SECRET ?? TEST_ONLY_CRON_SECRET;
+  }
+  const value = requireSecret(parsed.CRON_SECRET, "Cron secret");
+  if (value.length < 16) throw new Error("Cron secret must contain at least 16 characters");
+  return value;
 }
 
 function resolveEmailTransport(
@@ -88,6 +125,7 @@ export function loadRuntimeEnv(
   features: ProductConfig["features"],
 ): RuntimeEnv {
   const parsed = baseSchema.parse(source);
+  assertDeploymentEnvironment(parsed);
   const origin = new URL(parsed.APP_ORIGIN);
 
   if (
@@ -96,8 +134,15 @@ export function loadRuntimeEnv(
   ) {
     throw new Error("APP_ORIGIN must use HTTPS");
   }
+  if (
+    (parsed.APP_ENV === "staging" || parsed.APP_ENV === "production") &&
+    parsed.TEST_EMAIL_DIR
+  ) {
+    throw new Error("TEST_EMAIL_DIR is forbidden outside local and test environments");
+  }
 
   const betterAuthSecret = resolveAuthSecret(parsed, features.auth.enabled);
+  const cronSecret = resolveCronSecret(parsed, features.auth.enabled);
   let googleClientId: string | undefined;
   let googleClientSecret: string | undefined;
   let resendApiKey: string | undefined;
@@ -139,9 +184,11 @@ export function loadRuntimeEnv(
 
   return {
     appEnv: parsed.APP_ENV,
+    vercelEnv: parsed.VERCEL_ENV,
     appOrigin: parsed.APP_ORIGIN,
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret,
+    cronSecret,
     emailTransport,
     emailFrom,
     supportEmail,
