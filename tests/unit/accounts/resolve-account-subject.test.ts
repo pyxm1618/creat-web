@@ -37,7 +37,9 @@ describe("ensureActiveAccountSubject", () => {
   it("fails closed when the repaired subject is not active", async () => {
     const repository = {
       getActiveByAuthUserId: vi.fn().mockResolvedValue(null),
-      ensureForAuthUser: vi.fn().mockResolvedValue({ ...activeSubject, status: "deletion_pending" }),
+      ensureForAuthUser: vi
+        .fn()
+        .mockResolvedValue({ ...activeSubject, status: "deletion_pending" }),
     } as unknown as AccountSubjectRepository;
 
     await expect(ensureActiveAccountSubject(repository, "user_1")).rejects.toThrow(

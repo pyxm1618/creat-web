@@ -7,10 +7,7 @@ function validIp(value: string | null): string | null {
   return isIP(candidate) ? candidate : null;
 }
 
-export function extractTrustedClientIp(
-  headers: Headers,
-  environment: AppEnvironment,
-): string {
+export function extractTrustedClientIp(headers: Headers, environment: AppEnvironment): string {
   if (environment === "local" || environment === "test") {
     return validIp(headers.get("x-real-ip")) ?? "unknown";
   }

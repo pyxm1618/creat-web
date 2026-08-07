@@ -4,9 +4,7 @@ import { useState, type FormEvent } from "react";
 
 export function SignInForm() {
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "limited" | "error">(
-    "idle",
-  );
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "limited" | "error">("idle");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

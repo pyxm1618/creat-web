@@ -5,9 +5,7 @@ import { useEffect, useState } from "react";
 export function MagicLinkConfirmation() {
   const [token, setToken] = useState<string | null>(null);
   const [returnTo, setReturnTo] = useState("/account");
-  const [status, setStatus] = useState<"loading" | "ready" | "submitting" | "error">(
-    "loading",
-  );
+  const [status, setStatus] = useState<"loading" | "ready" | "submitting" | "error">("loading");
 
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
@@ -48,8 +46,7 @@ export function MagicLinkConfirmation() {
   return (
     <div>
       <p>
-        This page has not signed you in yet. Confirm only if you requested this link on this
-        device.
+        This page has not signed you in yet. Confirm only if you requested this link on this device.
       </p>
       <button type="button" onClick={confirm} disabled={status !== "ready"}>
         {status === "submitting" ? "Confirming…" : "Confirm sign in"}

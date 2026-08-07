@@ -5,9 +5,7 @@ import { transitionAccountSubject } from "@/platform/accounts/account-subject";
 describe("retained account subject lifecycle", () => {
   it("starts and completes deletion idempotently", () => {
     expect(transitionAccountSubject("active", "begin_deletion")).toBe("deletion_pending");
-    expect(transitionAccountSubject("deletion_pending", "begin_deletion")).toBe(
-      "deletion_pending",
-    );
+    expect(transitionAccountSubject("deletion_pending", "begin_deletion")).toBe("deletion_pending");
     expect(transitionAccountSubject("deletion_pending", "complete_deletion")).toBe("deleted");
     expect(transitionAccountSubject("deleted", "complete_deletion")).toBe("deleted");
   });

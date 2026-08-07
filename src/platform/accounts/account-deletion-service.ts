@@ -1,15 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  and,
-  asc,
-  eq,
-  inArray,
-  isNull,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
@@ -94,12 +85,7 @@ export function createAccountDeletionService(input: {
         lastAttemptAt: claimedAt,
         updatedAt: claimedAt,
       })
-      .where(
-        and(
-          eq(accountDeletionRequests.id, requestId),
-          duePredicate(claimedAt),
-        ),
-      )
+      .where(and(eq(accountDeletionRequests.id, requestId), duePredicate(claimedAt)))
       .returning();
     return rows[0] ?? null;
   }
@@ -149,7 +135,9 @@ export function createAccountDeletionService(input: {
       );
   }
 
-  async function runClaimed(current: AccountDeletionRequestRow): Promise<AccountDeletionRequestRow> {
+  async function runClaimed(
+    current: AccountDeletionRequestRow,
+  ): Promise<AccountDeletionRequestRow> {
     const leaseToken = current.leaseToken;
     if (!leaseToken) throw new Error("account deletion claim has no lease token");
 

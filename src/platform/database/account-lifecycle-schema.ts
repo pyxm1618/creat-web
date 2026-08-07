@@ -1,13 +1,4 @@
-import {
-  index,
-  integer,
-  jsonb,
-  pgEnum,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import { accountSubjects } from "./account-subject-schema";
 import { user } from "./auth-schema";
@@ -51,11 +42,7 @@ export const accountDeletionRequests = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
   },
   (table) => [
-    index("account_deletion_due_idx").on(
-      table.status,
-      table.nextAttemptAt,
-      table.leaseExpiresAt,
-    ),
+    index("account_deletion_due_idx").on(table.status, table.nextAttemptAt, table.leaseExpiresAt),
   ],
 );
 

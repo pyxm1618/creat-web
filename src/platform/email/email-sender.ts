@@ -1,7 +1,4 @@
-export type TransactionalEmailTemplate =
-  | "magic-link"
-  | "account-deletion"
-  | "security-notice";
+export type TransactionalEmailTemplate = "magic-link" | "account-deletion" | "security-notice";
 
 export type TransactionalEmail = {
   readonly to: string;

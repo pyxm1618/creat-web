@@ -143,7 +143,9 @@ describe("account deletion workflow", () => {
       step: "access_revoked",
       attempts: 1,
     });
-    expect(await database.db.select().from(user).where(eq(user.id, "delete_retry"))).toHaveLength(1);
+    expect(await database.db.select().from(user).where(eq(user.id, "delete_retry"))).toHaveLength(
+      1,
+    );
 
     const completed = await service.run(first.id);
     expect(completed.status).toBe("completed");

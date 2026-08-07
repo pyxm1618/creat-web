@@ -54,7 +54,10 @@ export async function readLatestTestEmail(
     throw error;
   }
 
-  const fileName = files.filter((file) => file.endsWith(".json")).sort().at(-1);
+  const fileName = files
+    .filter((file) => file.endsWith(".json"))
+    .sort()
+    .at(-1);
   if (!fileName) return null;
   return JSON.parse(await readFile(path.join(directory, fileName), "utf8")) as StoredTestEmail;
 }

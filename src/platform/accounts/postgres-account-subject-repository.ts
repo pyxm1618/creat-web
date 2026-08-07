@@ -105,10 +105,7 @@ export function createPostgresAccountSubjectRepository(
         .update(accountSubjects)
         .set({ status: "deleted", deletedAt: new Date() })
         .where(
-          and(
-            eq(accountSubjects.id, subjectId),
-            eq(accountSubjects.status, "deletion_pending"),
-          ),
+          and(eq(accountSubjects.id, subjectId), eq(accountSubjects.status, "deletion_pending")),
         )
         .returning();
 

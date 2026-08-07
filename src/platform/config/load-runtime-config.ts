@@ -134,10 +134,7 @@ export function loadRuntimeEnv(
   ) {
     throw new Error("APP_ORIGIN must use HTTPS");
   }
-  if (
-    (parsed.APP_ENV === "staging" || parsed.APP_ENV === "production") &&
-    parsed.TEST_EMAIL_DIR
-  ) {
+  if ((parsed.APP_ENV === "staging" || parsed.APP_ENV === "production") && parsed.TEST_EMAIL_DIR) {
     throw new Error("TEST_EMAIL_DIR is forbidden outside local and test environments");
   }
 

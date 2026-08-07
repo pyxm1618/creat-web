@@ -5,7 +5,9 @@ import { assertFreshSession } from "@/platform/auth/session";
 
 describe("authorization policies", () => {
   it("allows only the resource owner", () => {
-    expect(() => assertOwner({ authenticatedUserId: "user_1", ownerUserId: "user_1" })).not.toThrow();
+    expect(() =>
+      assertOwner({ authenticatedUserId: "user_1", ownerUserId: "user_1" }),
+    ).not.toThrow();
     expect(() => assertOwner({ authenticatedUserId: "user_1", ownerUserId: "user_2" })).toThrow(
       "resource access denied",
     );

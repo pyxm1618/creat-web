@@ -68,7 +68,9 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
   expect(getRequests.some((url) => token && url.includes(token))).toBeFalsy();
 
   const verificationResponsePromise = page.waitForResponse(
-    (response) => response.url().endsWith("/api/auth/magic-link/confirm") && response.request().method() === "POST",
+    (response) =>
+      response.url().endsWith("/api/auth/magic-link/confirm") &&
+      response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Confirm sign in" }).click();
   const verificationResponse = await verificationResponsePromise;
