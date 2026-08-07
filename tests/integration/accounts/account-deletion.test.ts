@@ -5,7 +5,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createAccountDeletionService } from "@/platform/accounts/account-deletion-service";
 import { createBetterAuthIdentityDeletion } from "@/platform/accounts/better-auth-identity-deletion";
 import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
-import { auth } from "@/platform/auth/auth";
+import { createAuth } from "@/platform/auth/create-auth";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   account,
@@ -14,15 +14,25 @@ import {
   session,
   user,
 } from "@/platform/database/schema";
+import * as schema from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
 
 const database = createDatabaseClient(databaseUrl);
 const subjects = createPostgresAccountSubjectRepository(database.db);
+const testAuth = createAuth({
+  appName: "creat-web-test",
+  baseURL: "http://localhost:3000",
+  secret: "integration-better-auth-secret-with-at-least-32-characters",
+  cookiePrefix: "creat-web-test",
+  database: database.db,
+  schema,
+  sendMagicLink: async () => undefined,
+});
 const betterAuthIdentityDeletion = createBetterAuthIdentityDeletion({
   database: database.db,
-  invokeDeleteUser: (headers) => auth.api.deleteUser({ headers, asResponse: true }),
+  invokeDeleteUser: (headers) => testAuth.api.deleteUser({ headers, asResponse: true }),
 });
 
 beforeAll(async () => {
@@ -123,7 +133,7 @@ describe("account deletion workflow", () => {
       },
       identityDeletion: databaseIdentityDeletion(),
       now: (() => {
-        let value = new Date("2026-08-07T00:00:00Z").getTime();
+        let value = new Date("2030-08-07T00:00:00Z").getTime();
         return () => new Date((value += 60_000));
       })(),
     });
@@ -209,7 +219,7 @@ describe("account deletion workflow", () => {
         },
       },
       now: (() => {
-        let value = new Date("2026-08-07T02:00:00Z").getTime();
+        let value = new Date("2030-08-07T02:00:00Z").getTime();
         return () => new Date((value += 60_000));
       })(),
     });
