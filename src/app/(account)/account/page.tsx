@@ -15,7 +15,8 @@ export default async function AccountPage() {
         <h1 id="account-title">Welcome, {context.user.name}</h1>
         <p>{context.user.email}</p>
         <nav aria-label="Account navigation">
-          <Link href="/account/credits">Credits</Link> · <Link href="/account/billing">Billing history</Link> ·{" "}
+          <Link href="/account/credits">Credits</Link> ·{" "}
+          <Link href="/account/billing">Billing history</Link> ·{" "}
           <Link href="/account/security">Security and account deletion</Link>
         </nav>
       </section>

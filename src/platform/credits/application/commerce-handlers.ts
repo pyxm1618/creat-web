@@ -18,7 +18,8 @@ export function createCreditFulfillmentHandlers(
       throw new Error("credit fulfillment key and type are required");
     }
     const operation = `fulfill:${definition.fulfillmentKey}`;
-    if (handlers[operation]) throw new Error(`duplicate credit fulfillment operation: ${operation}`);
+    if (handlers[operation])
+      throw new Error(`duplicate credit fulfillment operation: ${operation}`);
     handlers[operation] = createCreditOrderFulfillment(database, definition);
   }
   return handlers;

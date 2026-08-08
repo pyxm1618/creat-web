@@ -1,12 +1,4 @@
-import {
-  and,
-  eq,
-  inArray,
-  isNull,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { accountSubjects } from "@/platform/database/account-subject-schema";
@@ -64,12 +56,12 @@ async function lockSubjectCreditType(
   );
 }
 
-async function loadAllocations(
-  tx: CreditTx,
-  reservationId: string,
-): Promise<CreditAllocation[]> {
+async function loadAllocations(tx: CreditTx, reservationId: string): Promise<CreditAllocation[]> {
   const rows = await tx
-    .select({ grantId: creditReservationAllocations.grantId, quantity: creditReservationAllocations.quantity })
+    .select({
+      grantId: creditReservationAllocations.grantId,
+      quantity: creditReservationAllocations.quantity,
+    })
     .from(creditReservationAllocations)
     .where(eq(creditReservationAllocations.reservationId, reservationId));
   return rows;
@@ -247,7 +239,10 @@ export async function getCreditBalance(
       .select()
       .from(creditGrants)
       .where(
-        and(eq(creditGrants.subjectId, input.subjectId), eq(creditGrants.creditType, input.creditType)),
+        and(
+          eq(creditGrants.subjectId, input.subjectId),
+          eq(creditGrants.creditType, input.creditType),
+        ),
       );
     const ids = grants.map((grant) => grant.id);
     const reductions = await loadGrantReductions(tx, ids);
@@ -584,13 +579,19 @@ export async function revokeSourceCredits(
 ): Promise<{ readonly revoked: number; readonly blocked: number }> {
   if (input.quantity !== undefined) {
     assertCreditQuantity(input.quantity);
-    if (!input.partialPolicy) throw new Error("partial credit reversal requires operator-reviewed policy");
+    if (!input.partialPolicy)
+      throw new Error("partial credit reversal requires operator-reviewed policy");
   }
   const now = input.now ?? new Date();
   const grants = await database
     .select({ id: creditGrants.id })
     .from(creditGrants)
-    .where(and(eq(creditGrants.sourceType, input.source.type), eq(creditGrants.sourceId, input.source.id)));
+    .where(
+      and(
+        eq(creditGrants.sourceType, input.source.type),
+        eq(creditGrants.sourceId, input.source.id),
+      ),
+    );
   if (grants.length === 0) return { revoked: 0, blocked: input.quantity ?? 0 };
 
   let targetRemaining = input.quantity ?? Number.MAX_SAFE_INTEGER;
@@ -639,7 +640,10 @@ export async function revokeSourceCredits(
       const irrecoverable = reduction.consumed + reserved;
       blocked += Math.min(irrecoverable, Math.max(0, targetRemaining));
       if (desired === unused && unused > 0 && reduction.consumed + reserved === 0) {
-        await tx.update(creditGrants).set({ state: "revoked" }).where(eq(creditGrants.id, grant.id));
+        await tx
+          .update(creditGrants)
+          .set({ state: "revoked" })
+          .where(eq(creditGrants.id, grant.id));
       }
     });
   }

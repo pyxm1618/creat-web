@@ -49,8 +49,9 @@ export default async function CreditsPage() {
           <ul>
             {balances.map(({ creditType, balance }) => (
               <li key={creditType}>
-                <strong>{creditType}</strong>: {balance.available} available, {balance.reserved} reserved,{" "}
-                {balance.consumed} consumed, {balance.expired} expired, {balance.revoked} revoked.
+                <strong>{creditType}</strong>: {balance.available} available, {balance.reserved}{" "}
+                reserved, {balance.consumed} consumed, {balance.expired} expired, {balance.revoked}{" "}
+                revoked.
               </li>
             ))}
           </ul>
@@ -62,7 +63,8 @@ export default async function CreditsPage() {
           <ul>
             {history.map((entry) => (
               <li key={entry.id}>
-                {entry.createdAt.toISOString()} · {entry.creditType} · {entry.entryType} · {entry.quantity}
+                {entry.createdAt.toISOString()} · {entry.creditType} · {entry.entryType} ·{" "}
+                {entry.quantity}
               </li>
             ))}
           </ul>

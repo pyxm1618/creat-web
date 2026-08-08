@@ -24,7 +24,9 @@ export async function reconcileCreditLedger(
   const reservations = await database.select().from(creditReservations);
   for (const reservation of reservations) {
     const [allocation] = await database
-      .select({ total: sql<number>`coalesce(sum(${creditReservationAllocations.quantity}), 0)::int` })
+      .select({
+        total: sql<number>`coalesce(sum(${creditReservationAllocations.quantity}), 0)::int`,
+      })
       .from(creditReservationAllocations)
       .where(eq(creditReservationAllocations.reservationId, reservation.id));
     if (Number(allocation?.total ?? 0) !== reservation.quantity) {
@@ -73,7 +75,11 @@ export async function reconcileCreditLedger(
         detail: `quantity=${grant.quantity} terminal=${terminal}`,
       });
     }
-    if (grant.state === "expired" && (totals.get("expire") ?? 0) === 0 && terminal < grant.quantity) {
+    if (
+      grant.state === "expired" &&
+      (totals.get("expire") ?? 0) === 0 &&
+      terminal < grant.quantity
+    ) {
       issues.push({
         code: "EXPIRED_GRANT_WITHOUT_EXPIRY_ENTRY",
         entityId: grant.id,
@@ -85,7 +91,10 @@ export async function reconcileCreditLedger(
   const crossSubject = await database
     .select({ reservationId: creditReservations.id, grantId: creditGrants.id })
     .from(creditReservationAllocations)
-    .innerJoin(creditReservations, eq(creditReservations.id, creditReservationAllocations.reservationId))
+    .innerJoin(
+      creditReservations,
+      eq(creditReservations.id, creditReservationAllocations.reservationId),
+    )
     .innerJoin(creditGrants, eq(creditGrants.id, creditReservationAllocations.grantId))
     .where(sql`${creditReservations.subjectId} <> ${creditGrants.subjectId}`);
   for (const row of crossSubject) {
@@ -99,7 +108,10 @@ export async function reconcileCreditLedger(
   const crossType = await database
     .select({ reservationId: creditReservations.id, grantId: creditGrants.id })
     .from(creditReservationAllocations)
-    .innerJoin(creditReservations, eq(creditReservations.id, creditReservationAllocations.reservationId))
+    .innerJoin(
+      creditReservations,
+      eq(creditReservations.id, creditReservationAllocations.reservationId),
+    )
     .innerJoin(creditGrants, eq(creditGrants.id, creditReservationAllocations.grantId))
     .where(sql`${creditReservations.creditType} <> ${creditGrants.creditType}`);
   for (const row of crossType) {

@@ -2,10 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-import {
-  getCreditBalance,
-  grantCredits,
-} from "@/platform/credits/application/credit-service";
+import { getCreditBalance, grantCredits } from "@/platform/credits/application/credit-service";
 import { executeCreditBackedWork } from "@/platform/credits/application/execute-credit-backed-work";
 import { runCreditFinalizationWorker } from "@/platform/credits/application/finalization-worker";
 import { createDatabaseClient } from "@/platform/database/client";

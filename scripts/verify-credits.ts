@@ -24,7 +24,8 @@ for (const definition of creditFulfillmentDefinitions) {
     throw new Error("credit fulfillment quantity must be a positive safe integer");
   }
   const operation = `fulfill:${definition.fulfillmentKey}`;
-  if (operations.has(operation)) throw new Error(`duplicate credit fulfillment operation: ${operation}`);
+  if (operations.has(operation))
+    throw new Error(`duplicate credit fulfillment operation: ${operation}`);
   operations.add(operation);
 }
 
@@ -38,7 +39,9 @@ if (featuresConfig.commerce.credits) {
   );
   for (const definition of creditFulfillmentDefinitions) {
     if (!enabledOneTime.some((product) => product.fulfillmentKey === definition.fulfillmentKey)) {
-      throw new Error(`credit fulfillment has no enabled one-time product: ${definition.fulfillmentKey}`);
+      throw new Error(
+        `credit fulfillment has no enabled one-time product: ${definition.fulfillmentKey}`,
+      );
     }
   }
 }

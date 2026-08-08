@@ -36,7 +36,10 @@ export const creditGrants = pgTable(
     uniqueIndex("credit_grant_idempotency_uq").on(table.idempotencyKey),
     index("credit_grant_subject_type_idx").on(table.subjectId, table.creditType, table.grantedAt),
     check("credit_grant_quantity_positive", sql`${table.quantity} > 0`),
-    check("credit_grant_state_valid", sql`${table.state} in ('active','exhausted','expired','revoked')`),
+    check(
+      "credit_grant_state_valid",
+      sql`${table.state} in ('active','exhausted','expired','revoked')`,
+    ),
   ],
 );
 
@@ -68,7 +71,11 @@ export const creditReservations = pgTable(
       table.purposeId,
     ),
     uniqueIndex("credit_reservation_idempotency_uq").on(table.idempotencyKey),
-    index("credit_reservation_subject_type_idx").on(table.subjectId, table.creditType, table.status),
+    index("credit_reservation_subject_type_idx").on(
+      table.subjectId,
+      table.creditType,
+      table.status,
+    ),
     index("credit_reservation_expiry_idx").on(table.status, table.expiresAt),
     check("credit_reservation_quantity_positive", sql`${table.quantity} > 0`),
     check(
@@ -143,7 +150,9 @@ export const creditFinalizationJobs = pgTable(
     attempts: integer("attempts").default(0).notNull(),
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
-    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
     lastErrorCode: text("last_error_code"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),

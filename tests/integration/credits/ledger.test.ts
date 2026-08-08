@@ -201,7 +201,9 @@ it("expires unused grants and revokes only unused source credits", async () => {
     expiresAt: new Date("2026-08-08T09:00:00Z"),
     actor: "system",
   });
-  expect(await expireGrants(database.db, { now: new Date("2026-08-08T09:01:00Z") })).toBeGreaterThanOrEqual(1);
+  expect(
+    await expireGrants(database.db, { now: new Date("2026-08-08T09:01:00Z") }),
+  ).toBeGreaterThanOrEqual(1);
   expect(
     await database.db.query.creditGrants.findFirst({ where: eq(creditGrants.id, expiring.id) }),
   ).toMatchObject({ state: "expired" });
@@ -235,7 +237,9 @@ it("expires unused grants and revokes only unused source credits", async () => {
   });
   expect(reversal.revoked).toBe(3);
   expect(reversal.blocked).toBeGreaterThanOrEqual(2);
-  const grantRow = await database.db.query.creditGrants.findFirst({ where: eq(creditGrants.id, orderGrant.id) });
+  const grantRow = await database.db.query.creditGrants.findFirst({
+    where: eq(creditGrants.id, orderGrant.id),
+  });
   expect(grantRow).toBeTruthy();
 });
 
