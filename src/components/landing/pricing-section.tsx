@@ -8,8 +8,8 @@ export function PricingSection({ title }: Readonly<{ title: string }>) {
           <p className="section-kicker">Commercial model</p>
           <h2 id="pricing-preview-heading">{title}</h2>
           <p>
-            Pricing is owned by the server-side product catalog. The starter does not trust client-submitted
-            amounts, currencies, product identifiers, or entitlements.
+            Pricing is owned by the server-side product catalog. The starter does not trust
+            client-submitted amounts, currencies, product identifiers, or entitlements.
           </p>
         </div>
         <div className="demo-panel">

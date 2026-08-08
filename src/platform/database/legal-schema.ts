@@ -11,7 +11,9 @@ export const legalAcceptances = pgTable(
       .references(() => accountSubjects.id, { onDelete: "restrict" }),
     documentKey: text("document_key").notNull(),
     version: text("version").notNull(),
-    acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
     source: text("source").notNull(),
   },
   (table) => [

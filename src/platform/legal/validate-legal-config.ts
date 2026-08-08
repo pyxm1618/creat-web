@@ -84,7 +84,9 @@ function hasProcessor(processors: LegalConfig["processors"], name: string): bool
 }
 
 function isPlaceholder(value: string): boolean {
-  return /example\.com|support@example|change[_ -]?me|todo|your company|sample operator/i.test(value);
+  return /example\.com|support@example|change[_ -]?me|todo|your company|sample operator/i.test(
+    value,
+  );
 }
 
 export function validateLegalConfig(input: {
@@ -100,7 +102,12 @@ export function validateLegalConfig(input: {
     }
   }
 
-  for (const custom of [input.features.hosting, input.features.database, input.features.storage, input.features.ai]) {
+  for (const custom of [
+    input.features.hosting,
+    input.features.database,
+    input.features.storage,
+    input.features.ai,
+  ]) {
     if (custom && !hasProcessor(legal.processors, custom)) {
       throw new Error(`missing processor disclosure: ${custom}`);
     }
@@ -109,13 +116,19 @@ export function validateLegalConfig(input: {
   if ((input.features.subscriptions || legal.subscriptions) && !legal.subscriptionTerms) {
     throw new Error("subscription cancellation terms are required");
   }
-  if (input.features.subscriptions !== undefined && input.features.subscriptions !== legal.subscriptions) {
+  if (
+    input.features.subscriptions !== undefined &&
+    input.features.subscriptions !== legal.subscriptions
+  ) {
     throw new Error("subscription feature and legal facts disagree");
   }
   if (input.features.credits !== undefined && input.features.credits !== legal.credits) {
     throw new Error("credit feature and legal facts disagree");
   }
-  if (legal.paymentModel === "none" && (legal.oneTimePurchases || legal.subscriptions || legal.credits)) {
+  if (
+    legal.paymentModel === "none" &&
+    (legal.oneTimePurchases || legal.subscriptions || legal.credits)
+  ) {
     throw new Error("payment model conflicts with commercial features");
   }
 

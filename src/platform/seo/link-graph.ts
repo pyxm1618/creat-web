@@ -24,10 +24,23 @@ export function validateLinkGraph(
 
   for (const link of links) {
     const target = normalizeRoute(link.to);
-    if (target.startsWith("http://") || target.startsWith("https://") || target.startsWith("mailto:")) {
+    if (
+      target.startsWith("http://") ||
+      target.startsWith("https://") ||
+      target.startsWith("mailto:")
+    ) {
       continue;
     }
-    if (!routes.has(target) && target !== "/privacy" && target !== "/terms" && target !== "/contact" && target !== "/refund-policy" && target !== "/acceptable-use" && target !== "/account-deletion" && target !== "/sign-in") {
+    if (
+      !routes.has(target) &&
+      target !== "/privacy" &&
+      target !== "/terms" &&
+      target !== "/contact" &&
+      target !== "/refund-policy" &&
+      target !== "/acceptable-use" &&
+      target !== "/account-deletion" &&
+      target !== "/sign-in"
+    ) {
       broken.add(target);
       continue;
     }

@@ -3,7 +3,9 @@ import { expect, it } from "vitest";
 import { serializeJsonLd, webApplicationJsonLd } from "@/platform/seo/structured-data";
 
 it("escapes script-breaking user text", () => {
-  expect(serializeJsonLd({ name: "</script><script>alert(1)</script>" })).not.toContain("</script>");
+  expect(serializeJsonLd({ name: "</script><script>alert(1)</script>" })).not.toContain(
+    "</script>",
+  );
 });
 
 it("requires visible offer data before emitting price", () => {

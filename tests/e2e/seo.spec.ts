@@ -26,5 +26,7 @@ test("structured data parses and mirrors visible homepage facts", async ({ page 
   for (const text of await scripts.allTextContents()) {
     expect(() => JSON.parse(text)).not.toThrow();
   }
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("Build a focused web product");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText(
+    "Build a focused web product",
+  );
 });

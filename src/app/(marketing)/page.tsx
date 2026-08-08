@@ -14,16 +14,14 @@ const sections: readonly LandingSection[] = [
     type: "hero",
     eyebrow: "Neutral starter · draft content",
     h1: "Build a focused web product on a safer foundation",
-    body:
-      "This sample product purpose is intentionally neutral: demonstrate a reusable web foundation with authentication, technical SEO, configurable legal pages, commerce boundaries and release gates without inheriting another product’s identity.",
+    body: "This sample product purpose is intentionally neutral: demonstrate a reusable web foundation with authentication, technical SEO, configurable legal pages, commerce boundaries and release gates without inheriting another product’s identity.",
     primaryCta: { label: "Review pricing structure", href: "/pricing" },
     secondaryCta: { label: "Sign in", href: "/sign-in" },
   },
   {
     type: "tool-demo",
     title: "Separate product logic from platform infrastructure",
-    body:
-      "Keep authentication, SEO, legal, commerce and observability behind reusable interfaces while the actual product experience remains project-owned.",
+    body: "Keep authentication, SEO, legal, commerce and observability behind reusable interfaces while the actual product experience remains project-owned.",
     render: (
       <div>
         <p className="section-kicker">Example boundary</p>
@@ -55,18 +53,36 @@ const sections: readonly LandingSection[] = [
     type: "how-it-works",
     title: "A repeatable delivery sequence",
     steps: [
-      { title: "Configure", body: "Replace draft site, route, legal and product facts with reviewed project data." },
-      { title: "Build", body: "Implement the narrow product experience on top of stable platform boundaries." },
-      { title: "Verify", body: "Run architecture, security, SEO, data and release checks before production." },
+      {
+        title: "Configure",
+        body: "Replace draft site, route, legal and product facts with reviewed project data.",
+      },
+      {
+        title: "Build",
+        body: "Implement the narrow product experience on top of stable platform boundaries.",
+      },
+      {
+        title: "Verify",
+        body: "Run architecture, security, SEO, data and release checks before production.",
+      },
     ],
   },
   {
     type: "features",
     title: "Reusable foundations without premature framework lock-in",
     items: [
-      { title: "Explicit route policy", body: "Each route is indexable, noindex, private or system—never implicitly public." },
-      { title: "Provider isolation", body: "External email, auth and payment services sit behind application boundaries." },
-      { title: "Fail-closed release checks", body: "Draft legal facts, placeholder domains and unsafe deployment modes block release." },
+      {
+        title: "Explicit route policy",
+        body: "Each route is indexable, noindex, private or system—never implicitly public.",
+      },
+      {
+        title: "Provider isolation",
+        body: "External email, auth and payment services sit behind application boundaries.",
+      },
+      {
+        title: "Fail-closed release checks",
+        body: "Draft legal facts, placeholder domains and unsafe deployment modes block release.",
+      },
     ],
   },
   { type: "pricing", title: "Keep price and entitlement authority on the server" },
@@ -76,7 +92,8 @@ const sections: readonly LandingSection[] = [
     items: [
       {
         question: "Is this a finished product?",
-        answer: "No. It is a reusable starter whose product copy, commercial facts and legal facts must be replaced and reviewed for each launch.",
+        answer:
+          "No. It is a reusable starter whose product copy, commercial facts and legal facts must be replaced and reviewed for each launch.",
       },
       {
         question: "Does the starter guarantee search rankings?",
@@ -84,7 +101,8 @@ const sections: readonly LandingSection[] = [
       },
       {
         question: "Can providers be disabled?",
-        answer: "Yes. Optional integrations are composed behind feature flags and must not require secrets merely because their modules exist.",
+        answer:
+          "Yes. Optional integrations are composed behind feature flags and must not require secrets merely because their modules exist.",
       },
     ],
   },
@@ -94,14 +112,15 @@ const sections: readonly LandingSection[] = [
     body: (
       <>
         <p>
-          The starter standardizes technical concerns that are easy to get subtly wrong: authentication sessions,
-          route indexability, canonical behavior, structured data, legal document versioning, payment state,
-          idempotency, retries, retention and release verification.
+          The starter standardizes technical concerns that are easy to get subtly wrong:
+          authentication sessions, route indexability, canonical behavior, structured data, legal
+          document versioning, payment state, idempotency, retries, retention and release
+          verification.
         </p>
         <p>
-          It deliberately leaves positioning, product mechanics, final legal language and production provider facts
-          to the downstream project. That separation makes the shared foundation reusable without turning it into a
-          product-specific monolith.
+          It deliberately leaves positioning, product mechanics, final legal language and production
+          provider facts to the downstream project. That separation makes the shared foundation
+          reusable without turning it into a product-specific monolith.
         </p>
       </>
     ),

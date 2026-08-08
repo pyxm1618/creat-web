@@ -23,7 +23,10 @@ export default function PricingPage() {
       <JsonLd
         value={breadcrumbJsonLd([
           { name: "Home", url: routeRegistry.site.canonicalOrigin },
-          { name: "Pricing", url: new URL("/pricing", routeRegistry.site.canonicalOrigin).toString() },
+          {
+            name: "Pricing",
+            url: new URL("/pricing", routeRegistry.site.canonicalOrigin).toString(),
+          },
         ])}
       />
       <div className="content-width content-width--narrow">
@@ -31,8 +34,9 @@ export default function PricingPage() {
         <p className="eyebrow">Draft commercial shell</p>
         <h1>{route.h1}</h1>
         <p className="lead">
-          This starter does not ship a fake price. Downstream products define reviewed server-side products,
-          currencies, fulfillment keys and refund policy mappings before checkout is enabled.
+          This starter does not ship a fake price. Downstream products define reviewed server-side
+          products, currencies, fulfillment keys and refund policy mappings before checkout is
+          enabled.
         </p>
         <section className="pricing-card" aria-labelledby="pricing-contract-heading">
           <h2 id="pricing-contract-heading">Server-owned pricing contract</h2>
@@ -43,12 +47,13 @@ export default function PricingPage() {
             <li>Fulfillment and refund policy keys</li>
           </ul>
           <p>
-            Browser-submitted amounts, provider IDs and entitlements are never authoritative. The commerce phase
-            validates them against this server-owned catalog.
+            Browser-submitted amounts, provider IDs and entitlements are never authoritative. The
+            commerce phase validates them against this server-owned catalog.
           </p>
         </section>
         <p>
-          <Link href="/refund-policy">Read the refund-policy framework</Link> or <Link href="/terms">review the terms framework</Link>.
+          <Link href="/refund-policy">Read the refund-policy framework</Link> or{" "}
+          <Link href="/terms">review the terms framework</Link>.
         </p>
       </div>
     </main>

@@ -19,9 +19,18 @@ export type LandingSection =
       readonly primaryCta: { readonly label: string; readonly href: string };
       readonly secondaryCta?: { readonly label: string; readonly href: string };
     }
-  | { readonly type: "tool-demo"; readonly title: string; readonly body: string; readonly render: ReactNode }
+  | {
+      readonly type: "tool-demo";
+      readonly title: string;
+      readonly body: string;
+      readonly render: ReactNode;
+    }
   | { readonly type: "use-cases"; readonly title: string; readonly items: readonly UseCaseItem[] }
-  | { readonly type: "how-it-works"; readonly title: string; readonly steps: readonly ProcessStep[] }
+  | {
+      readonly type: "how-it-works";
+      readonly title: string;
+      readonly steps: readonly ProcessStep[];
+    }
   | { readonly type: "features"; readonly title: string; readonly items: readonly FeatureItem[] }
   | { readonly type: "pricing"; readonly title: string }
   | { readonly type: "faq"; readonly title: string; readonly items: readonly FaqItem[] }

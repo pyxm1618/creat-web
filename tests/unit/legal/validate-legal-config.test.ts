@@ -23,7 +23,10 @@ it("rejects subscription products without cancellation terms", () => {
 
 it("permits draft sample facts outside production release mode", () => {
   expect(
-    validateLegalConfig({ legal: legalConfig, features: { resend: true, subscriptions: false, credits: false } }),
+    validateLegalConfig({
+      legal: legalConfig,
+      features: { resend: true, subscriptions: false, credits: false },
+    }),
   ).toBeTruthy();
 });
 

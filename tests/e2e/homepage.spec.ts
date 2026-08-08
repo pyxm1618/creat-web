@@ -15,6 +15,8 @@ test("homepage has server-rendered purpose, one H1 and meaningful navigation", a
 test("homepage does not overflow a 375px viewport", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto("/");
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth,
+  );
   expect(overflow).toBe(false);
 });

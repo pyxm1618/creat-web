@@ -15,7 +15,9 @@ export function SiteFooter() {
   return (
     <footer className="site-footer">
       <div className="content-width site-footer__inner">
-        <p>© {new Date().getUTCFullYear()} {siteConfig.name}. Starter content remains project-owned.</p>
+        <p>
+          © {new Date().getUTCFullYear()} {siteConfig.name}. Starter content remains project-owned.
+        </p>
         <nav aria-label="Legal navigation" className="footer-nav">
           {legalLinks.map(([label, href]) => (
             <Link href={href} key={href}>

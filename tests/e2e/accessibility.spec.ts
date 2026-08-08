@@ -2,7 +2,9 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 for (const route of ["/", "/pricing", "/privacy"] as const) {
-  test(`${route} has no serious or critical automated accessibility violations`, async ({ page }) => {
+  test(`${route} has no serious or critical automated accessibility violations`, async ({
+    page,
+  }) => {
     await page.goto(route);
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])

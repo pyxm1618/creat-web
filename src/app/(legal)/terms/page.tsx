@@ -6,7 +6,11 @@ import { routeRegistry } from "@/config/routes.config";
 import { currentSeoEnvironment } from "@/platform/seo/environment-policy";
 import { metadataForRoute } from "@/platform/seo/metadata";
 
-export const metadata: Metadata = metadataForRoute(routeRegistry, "/terms", currentSeoEnvironment());
+export const metadata: Metadata = metadataForRoute(
+  routeRegistry,
+  "/terms",
+  currentSeoEnvironment(),
+);
 
 export default function TermsPage() {
   return (

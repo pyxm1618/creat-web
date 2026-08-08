@@ -51,7 +51,8 @@ if (siteConfig.canonicalOrigin.includes("localhost")) {
 }
 
 if (process.env.APP_ENV === "production") {
-  if (seoConfig.releaseStatus !== "reviewed") throw new Error("production SEO config is not reviewed");
+  if (seoConfig.releaseStatus !== "reviewed")
+    throw new Error("production SEO config is not reviewed");
   if (/example\.com/i.test(siteConfig.canonicalOrigin)) {
     throw new Error("production site origin is still a placeholder");
   }
