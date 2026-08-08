@@ -22,6 +22,7 @@ export interface PaymentProvider {
   readonly name: "waffo";
   createOneTimeCheckout(input: CreateOneTimeCheckoutInput): Promise<CreatedCheckout>;
   getPayment(input: {
+    readonly environment: CommerceEnvironment;
     readonly merchantOrderReference?: string;
     readonly externalOrderId?: string;
     readonly externalPaymentId?: string;
