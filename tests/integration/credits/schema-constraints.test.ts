@@ -27,14 +27,14 @@ beforeAll(async () => {
 
 afterAll(async () => database.close());
 
-async function subjectId() {
+async function createSubjectId() {
   const [subject] = await database.db.insert(accountSubjects).values({}).returning();
   if (!subject) throw new Error("subject insert failed");
   return subject.id;
 }
 
 it("rejects duplicate grant sources and non-positive quantities", async () => {
-  const subjectId = await subjectId();
+  const subjectId = await createSubjectId();
   const sourceId = `src-${crypto.randomUUID()}`;
   await database.db.insert(creditGrants).values({
     subjectId,
@@ -67,7 +67,7 @@ it("rejects duplicate grant sources and non-positive quantities", async () => {
 });
 
 it("rejects duplicate reservation purpose and invalid statuses", async () => {
-  const subjectId = await subjectId();
+  const subjectId = await createSubjectId();
   const purposeId = crypto.randomUUID();
   await database.db.insert(creditReservations).values({
     subjectId,
@@ -104,7 +104,7 @@ it("rejects duplicate reservation purpose and invalid statuses", async () => {
 });
 
 it("rejects non-positive immutable ledger entries", async () => {
-  const subjectId = await subjectId();
+  const subjectId = await createSubjectId();
   await expect(
     database.db.insert(creditLedgerEntries).values({
       subjectId,
