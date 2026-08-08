@@ -21,7 +21,14 @@ const build = spawnSync("bun", ["run", "build:test"], {
     GOOGLE_CLIENT_ID: undefined,
     GOOGLE_CLIENT_SECRET: undefined,
     RESEND_API_KEY: undefined,
+    WAFFO_MERCHANT_ID: undefined,
     WAFFO_PRIVATE_KEY: undefined,
+    WAFFO_STORE_ID: undefined,
+    WAFFO_WEBHOOK_TEST_PUBLIC_KEY: undefined,
+    WAFFO_WEBHOOK_PROD_PUBLIC_KEY: undefined,
+    WAFFO_CONTRACT_VERIFIED: undefined,
+    COMMERCE_RETENTION_KEY: undefined,
+    COMMERCE_RETENTION_KEY_ID: undefined,
     GA4_MEASUREMENT_ID: undefined,
   },
 });
@@ -75,6 +82,37 @@ if (
   !deploymentMismatch.message.includes("VERCEL_ENV=production requires APP_ENV=production")
 ) {
   throw new Error("Vercel production test-mode fixture did not fail closed");
+}
+
+let commerceFailure: unknown;
+try {
+  loadRuntimeEnv(
+    {
+      APP_ENV: "staging",
+      VERCEL_ENV: "preview",
+      APP_ORIGIN: "https://preview.example.com",
+      DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+      CRON_SECRET: "c".repeat(32),
+      WAFFO_MERCHANT_ID: "MER_test",
+      WAFFO_PRIVATE_KEY: "private-key",
+      WAFFO_STORE_ID: "STO_test",
+      WAFFO_WEBHOOK_TEST_PUBLIC_KEY: "test-public-key",
+      COMMERCE_RETENTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+      COMMERCE_RETENTION_KEY_ID: "test-key",
+    },
+    {
+      ...disabled,
+      commerce: { enabled: true, oneTime: true, subscriptions: false, credits: false },
+    },
+  );
+} catch (error) {
+  commerceFailure = error;
+}
+if (
+  !(commerceFailure instanceof Error) ||
+  !commerceFailure.message.includes("Waffo contract must be verified")
+) {
+  throw new Error("deployed commerce contract gate did not fail closed");
 }
 
 console.log(JSON.stringify({ event: "feature_build_matrix_verified" }));
