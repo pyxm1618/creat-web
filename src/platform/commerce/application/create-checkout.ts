@@ -11,6 +11,7 @@ import type { CommerceEnvironment } from "../domain/product";
 export type CreateCheckoutInput = {
   readonly subjectId: string;
   readonly buyerIdentity: string;
+  readonly buyerEmail?: string;
   readonly productKey: string;
   readonly environment: CommerceEnvironment;
   readonly idempotencyKey: string;
@@ -47,8 +48,9 @@ export async function createCheckout(
   if (existing?.externalCheckoutSessionId) {
     throw new Error("existing checkout session requires provider lookup before reuse");
   }
-  if (existing && existing.subjectId !== input.subjectId)
+  if (existing && existing.subjectId !== input.subjectId) {
     throw new Error("checkout idempotency collision");
+  }
 
   const snapshot = catalog.getEnabled(input.productKey, input.environment);
   if (snapshot.commercialModel !== "one_time") throw new Error("product is not one-time");
@@ -85,6 +87,7 @@ export async function createCheckout(
     expectedDisplayAmount: snapshot.expectedDisplayAmount,
     currency: snapshot.expected.currency,
     buyerIdentity: input.buyerIdentity,
+    ...(input.buyerEmail ? { buyerEmail: input.buyerEmail } : {}),
     successUrl,
     cancelUrl,
   });
