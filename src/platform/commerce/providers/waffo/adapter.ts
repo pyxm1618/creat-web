@@ -58,6 +58,10 @@ function requireString(value: unknown, field: string): string {
   return value;
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 export function createWaffoPaymentProvider(config: WaffoProviderConfig): PaymentProvider {
   const client = new WaffoPancake({
     merchantId: config.merchantId,
@@ -169,6 +173,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         const externalOrderId = requireString(event.data.orderId, "data.orderId");
         const externalPaymentId = requireString(event.data.paymentId, "data.paymentId");
         const currency = requireString(event.data.currency, "data.currency");
+        const merchantOrderReference = optionalString(event.data.orderMerchantExternalId);
         const amount = parseDisplayAmount(
           requireString(event.data.amount, "data.amount"),
           currency,
@@ -179,9 +184,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
           environment,
           externalOrderId,
           externalPaymentId,
-          ...(event.data.orderMerchantExternalId
-            ? { merchantOrderReference: event.data.orderMerchantExternalId }
-            : {}),
+          ...(merchantOrderReference ? { merchantOrderReference } : {}),
           amount,
           occurredAt,
           storeId: event.storeId,
@@ -191,6 +194,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       if (event.eventType === WebhookEventType.RefundSucceeded) {
         const externalPaymentId = requireString(event.data.paymentId, "data.paymentId");
         const currency = requireString(event.data.currency, "data.currency");
+        const merchantOrderReference = optionalString(event.data.orderMerchantExternalId);
         const amount = parseDisplayAmount(
           requireString(event.data.amount, "data.amount"),
           currency,
@@ -200,23 +204,20 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
           eventId,
           environment,
           externalPaymentId,
-          ...(event.data.orderMerchantExternalId
-            ? { merchantOrderReference: event.data.orderMerchantExternalId }
-            : {}),
+          ...(merchantOrderReference ? { merchantOrderReference } : {}),
           amount,
           occurredAt,
         };
       }
 
       if (event.eventType === WebhookEventType.RefundFailed) {
+        const merchantOrderReference = optionalString(event.data.orderMerchantExternalId);
         return {
           type: "refund_failed",
           eventId,
           environment,
           externalPaymentId: requireString(event.data.paymentId, "data.paymentId"),
-          ...(event.data.orderMerchantExternalId
-            ? { merchantOrderReference: event.data.orderMerchantExternalId }
-            : {}),
+          ...(merchantOrderReference ? { merchantOrderReference } : {}),
           occurredAt,
         };
       }
