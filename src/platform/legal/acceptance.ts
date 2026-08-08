@@ -1,22 +1,23 @@
-import "server-only";
-
-import { db } from "@/platform/database/application-database";
 import type { DatabaseClient } from "@/platform/database/client";
 import { legalAcceptances } from "@/platform/database/legal-schema";
 
 import type { LegalDocumentKey } from "./types";
 
+type AcceptanceInput = {
+  readonly subjectId: string;
+  readonly document: LegalDocumentKey;
+  readonly version: string;
+  readonly source: string;
+  readonly acceptedAt?: Date;
+};
+
 export async function recordLegalAcceptance(
-  input: {
-    readonly subjectId: string;
-    readonly document: LegalDocumentKey;
-    readonly version: string;
-    readonly source: string;
-    readonly acceptedAt?: Date;
-  },
-  database: DatabaseClient = db,
+  input: AcceptanceInput,
+  database?: DatabaseClient,
 ): Promise<void> {
-  await database
+  const target = database ?? (await import("@/platform/database/application-database")).db;
+
+  await target
     .insert(legalAcceptances)
     .values({
       subjectId: input.subjectId,
