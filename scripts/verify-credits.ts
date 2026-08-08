@@ -3,6 +3,11 @@ import { readFile } from "node:fs/promises";
 import { creditFulfillmentDefinitions } from "@/config/credits.config";
 import { featuresConfig } from "@/config/features.config";
 import { productDefinitions } from "@/config/products.config";
+import type { CreditOrderFulfillmentDefinition } from "@/platform/commerce/fulfillment/credit-order-fulfillment";
+import type { ProductDefinition } from "@/platform/commerce/domain/product";
+
+const creditDefinitions: readonly CreditOrderFulfillmentDefinition[] = creditFulfillmentDefinitions;
+const products: readonly ProductDefinition[] = productDefinitions;
 
 const schema = await readFile("src/platform/database/credit-schema.ts", "utf8");
 if (/\bbalance\s*:/i.test(schema) || /["']balance["']\s*\)/i.test(schema)) {
@@ -19,25 +24,26 @@ for (const required of [
 }
 
 const operations = new Set<string>();
-for (const definition of creditFulfillmentDefinitions) {
+for (const definition of creditDefinitions) {
   if (!Number.isSafeInteger(definition.quantity) || definition.quantity <= 0) {
     throw new Error("credit fulfillment quantity must be a positive safe integer");
   }
   const operation = `fulfill:${definition.fulfillmentKey}`;
-  if (operations.has(operation))
+  if (operations.has(operation)) {
     throw new Error(`duplicate credit fulfillment operation: ${operation}`);
+  }
   operations.add(operation);
 }
 
 if (featuresConfig.commerce.credits) {
   if (!featuresConfig.commerce.enabled) throw new Error("credits require commerce to be enabled");
-  if (creditFulfillmentDefinitions.length === 0) {
+  if (creditDefinitions.length === 0) {
     throw new Error("enabled credits require at least one explicit credit fulfillment definition");
   }
-  const enabledOneTime = productDefinitions.filter(
+  const enabledOneTime = products.filter(
     (product) => product.enabled && product.commercialModel === "one_time",
   );
-  for (const definition of creditFulfillmentDefinitions) {
+  for (const definition of creditDefinitions) {
     if (!enabledOneTime.some((product) => product.fulfillmentKey === definition.fulfillmentKey)) {
       throw new Error(
         `credit fulfillment has no enabled one-time product: ${definition.fulfillmentKey}`,
@@ -60,6 +66,6 @@ console.log(
   JSON.stringify({
     event: "credits_verified",
     creditsEnabled: featuresConfig.commerce.credits,
-    configuredFulfillments: creditFulfillmentDefinitions.length,
+    configuredFulfillments: creditDefinitions.length,
   }),
 );
