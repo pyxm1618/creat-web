@@ -1,181 +1,114 @@
-    [90m323| [39m    }
-    [90m324| [39m
-    [90m325| [39m    [35mconst[39m grants [33m=[39m [35mawait[39m tx
-    [90m   | [39m                   [31m^[39m
-    [90m326| [39m      [33m.[39m[34mselect[39m()
-    [90m327| [39m      [33m.[39m[35mfrom[39m(creditGrants)
-[90m [2m❯[22m scope node_modules/postgres/src/index.js:[2m260:18[22m[39m
-[90m [2m❯[22m Function.begin node_modules/postgres/src/index.js:[2m243:14[22m[39m
-[90m [2m❯[22m executeCreditBackedWork src/platform/credits/application/execute-credit-backed-work.ts:[2m30:23[22m[39m
-[90m [2m❯[22m tests/integration/credits/finalization.test.ts:[2m47:18[22m[39m
 
-[31m[1mCaused by: TypeError[22m: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date[39m
-[90m [2m❯[22m Function.str node_modules/postgres/src/bytes.js:[2m22:27[22m[39m
-[90m [2m❯[22m node_modules/postgres/src/connection.js:[2m964:16[22m[39m
-[90m [2m❯[22m Bind node_modules/postgres/src/connection.js:[2m954:16[22m[39m
-[90m [2m❯[22m prepared node_modules/postgres/src/connection.js:[2m209:7[22m[39m
-[90m [2m❯[22m ParameterDescription node_modules/postgres/src/connection.js:[2m633:58[22m[39m
-[90m [2m❯[22m handle node_modules/postgres/src/connection.js:[2m489:6[22m[39m
-[90m [2m❯[22m Socket.data node_modules/postgres/src/connection.js:[2m324:9[22m[39m
+[1m[46m RUN [49m[22m [36mv4.0.16 [39m[90m/home/runner/work/creat-web/creat-web[39m
 
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22m[39m
-[31m[1mSerialized Error:[22m[39m [90m{ code: 'ERR_INVALID_ARG_TYPE', query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', parameters: [ '07b5dd61-392b-443e-a7fb-7bd1c3c8ddba', 'reading', 'active', '2026-08-08T05:05:32.092Z' ], args: [ '07b5dd61-392b-443e-a7fb-7bd1c3c8ddba', 'reading', 'active', '2026-08-08T05:05:32.092Z' ], types: [ 2950, 25, 25, 1184 ] }[39m
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯[22m[39m
+[90mstdout[2m | tests/integration/credits/ledger.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'00000'[39m,
+  message: [32m'schema "drizzle" does not exist, skipping'[39m,
+  file: [32m'dropcmds.c'[39m,
+  line: [32m'526'[39m,
+  routine: [32m'does_not_exist_skipping'[39m
+}
 
-[41m[1m FAIL [22m[49m tests/integration/credits/ledger.test.ts[2m > [22mgrants idempotently and projects balance from ledger state
-[31m[1mError[22m: Failed query: select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"
-params: e468efb5-bfdf-41fa-b64a-ea448e80d94f,active,Sat Aug 08 2026 05:04:30 GMT+0000 (Coordinated Universal Time)[39m
-[90m [2m❯[22m PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:[2m41:15[22m[39m
-[90m [2m❯[22m node_modules/drizzle-orm/postgres-js/session.js:[2m37:20[22m[39m
-[36m [2m❯[22m loadActiveReserved src/platform/credits/application/credit-service.ts:[2m110:16[22m[39m
-    [90m108| [39m)[33m:[39m [33mPromise[39m[33m<[39m[33mMap[39m[33m<[39mstring[33m,[39m number[33m>>[39m {
-    [90m109| [39m  [35mif[39m (grantIds[33m.[39mlength [33m===[39m [34m0[39m) [35mreturn[39m [35mnew[39m [33mMap[39m()[33m;[39m
-    [90m110| [39m  [35mconst[39m rows [33m=[39m [35mawait[39m tx
-    [90m   | [39m               [31m^[39m
-    [90m111| [39m    [33m.[39m[34mselect[39m({
-    [90m112| [39m      grantId[33m:[39m creditReservationAllocations[33m.[39mgrantId[33m,[39m
-[90m [2m❯[22m src/platform/credits/application/credit-service.ts:[2m249:22[22m[39m
-[90m [2m❯[22m scope node_modules/postgres/src/index.js:[2m260:18[22m[39m
-[90m [2m❯[22m Function.begin node_modules/postgres/src/index.js:[2m243:14[22m[39m
-[90m [2m❯[22m tests/integration/credits/ledger.test.ts:[2m64:10[22m[39m
+[90mstdout[2m | tests/integration/credits/ledger.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'42622'[39m,
+  message: [32m'identifier "credit_finalization_jobs_reservation_id_credit_reservations_id_fk" will be truncated to "credit_finalization_jobs_reservation_id_credit_reservations_id_"'[39m,
+  file: [32m'scansup.c'[39m,
+  line: [32m'99'[39m,
+  routine: [32m'truncate_identifier'[39m
+}
 
-[31m[1mCaused by: TypeError[22m: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date[39m
-[90m [2m❯[22m Function.str node_modules/postgres/src/bytes.js:[2m22:27[22m[39m
-[90m [2m❯[22m node_modules/postgres/src/connection.js:[2m964:16[22m[39m
-[90m [2m❯[22m Bind node_modules/postgres/src/connection.js:[2m954:16[22m[39m
-[90m [2m❯[22m prepared node_modules/postgres/src/connection.js:[2m209:7[22m[39m
-[90m [2m❯[22m ParameterDescription node_modules/postgres/src/connection.js:[2m633:58[22m[39m
-[90m [2m❯[22m handle node_modules/postgres/src/connection.js:[2m489:6[22m[39m
-[90m [2m❯[22m Socket.data node_modules/postgres/src/connection.js:[2m324:9[22m[39m
+[90mstdout[2m | tests/integration/credits/ledger.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'42622'[39m,
+  message: [32m'identifier "credit_reservation_allocations_reservation_id_credit_reservations_id_fk" will be truncated to "credit_reservation_allocations_reservation_id_credit_reservatio"'[39m,
+  file: [32m'scansup.c'[39m,
+  line: [32m'99'[39m,
+  routine: [32m'truncate_identifier'[39m
+}
 
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22m[39m
-[31m[1mSerialized Error:[22m[39m [90m{ code: 'ERR_INVALID_ARG_TYPE', query: 'select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"', parameters: [ 'e468efb5-bfdf-41fa-b64a-ea448e80d94f', 'active', '2026-08-08T05:04:30.893Z' ], args: [ 'e468efb5-bfdf-41fa-b64a-ea448e80d94f', 'active', '2026-08-08T05:04:30.893Z' ], types: [ 2950, 25, 1184 ] }[39m
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯[22m[39m
+ [32m✓[39m tests/integration/credits/ledger.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 651[2mms[22m[39m
+[90mstdout[2m | tests/integration/credits/finalization.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'00000'[39m,
+  message: [32m'drop cascades to 25 other objects'[39m,
+  detail: [32m'drop cascades to table platform_meta\n'[39m +
+    [32m'drop cascades to table account\n'[39m +
+    [32m'drop cascades to table rate_limit\n'[39m +
+    [32m'drop cascades to table session\n'[39m +
+    [32m'drop cascades to table "user"\n'[39m +
+    [32m'drop cascades to table verification\n'[39m +
+    [32m'drop cascades to type account_subject_status\n'[39m +
+    [32m'drop cascades to table account_subjects\n'[39m +
+    [32m'drop cascades to type account_deletion_status\n'[39m +
+    [32m'drop cascades to type account_deletion_step\n'[39m +
+    [32m'drop cascades to table account_deletion_requests\n'[39m +
+    [32m'drop cascades to table auth_security_events\n'[39m +
+    [32m'drop cascades to table legal_acceptances\n'[39m +
+    [32m'drop cascades to table commerce_products\n'[39m +
+    [32m'drop cascades to table commerce_reconciliation_runs\n'[39m +
+    [32m'drop cascades to table fulfillment_jobs\n'[39m +
+    [32m'drop cascades to table orders\n'[39m +
+    [32m'drop cascades to table payment_webhook_inbox\n'[39m +
+    [32m'drop cascades to table payments\n'[39m +
+    [32m'drop cascades to table commerce_applied_events\n'[39m +
+    [32m'drop cascades to table credit_finalization_jobs\n'[39m +
+    [32m'drop cascades to table credit_grants\n'[39m +
+    [32m'drop cascades to table credit_ledger_entries\n'[39m +
+    [32m'drop cascades to table credit_reservation_allocations\n'[39m +
+    [32m'drop cascades to table credit_reservations'[39m,
+  file: [32m'dependency.c'[39m,
+  line: [32m'1221'[39m,
+  routine: [32m'reportDependentObjects'[39m
+}
 
-[41m[1m FAIL [22m[49m tests/integration/credits/ledger.test.ts[2m > [22mserializes competing reservations for the same subject and credit type
-[31m[1mAssertionError[22m: expected [] to have a length of 1 but got +0[39m
+[90mstdout[2m | tests/integration/credits/finalization.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'00000'[39m,
+  message: [32m'drop cascades to table drizzle.__drizzle_migrations'[39m,
+  file: [32m'dependency.c'[39m,
+  line: [32m'1232'[39m,
+  routine: [32m'reportDependentObjects'[39m
+}
 
-[32m- Expected[39m
-[31m+ Received[39m
+[90mstdout[2m | tests/integration/credits/finalization.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'42622'[39m,
+  message: [32m'identifier "credit_finalization_jobs_reservation_id_credit_reservations_id_fk" will be truncated to "credit_finalization_jobs_reservation_id_credit_reservations_id_"'[39m,
+  file: [32m'scansup.c'[39m,
+  line: [32m'99'[39m,
+  routine: [32m'truncate_identifier'[39m
+}
 
-[32m- 1[39m
-[31m+ 0[39m
+[90mstdout[2m | tests/integration/credits/finalization.test.ts
+[22m[39m{
+  severity_local: [32m'NOTICE'[39m,
+  severity: [32m'NOTICE'[39m,
+  code: [32m'42622'[39m,
+  message: [32m'identifier "credit_reservation_allocations_reservation_id_credit_reservations_id_fk" will be truncated to "credit_reservation_allocations_reservation_id_credit_reservatio"'[39m,
+  file: [32m'scansup.c'[39m,
+  line: [32m'99'[39m,
+  routine: [32m'truncate_identifier'[39m
+}
 
-[36m [2m❯[22m tests/integration/credits/ledger.test.ts:[2m104:69[22m[39m
-    [90m102| [39m    })[33m,[39m
-    [90m103| [39m  ])[33m;[39m
-    [90m104| [39m  expect(results.filter((result) => result.status === "fulfilled")).to…
-    [90m   | [39m                                                                    [31m^[39m
-    [90m105| [39m  expect(results.filter((result) => result.status === "rejected")).toH…
-    [90m106| [39m  expect(await getCreditBalance(database.db, { subjectId, creditType: …
+ [32m✓[39m tests/integration/credits/finalization.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 518[2mms[22m[39m
 
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯[22m[39m
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m7 passed[39m[22m[90m (7)[39m
+[2m   Start at [22m 05:06:28
+[2m   Duration [22m 3.23s[2m (transform 308ms, setup 0ms, import 1.64s, tests 1.17s, environment 0ms)[22m
 
-[41m[1m FAIL [22m[49m tests/integration/credits/ledger.test.ts[2m > [22mcommits and releases exact preserved allocations idempotently
-[31m[1mError[22m: Failed query: select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update
-params: 2606d925-32cd-47fc-aad7-c3d4d90b1de4,reading,active,Sat Aug 08 2026 07:00:00 GMT+0000 (Coordinated Universal Time)[39m
-[90m [2m❯[22m PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:[2m41:15[22m[39m
-[90m [2m❯[22m node_modules/drizzle-orm/postgres-js/session.js:[2m37:20[22m[39m
-[36m [2m❯[22m src/platform/credits/application/credit-service.ts:[2m325:20[22m[39m
-    [90m323| [39m    }
-    [90m324| [39m
-    [90m325| [39m    [35mconst[39m grants [33m=[39m [35mawait[39m tx
-    [90m   | [39m                   [31m^[39m
-    [90m326| [39m      [33m.[39m[34mselect[39m()
-    [90m327| [39m      [33m.[39m[35mfrom[39m(creditGrants)
-[90m [2m❯[22m scope node_modules/postgres/src/index.js:[2m260:18[22m[39m
-[90m [2m❯[22m Function.begin node_modules/postgres/src/index.js:[2m243:14[22m[39m
-[90m [2m❯[22m tests/integration/credits/ledger.test.ts:[2m119:23[22m[39m
-
-[31m[1mCaused by: TypeError[22m: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date[39m
-[90m [2m❯[22m Function.str node_modules/postgres/src/bytes.js:[2m22:27[22m[39m
-[90m [2m❯[22m node_modules/postgres/src/connection.js:[2m964:16[22m[39m
-[90m [2m❯[22m Bind node_modules/postgres/src/connection.js:[2m954:16[22m[39m
-[90m [2m❯[22m prepared node_modules/postgres/src/connection.js:[2m209:7[22m[39m
-[90m [2m❯[22m ParameterDescription node_modules/postgres/src/connection.js:[2m633:58[22m[39m
-[90m [2m❯[22m handle node_modules/postgres/src/connection.js:[2m489:6[22m[39m
-[90m [2m❯[22m Socket.data node_modules/postgres/src/connection.js:[2m324:9[22m[39m
-
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22m[39m
-[31m[1mSerialized Error:[22m[39m [90m{ code: 'ERR_INVALID_ARG_TYPE', query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', parameters: [ '2606d925-32cd-47fc-aad7-c3d4d90b1de4', 'reading', 'active', '2026-08-08T07:00:00.000Z' ], args: [ '2606d925-32cd-47fc-aad7-c3d4d90b1de4', 'reading', 'active', '2026-08-08T07:00:00.000Z' ], types: [ 2950, 25, 25, 1184 ] }[39m
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯[22m[39m
-
-[41m[1m FAIL [22m[49m tests/integration/credits/ledger.test.ts[2m > [22mexpires stale reservations without consuming credits
-[31m[1mError[22m: Failed query: select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update
-params: 8531ca85-beeb-436d-8104-0602e9ec132f,reading,active,Sat Aug 08 2026 08:05:00 GMT+0000 (Coordinated Universal Time)[39m
-[90m [2m❯[22m PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:[2m41:15[22m[39m
-[90m [2m❯[22m node_modules/drizzle-orm/postgres-js/session.js:[2m37:20[22m[39m
-[36m [2m❯[22m src/platform/credits/application/credit-service.ts:[2m325:20[22m[39m
-    [90m323| [39m    }
-    [90m324| [39m
-    [90m325| [39m    [35mconst[39m grants [33m=[39m [35mawait[39m tx
-    [90m   | [39m                   [31m^[39m
-    [90m326| [39m      [33m.[39m[34mselect[39m()
-    [90m327| [39m      [33m.[39m[35mfrom[39m(creditGrants)
-[90m [2m❯[22m scope node_modules/postgres/src/index.js:[2m260:18[22m[39m
-[90m [2m❯[22m Function.begin node_modules/postgres/src/index.js:[2m243:14[22m[39m
-[90m [2m❯[22m tests/integration/credits/ledger.test.ts:[2m168:23[22m[39m
-
-[31m[1mCaused by: TypeError[22m: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date[39m
-[90m [2m❯[22m Function.str node_modules/postgres/src/bytes.js:[2m22:27[22m[39m
-[90m [2m❯[22m node_modules/postgres/src/connection.js:[2m964:16[22m[39m
-[90m [2m❯[22m Bind node_modules/postgres/src/connection.js:[2m954:16[22m[39m
-[90m [2m❯[22m prepared node_modules/postgres/src/connection.js:[2m209:7[22m[39m
-[90m [2m❯[22m ParameterDescription node_modules/postgres/src/connection.js:[2m633:58[22m[39m
-[90m [2m❯[22m handle node_modules/postgres/src/connection.js:[2m489:6[22m[39m
-[90m [2m❯[22m Socket.data node_modules/postgres/src/connection.js:[2m324:9[22m[39m
-
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22m[39m
-[31m[1mSerialized Error:[22m[39m [90m{ code: 'ERR_INVALID_ARG_TYPE', query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', parameters: [ '8531ca85-beeb-436d-8104-0602e9ec132f', 'reading', 'active', '2026-08-08T08:05:00.000Z' ], args: [ '8531ca85-beeb-436d-8104-0602e9ec132f', 'reading', 'active', '2026-08-08T08:05:00.000Z' ], types: [ 2950, 25, 25, 1184 ] }[39m
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯[22m[39m
-
-[41m[1m FAIL [22m[49m tests/integration/credits/ledger.test.ts[2m > [22mexpires unused grants and revokes only unused source credits
-[31m[1mError[22m: Failed query: select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"
-params: b46c4510-15bf-46c8-af11-9eba4ddd3457,active,Sat Aug 08 2026 09:01:00 GMT+0000 (Coordinated Universal Time)[39m
-[90m [2m❯[22m PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:[2m41:15[22m[39m
-[90m [2m❯[22m node_modules/drizzle-orm/postgres-js/session.js:[2m37:20[22m[39m
-[36m [2m❯[22m loadActiveReserved src/platform/credits/application/credit-service.ts:[2m110:16[22m[39m
-    [90m108| [39m)[33m:[39m [33mPromise[39m[33m<[39m[33mMap[39m[33m<[39mstring[33m,[39m number[33m>>[39m {
-    [90m109| [39m  [35mif[39m (grantIds[33m.[39mlength [33m===[39m [34m0[39m) [35mreturn[39m [35mnew[39m [33mMap[39m()[33m;[39m
-    [90m110| [39m  [35mconst[39m rows [33m=[39m [35mawait[39m tx
-    [90m   | [39m               [31m^[39m
-    [90m111| [39m    [33m.[39m[34mselect[39m({
-    [90m112| [39m      grantId[33m:[39m creditReservationAllocations[33m.[39mgrantId[33m,[39m
-[90m [2m❯[22m src/platform/credits/application/credit-service.ts:[2m539:30[22m[39m
-[90m [2m❯[22m scope node_modules/postgres/src/index.js:[2m260:18[22m[39m
-[90m [2m❯[22m Function.begin node_modules/postgres/src/index.js:[2m243:14[22m[39m
-[90m [2m❯[22m expireGrants src/platform/credits/application/credit-service.ts:[2m529:5[22m[39m
-[90m [2m❯[22m tests/integration/credits/ledger.test.ts:[2m205:5[22m[39m
-
-[31m[1mCaused by: TypeError[22m: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date[39m
-[90m [2m❯[22m Function.str node_modules/postgres/src/bytes.js:[2m22:27[22m[39m
-[90m [2m❯[22m node_modules/postgres/src/connection.js:[2m964:16[22m[39m
-[90m [2m❯[22m Bind node_modules/postgres/src/connection.js:[2m954:16[22m[39m
-[90m [2m❯[22m prepared node_modules/postgres/src/connection.js:[2m209:7[22m[39m
-[90m [2m❯[22m ParameterDescription node_modules/postgres/src/connection.js:[2m633:58[22m[39m
-[90m [2m❯[22m handle node_modules/postgres/src/connection.js:[2m489:6[22m[39m
-[90m [2m❯[22m Socket.data node_modules/postgres/src/connection.js:[2m324:9[22m[39m
-
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22m[39m
-[31m[1mSerialized Error:[22m[39m [90m{ code: 'ERR_INVALID_ARG_TYPE', query: 'select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"', parameters: [ 'b46c4510-15bf-46c8-af11-9eba4ddd3457', 'active', '2026-08-08T09:01:00.000Z' ], args: [ 'b46c4510-15bf-46c8-af11-9eba4ddd3457', 'active', '2026-08-08T09:01:00.000Z' ], types: [ 2950, 25, 1184 ] }[39m
-[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯[22m[39m
-
-
-[2m Test Files [22m [1m[31m2 failed[39m[22m[90m (2)[39m
-[2m      Tests [22m [1m[31m6 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (7)[39m
-[2m   Start at [22m 05:04:29
-[2m   Duration [22m 2.33s[2m (transform 245ms, setup 0ms, import 1.11s, tests 929ms, environment 0ms)[22m
-
-
-::error file=/home/runner/work/creat-web/creat-web/src/platform/credits/application/credit-service.ts,title=tests/integration/credits/finalization.test.ts > does not redo or release delivered work when credit commit temporarily fails,line=325,column=20::Error: Failed query: select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update%0Aparams: 07b5dd61-392b-443e-a7fb-7bd1c3c8ddba,reading,active,Sat Aug 08 2026 05:05:32 GMT+0000 (Coordinated Universal Time)%0A ❯ PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:41:15%0A ❯ node_modules/drizzle-orm/postgres-js/session.js:37:20%0A ❯ src/platform/credits/application/credit-service.ts:325:20%0A ❯ scope node_modules/postgres/src/index.js:260:18%0A ❯ Function.begin node_modules/postgres/src/index.js:243:14%0A ❯ executeCreditBackedWork src/platform/credits/application/execute-credit-backed-work.ts:30:23%0A ❯ tests/integration/credits/finalization.test.ts:47:18%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', params: [ '07b5dd61-392b-443e-a7fb-7bd1c3c8ddba', 'reading', 'active', '2026-08-08T05:05:32.092Z' ] }%0ACaused by: Caused by: TypeError: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date%0A ❯ Function.str node_modules/postgres/src/bytes.js:22:27%0A ❯ node_modules/postgres/src/connection.js:964:16%0A ❯ Bind node_modules/postgres/src/connection.js:954:16%0A ❯ prepared node_modules/postgres/src/connection.js:209:7%0A ❯ ParameterDescription node_modules/postgres/src/connection.js:633:58%0A ❯ handle node_modules/postgres/src/connection.js:489:6%0A ❯ Socket.data node_modules/postgres/src/connection.js:324:9%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'ERR_INVALID_ARG_TYPE', query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', parameters: [ '07b5dd61-392b-443e-a7fb-7bd1c3c8ddba', 'reading', 'active', '2026-08-08T05:05:32.092Z' ], args: [ '07b5dd61-392b-443e-a7fb-7bd1c3c8ddba', 'reading', 'active', '2026-08-08T05:05:32.092Z' ], types: [ 2950, 25, 25, 1184 ] }%0A
-
-::error file=/home/runner/work/creat-web/creat-web/src/platform/credits/application/credit-service.ts,title=tests/integration/credits/ledger.test.ts > grants idempotently and projects balance from ledger state,line=110,column=16::Error: Failed query: select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"%0Aparams: e468efb5-bfdf-41fa-b64a-ea448e80d94f,active,Sat Aug 08 2026 05:04:30 GMT+0000 (Coordinated Universal Time)%0A ❯ PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:41:15%0A ❯ node_modules/drizzle-orm/postgres-js/session.js:37:20%0A ❯ loadActiveReserved src/platform/credits/application/credit-service.ts:110:16%0A ❯ src/platform/credits/application/credit-service.ts:249:22%0A ❯ scope node_modules/postgres/src/index.js:260:18%0A ❯ Function.begin node_modules/postgres/src/index.js:243:14%0A ❯ tests/integration/credits/ledger.test.ts:64:10%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { query: 'select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"', params: [ 'e468efb5-bfdf-41fa-b64a-ea448e80d94f', 'active', '2026-08-08T05:04:30.893Z' ] }%0ACaused by: Caused by: TypeError: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date%0A ❯ Function.str node_modules/postgres/src/bytes.js:22:27%0A ❯ node_modules/postgres/src/connection.js:964:16%0A ❯ Bind node_modules/postgres/src/connection.js:954:16%0A ❯ prepared node_modules/postgres/src/connection.js:209:7%0A ❯ ParameterDescription node_modules/postgres/src/connection.js:633:58%0A ❯ handle node_modules/postgres/src/connection.js:489:6%0A ❯ Socket.data node_modules/postgres/src/connection.js:324:9%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'ERR_INVALID_ARG_TYPE', query: 'select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"', parameters: [ 'e468efb5-bfdf-41fa-b64a-ea448e80d94f', 'active', '2026-08-08T05:04:30.893Z' ], args: [ 'e468efb5-bfdf-41fa-b64a-ea448e80d94f', 'active', '2026-08-08T05:04:30.893Z' ], types: [ 2950, 25, 1184 ] }%0A
-
-::error file=/home/runner/work/creat-web/creat-web/tests/integration/credits/ledger.test.ts,title=tests/integration/credits/ledger.test.ts > serializes competing reservations for the same subject and credit type,line=104,column=69::AssertionError: expected [] to have a length of 1 but got +0%0A%0A- Expected%0A+ Received%0A%0A- 1%0A+ 0%0A%0A ❯ tests/integration/credits/ledger.test.ts:104:69%0A%0A
-
-::error file=/home/runner/work/creat-web/creat-web/src/platform/credits/application/credit-service.ts,title=tests/integration/credits/ledger.test.ts > commits and releases exact preserved allocations idempotently,line=325,column=20::Error: Failed query: select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update%0Aparams: 2606d925-32cd-47fc-aad7-c3d4d90b1de4,reading,active,Sat Aug 08 2026 07:00:00 GMT+0000 (Coordinated Universal Time)%0A ❯ PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:41:15%0A ❯ node_modules/drizzle-orm/postgres-js/session.js:37:20%0A ❯ src/platform/credits/application/credit-service.ts:325:20%0A ❯ scope node_modules/postgres/src/index.js:260:18%0A ❯ Function.begin node_modules/postgres/src/index.js:243:14%0A ❯ tests/integration/credits/ledger.test.ts:119:23%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', params: [ '2606d925-32cd-47fc-aad7-c3d4d90b1de4', 'reading', 'active', '2026-08-08T07:00:00.000Z' ] }%0ACaused by: Caused by: TypeError: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date%0A ❯ Function.str node_modules/postgres/src/bytes.js:22:27%0A ❯ node_modules/postgres/src/connection.js:964:16%0A ❯ Bind node_modules/postgres/src/connection.js:954:16%0A ❯ prepared node_modules/postgres/src/connection.js:209:7%0A ❯ ParameterDescription node_modules/postgres/src/connection.js:633:58%0A ❯ handle node_modules/postgres/src/connection.js:489:6%0A ❯ Socket.data node_modules/postgres/src/connection.js:324:9%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'ERR_INVALID_ARG_TYPE', query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', parameters: [ '2606d925-32cd-47fc-aad7-c3d4d90b1de4', 'reading', 'active', '2026-08-08T07:00:00.000Z' ], args: [ '2606d925-32cd-47fc-aad7-c3d4d90b1de4', 'reading', 'active', '2026-08-08T07:00:00.000Z' ], types: [ 2950, 25, 25, 1184 ] }%0A
-
-::error file=/home/runner/work/creat-web/creat-web/src/platform/credits/application/credit-service.ts,title=tests/integration/credits/ledger.test.ts > expires stale reservations without consuming credits,line=325,column=20::Error: Failed query: select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update%0Aparams: 8531ca85-beeb-436d-8104-0602e9ec132f,reading,active,Sat Aug 08 2026 08:05:00 GMT+0000 (Coordinated Universal Time)%0A ❯ PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:41:15%0A ❯ node_modules/drizzle-orm/postgres-js/session.js:37:20%0A ❯ src/platform/credits/application/credit-service.ts:325:20%0A ❯ scope node_modules/postgres/src/index.js:260:18%0A ❯ Function.begin node_modules/postgres/src/index.js:243:14%0A ❯ tests/integration/credits/ledger.test.ts:168:23%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', params: [ '8531ca85-beeb-436d-8104-0602e9ec132f', 'reading', 'active', '2026-08-08T08:05:00.000Z' ] }%0ACaused by: Caused by: TypeError: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date%0A ❯ Function.str node_modules/postgres/src/bytes.js:22:27%0A ❯ node_modules/postgres/src/connection.js:964:16%0A ❯ Bind node_modules/postgres/src/connection.js:954:16%0A ❯ prepared node_modules/postgres/src/connection.js:209:7%0A ❯ ParameterDescription node_modules/postgres/src/connection.js:633:58%0A ❯ handle node_modules/postgres/src/connection.js:489:6%0A ❯ Socket.data node_modules/postgres/src/connection.js:324:9%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'ERR_INVALID_ARG_TYPE', query: 'select "id", "subject_id", "credit_type", "source_type", "source_id", "quantity", "state", "idempotency_key", "granted_at", "expires_at", "metadata_json" from "credit_grants" where ("credit_grants"."subject_id" = $1 and "credit_grants"."credit_type" = $2 and "credit_grants"."state" = $3 and ("credit_grants"."expires_at" is null or "credit_grants"."expires_at" >= $4)) for update', parameters: [ '8531ca85-beeb-436d-8104-0602e9ec132f', 'reading', 'active', '2026-08-08T08:05:00.000Z' ], args: [ '8531ca85-beeb-436d-8104-0602e9ec132f', 'reading', 'active', '2026-08-08T08:05:00.000Z' ], types: [ 2950, 25, 25, 1184 ] }%0A
-
-::error file=/home/runner/work/creat-web/creat-web/src/platform/credits/application/credit-service.ts,title=tests/integration/credits/ledger.test.ts > expires unused grants and revokes only unused source credits,line=110,column=16::Error: Failed query: select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"%0Aparams: b46c4510-15bf-46c8-af11-9eba4ddd3457,active,Sat Aug 08 2026 09:01:00 GMT+0000 (Coordinated Universal Time)%0A ❯ PostgresJsPreparedQuery.queryWithCache node_modules/drizzle-orm/pg-core/session.js:41:15%0A ❯ node_modules/drizzle-orm/postgres-js/session.js:37:20%0A ❯ loadActiveReserved src/platform/credits/application/credit-service.ts:110:16%0A ❯ src/platform/credits/application/credit-service.ts:539:30%0A ❯ scope node_modules/postgres/src/index.js:260:18%0A ❯ Function.begin node_modules/postgres/src/index.js:243:14%0A ❯ expireGrants src/platform/credits/application/credit-service.ts:529:5%0A ❯ tests/integration/credits/ledger.test.ts:205:5%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { query: 'select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"', params: [ 'b46c4510-15bf-46c8-af11-9eba4ddd3457', 'active', '2026-08-08T09:01:00.000Z' ] }%0ACaused by: Caused by: TypeError: The "string" argument must be of type string or an instance of Buffer or ArrayBuffer. Received an instance of Date%0A ❯ Function.str node_modules/postgres/src/bytes.js:22:27%0A ❯ node_modules/postgres/src/connection.js:964:16%0A ❯ Bind node_modules/postgres/src/connection.js:954:16%0A ❯ prepared node_modules/postgres/src/connection.js:209:7%0A ❯ ParameterDescription node_modules/postgres/src/connection.js:633:58%0A ❯ handle node_modules/postgres/src/connection.js:489:6%0A ❯ Socket.data node_modules/postgres/src/connection.js:324:9%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'ERR_INVALID_ARG_TYPE', query: 'select "credit_reservation_allocations"."grant_id", coalesce(sum("credit_reservation_allocations"."quantity"), 0)::int from "credit_reservation_allocations" inner join "credit_reservations" on "credit_reservations"."id" = "credit_reservation_allocations"."reservation_id" where ("credit_reservation_allocations"."grant_id" in ($1) and "credit_reservations"."status" = $2 and "credit_reservations"."expires_at" > $3) group by "credit_reservation_allocations"."grant_id"', parameters: [ 'b46c4510-15bf-46c8-af11-9eba4ddd3457', 'active', '2026-08-08T09:01:00.000Z' ], args: [ 'b46c4510-15bf-46c8-af11-9eba4ddd3457', 'active', '2026-08-08T09:01:00.000Z' ], types: [ 2950, 25, 1184 ] }%0A
-exit_code=1
+exit_code=0
