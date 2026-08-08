@@ -20,7 +20,11 @@ beforeAll(async () => {
   await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS public CASCADE"));
   await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS drizzle CASCADE"));
   await database.db.execute(sql.raw("CREATE SCHEMA public"));
-  await migrate(database.db, { migrationsFolder: "drizzle", migrationsSchema: "drizzle", migrationsTable: "__drizzle_migrations" });
+  await migrate(database.db, {
+    migrationsFolder: "drizzle",
+    migrationsSchema: "drizzle",
+    migrationsTable: "__drizzle_migrations",
+  });
 });
 
 afterAll(async () => database.close());
