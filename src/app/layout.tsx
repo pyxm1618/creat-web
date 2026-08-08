@@ -7,11 +7,12 @@ import { currentSeoEnvironment, metadataOrigin } from "@/platform/seo/environmen
 import "./globals.css";
 
 const mode = currentSeoEnvironment();
+const appOrigin = process.env.APP_ORIGIN;
 
 export const metadata: Metadata = {
   metadataBase: metadataOrigin({
     mode,
-    appOrigin: process.env.APP_ORIGIN,
+    ...(appOrigin ? { appOrigin } : {}),
     canonicalOrigin: seoConfig.canonicalOrigin,
   }),
   title: {
