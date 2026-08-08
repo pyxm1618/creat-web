@@ -1,0 +1,57 @@
+name: Bootstrap Commerce Artifacts
+
+on:
+  push:
+    branches: [feat/commerce-one-time]
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      APP_ORIGIN: http://localhost:3000
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_generate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install exact dependencies
+        run: bun install
+      - name: Generate commerce migration
+        run: bun run db:generate
+      - name: Capture public SDK surface for implementation review
+        run: |
+          mkdir -p docs/providers
+          {
+            echo '# Temporary Waffo Pancake SDK inspection'
+            echo
+            echo 'Package metadata:'
+            cat node_modules/@waffo/pancake-ts/package.json
+            echo
+            echo 'Files:'
+            find node_modules/@waffo/pancake-ts -maxdepth 3 -type f | sort
+            echo
+            echo 'README:'
+            cat node_modules/@waffo/pancake-ts/README.md 2>/dev/null || true
+            echo
+            echo 'Type declarations:'
+            find node_modules/@waffo/pancake-ts -type f -name '*.d.ts' -maxdepth 4 -print -exec cat {} \;
+          } > docs/providers/_waffo-sdk-inspect.txt
+      - name: Format repository files
+        run: bun run format
+      - name: Commit generated artifacts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bun.lock drizzle docs/providers/_waffo-sdk-inspect.txt src tests scripts package.json
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+          else
+            git commit -m "chore: generate commerce artifacts"
+            git push origin HEAD:feat/commerce-one-time
+          fi
