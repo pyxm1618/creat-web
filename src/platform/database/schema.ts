@@ -13,3 +13,4 @@ export * from "./auth-schema";
 export * from "./account-subject-schema";
 export * from "./account-lifecycle-schema";
 export * from "./legal-schema";
+export * from "./commerce-schema";
