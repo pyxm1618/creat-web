@@ -116,6 +116,9 @@ export function validateLegalConfig(input: {
   if ((input.features.subscriptions || legal.subscriptions) && !legal.subscriptionTerms) {
     throw new Error("subscription cancellation terms are required");
   }
+  if (input.features.oneTime !== undefined && input.features.oneTime !== legal.oneTimePurchases) {
+    throw new Error("one-time purchase feature and legal facts disagree");
+  }
   if (
     input.features.subscriptions !== undefined &&
     input.features.subscriptions !== legal.subscriptions

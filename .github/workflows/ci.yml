@@ -58,6 +58,8 @@ jobs:
         run: bun run test:unit
       - name: PostgreSQL integration tests
         run: bun run test:integration
+      - name: Provider contract tests
+        run: bun run test:contract
       - name: Migration verification
         run: bun run db:verify
       - name: Typecheck
@@ -68,6 +70,8 @@ jobs:
         run: bun run verify:secrets
       - name: SEO verification
         run: bun run verify:seo
+      - name: Commerce verification
+        run: bun run verify:commerce
       - name: Optional-provider build matrix
         run: bun run test:build-matrix
       - name: Release verification
