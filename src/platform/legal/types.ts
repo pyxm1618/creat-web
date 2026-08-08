@@ -70,6 +70,7 @@ export type LegalFeatureFacts = {
   readonly database?: string;
   readonly storage?: string;
   readonly ai?: string;
+  readonly oneTime?: boolean;
   readonly subscriptions?: boolean;
   readonly credits?: boolean;
 };
