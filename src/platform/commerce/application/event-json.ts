@@ -3,7 +3,10 @@ import { z } from "zod";
 import type { NormalizedProviderEvent } from "../domain/events";
 import type { CommerceEnvironment } from "../domain/product";
 
-const amountSchema = z.object({ currency: z.string().min(3).max(3), minor: z.string().regex(/^\d+$/) });
+const amountSchema = z.object({
+  currency: z.string().min(3).max(3),
+  minor: z.string().regex(/^\d+$/),
+});
 const base = z.object({
   type: z.string(),
   eventId: z.string().min(1),
@@ -11,7 +14,9 @@ const base = z.object({
   occurredAt: z.iso.datetime(),
 });
 
-export function parseNormalizedProviderEvent(payload: Record<string, unknown>): NormalizedProviderEvent {
+export function parseNormalizedProviderEvent(
+  payload: Record<string, unknown>,
+): NormalizedProviderEvent {
   const parsedBase = base.parse(payload);
   const environment = parsedBase.environment as CommerceEnvironment;
   const occurredAt = new Date(parsedBase.occurredAt);
@@ -54,7 +59,9 @@ export function parseNormalizedProviderEvent(payload: Record<string, unknown>): 
       };
     }
     case "refund_succeeded": {
-      const parsed = base.extend({ externalPaymentId: z.string().min(1), amount: amountSchema }).parse(payload);
+      const parsed = base
+        .extend({ externalPaymentId: z.string().min(1), amount: amountSchema })
+        .parse(payload);
       return {
         type: "refund_succeeded",
         eventId: parsed.eventId,

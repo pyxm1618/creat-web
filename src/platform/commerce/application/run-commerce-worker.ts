@@ -31,7 +31,13 @@ export async function runCommerceWorker(input: {
       await processProviderEvent(input.database, event, row.payloadHash);
       await input.database
         .update(paymentWebhookInbox)
-        .set({ state: "completed", processedAt: now, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null })
+        .set({
+          state: "completed",
+          processedAt: now,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastErrorCode: null,
+        })
         .where(eq(paymentWebhookInbox.id, row.id));
       inboxProcessed += 1;
     } catch (error) {
@@ -61,7 +67,13 @@ export async function runCommerceWorker(input: {
       });
       await input.database
         .update(fulfillmentJobs)
-        .set({ state: "completed", completedAt: now, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null })
+        .set({
+          state: "completed",
+          completedAt: now,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastErrorCode: null,
+        })
         .where(eq(fulfillmentJobs.id, job.id));
       fulfillmentProcessed += 1;
     } catch (error) {
