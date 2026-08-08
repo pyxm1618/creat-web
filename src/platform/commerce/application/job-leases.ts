@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/commerce-schema";
@@ -22,6 +22,8 @@ export async function claimWebhookInbox(
           inArray(paymentWebhookInbox.state, ["pending", "retry"]),
           lte(paymentWebhookInbox.nextAttemptAt, now),
           or(
+            isNull(paymentWebhookInbox.leaseOwner),
+            isNull(paymentWebhookInbox.leaseExpiresAt),
             eq(paymentWebhookInbox.leaseOwner, input.owner),
             lte(paymentWebhookInbox.leaseExpiresAt, now),
           ),
@@ -60,7 +62,12 @@ export async function claimFulfillmentJobs(
         and(
           eq(fulfillmentJobs.state, "pending"),
           lte(fulfillmentJobs.nextAttemptAt, now),
-          or(eq(fulfillmentJobs.leaseOwner, input.owner), lte(fulfillmentJobs.leaseExpiresAt, now)),
+          or(
+            isNull(fulfillmentJobs.leaseOwner),
+            isNull(fulfillmentJobs.leaseExpiresAt),
+            eq(fulfillmentJobs.leaseOwner, input.owner),
+            lte(fulfillmentJobs.leaseExpiresAt, now),
+          ),
         ),
       )
       .orderBy(fulfillmentJobs.createdAt)
