@@ -80,6 +80,8 @@ export const routeDefinitions = [
   { route: "/account/security", class: "private" },
   { route: "/account/deleted", class: "private" },
   { route: "/checkout/return", class: "private" },
+  { route: "/robots.txt", class: "system" },
+  { route: "/sitemap.xml", class: "system" },
   { route: "/api/auth", class: "system" },
   { route: "/api/auth/magic-link/request", class: "system" },
   { route: "/api/auth/magic-link/confirm", class: "system" },
