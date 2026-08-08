@@ -27,11 +27,14 @@ function validateIdempotencyKey(value: string): void {
   if (!/^[A-Za-z0-9:_-]{16,128}$/.test(value)) throw new Error("invalid checkout idempotency key");
 }
 
-export async function createCheckout(input: CreateCheckoutInput, dependencies: {
-  readonly database: DatabaseClient;
-  readonly catalog: ProductCatalog;
-  readonly provider: PaymentProvider;
-}): Promise<CheckoutResult> {
+export async function createCheckout(
+  input: CreateCheckoutInput,
+  dependencies: {
+    readonly database: DatabaseClient;
+    readonly catalog: ProductCatalog;
+    readonly provider: PaymentProvider;
+  },
+): Promise<CheckoutResult> {
   validateIdempotencyKey(input.idempotencyKey);
   const { database, catalog, provider } = dependencies;
 
@@ -44,29 +47,38 @@ export async function createCheckout(input: CreateCheckoutInput, dependencies: {
   if (existing?.externalCheckoutSessionId) {
     throw new Error("existing checkout session requires provider lookup before reuse");
   }
-  if (existing && existing.subjectId !== input.subjectId) throw new Error("checkout idempotency collision");
+  if (existing && existing.subjectId !== input.subjectId)
+    throw new Error("checkout idempotency collision");
 
   const snapshot = catalog.getEnabled(input.productKey, input.environment);
   if (snapshot.commercialModel !== "one_time") throw new Error("product is not one-time");
   const product = await ensureCommerceProduct(database, snapshot, input.environment);
 
-  const order = existing ?? (
-    await database
-      .insert(orders)
-      .values({
-        subjectId: input.subjectId,
-        productId: product.id,
-        environment: input.environment,
-        expectedCurrency: snapshot.expected.currency,
-        expectedMinor: snapshot.expected.minor,
-        checkoutIdempotencyKey: input.idempotencyKey,
-      })
-      .returning()
-  )[0];
+  const order =
+    existing ??
+    (
+      await database
+        .insert(orders)
+        .values({
+          subjectId: input.subjectId,
+          productId: product.id,
+          environment: input.environment,
+          expectedCurrency: snapshot.expected.currency,
+          expectedMinor: snapshot.expected.minor,
+          checkoutIdempotencyKey: input.idempotencyKey,
+        })
+        .returning()
+    )[0];
   if (!order) throw new Error("order insert failed");
 
-  const successUrl = new URL(`/checkout/return?order=${encodeURIComponent(order.id)}`, input.appOrigin).toString();
-  const cancelUrl = new URL(`/checkout/return?order=${encodeURIComponent(order.id)}&canceled=1`, input.appOrigin).toString();
+  const successUrl = new URL(
+    `/checkout/return?order=${encodeURIComponent(order.id)}`,
+    input.appOrigin,
+  ).toString();
+  const cancelUrl = new URL(
+    `/checkout/return?order=${encodeURIComponent(order.id)}&canceled=1`,
+    input.appOrigin,
+  ).toString();
   const checkout = await provider.createOneTimeCheckout({
     localOrderId: order.id,
     providerProductId: snapshot.providerProductId,

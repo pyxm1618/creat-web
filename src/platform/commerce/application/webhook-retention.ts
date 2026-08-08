@@ -32,7 +32,10 @@ export function decryptWebhookPayload(ciphertext: Uint8Array, keyBase64: string)
   return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 
-export function retentionExpiry(retentionClass: "transient_encrypted" | "unresolved_encrypted", now: Date): Date {
+export function retentionExpiry(
+  retentionClass: "transient_encrypted" | "unresolved_encrypted",
+  now: Date,
+): Date {
   const days = retentionClass === "transient_encrypted" ? 7 : 30;
   return new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 }
