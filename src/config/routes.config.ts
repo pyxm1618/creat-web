@@ -79,6 +79,7 @@ export const routeDefinitions = [
   { route: "/account", class: "private" },
   { route: "/account/security", class: "private" },
   { route: "/account/billing", class: "private" },
+  { route: "/account/credits", class: "private" },
   { route: "/account/deleted", class: "private" },
   { route: "/checkout/return", class: "private" },
   { route: "/robots.txt", class: "system" },
@@ -91,6 +92,7 @@ export const routeDefinitions = [
   { route: "/api/webhooks/waffo", class: "system" },
   { route: "/api/cron/account-deletions", class: "system" },
   { route: "/api/cron/commerce", class: "system" },
+  { route: "/api/cron/credits", class: "system" },
   { route: "/api/test/emails/latest", class: "system" },
 ] as const satisfies readonly RouteDefinition[];
 

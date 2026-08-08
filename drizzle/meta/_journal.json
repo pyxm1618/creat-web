@@ -50,6 +50,13 @@
       "when": 1786162864575,
       "tag": "0006_normal_turbo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786164954446,
+      "tag": "0007_easy_stellaris",
+      "breakpoints": true
     }
   ]
 }

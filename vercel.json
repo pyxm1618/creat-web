@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/commerce",
       "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/credits",
+      "schedule": "30 3 * * *"
     }
   ]
 }

@@ -72,6 +72,8 @@ jobs:
         run: bun run verify:seo
       - name: Commerce verification
         run: bun run verify:commerce
+      - name: Credit verification
+        run: bun run verify:credits
       - name: Optional-provider build matrix
         run: bun run test:build-matrix
       - name: Release verification
