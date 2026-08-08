@@ -1,14 +1,15 @@
 name: Probe Waffo Subscriptions
 
 on:
-  push:
-    branches: [feat/subscriptions-refunds]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   probe:
+    if: github.event.pull_request.head.ref == 'feat/subscriptions-refunds'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
