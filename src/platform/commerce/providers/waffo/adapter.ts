@@ -1,12 +1,18 @@
 import { WaffoPancake, WebhookEventType } from "@waffo/pancake-ts";
 
-import { InvalidWebhookSignatureError, ProviderContractError } from "@/platform/commerce/application/errors";
+import {
+  InvalidWebhookSignatureError,
+  ProviderContractError,
+} from "@/platform/commerce/application/errors";
 import type {
   CreatedCheckout,
   CreateOneTimeCheckoutInput,
   PaymentProvider,
 } from "@/platform/commerce/application/payment-provider";
-import type { NormalizedPaymentSnapshot, NormalizedProviderEvent } from "@/platform/commerce/domain/events";
+import type {
+  NormalizedPaymentSnapshot,
+  NormalizedProviderEvent,
+} from "@/platform/commerce/domain/events";
 import { parseDisplayAmount } from "@/platform/commerce/domain/money";
 import type { CommerceEnvironment } from "@/platform/commerce/domain/product";
 
@@ -39,7 +45,8 @@ function localEnvironment(mode: string): CommerceEnvironment {
 
 function eventDate(value: string): Date {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new ProviderContractError("invalid Waffo event timestamp");
+  if (Number.isNaN(date.getTime()))
+    throw new ProviderContractError("invalid Waffo event timestamp");
   return date;
 }
 
@@ -79,7 +86,9 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
 
     async getPayment(input): Promise<NormalizedPaymentSnapshot | null> {
       if (!input.merchantOrderReference && !input.externalPaymentId) {
-        throw new ProviderContractError("payment lookup requires merchant order reference or payment id");
+        throw new ProviderContractError(
+          "payment lookup requires merchant order reference or payment id",
+        );
       }
 
       const filter = input.merchantOrderReference
@@ -88,7 +97,9 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       const variables = input.merchantOrderReference
         ? { reference: input.merchantOrderReference }
         : { paymentId: input.externalPaymentId };
-      const variableDefinition = input.merchantOrderReference ? "$reference: String!" : "$paymentId: ID!";
+      const variableDefinition = input.merchantOrderReference
+        ? "$reference: String!"
+        : "$paymentId: ID!";
 
       const response = await client.graphql.query<PaymentQueryResult>({
         query: `query (${variableDefinition}) {
@@ -107,7 +118,12 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       const payment = response.data?.payments[0];
       if (!payment) return null;
       const status = payment.status;
-      if (status !== "pending" && status !== "succeeded" && status !== "failed" && status !== "canceled") {
+      if (
+        status !== "pending" &&
+        status !== "succeeded" &&
+        status !== "failed" &&
+        status !== "canceled"
+      ) {
         throw new ProviderContractError(`unsupported Waffo payment status: ${status}`);
       }
 
@@ -123,7 +139,11 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       };
     },
 
-    async verifyAndNormalizeWebhook({ rawBody, signature, environment }): Promise<NormalizedProviderEvent> {
+    async verifyAndNormalizeWebhook({
+      rawBody,
+      signature,
+      environment,
+    }): Promise<NormalizedProviderEvent> {
       const raw = new TextDecoder().decode(rawBody);
       let event;
       try {
@@ -135,7 +155,8 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       }
 
       const eventEnvironment = localEnvironment(event.mode);
-      if (eventEnvironment !== environment) throw new ProviderContractError("Waffo webhook environment mismatch");
+      if (eventEnvironment !== environment)
+        throw new ProviderContractError("Waffo webhook environment mismatch");
       if (config.storeId && event.storeId !== config.storeId) {
         throw new ProviderContractError("Waffo webhook store mismatch");
       }
@@ -146,7 +167,10 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         const externalOrderId = requireString(event.data.orderId, "data.orderId");
         const externalPaymentId = requireString(event.data.paymentId, "data.paymentId");
         const currency = requireString(event.data.currency, "data.currency");
-        const amount = parseDisplayAmount(requireString(event.data.amount, "data.amount"), currency);
+        const amount = parseDisplayAmount(
+          requireString(event.data.amount, "data.amount"),
+          currency,
+        );
         return {
           type: "one_time_payment_succeeded",
           eventId,
@@ -165,7 +189,10 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       if (event.eventType === WebhookEventType.RefundSucceeded) {
         const externalPaymentId = requireString(event.data.paymentId, "data.paymentId");
         const currency = requireString(event.data.currency, "data.currency");
-        const amount = parseDisplayAmount(requireString(event.data.amount, "data.amount"), currency);
+        const amount = parseDisplayAmount(
+          requireString(event.data.amount, "data.amount"),
+          currency,
+        );
         return {
           type: "refund_succeeded",
           eventId,
