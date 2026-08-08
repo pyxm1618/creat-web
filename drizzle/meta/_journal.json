@@ -43,6 +43,13 @@
       "when": 1786156744390,
       "tag": "0005_chunky_cyclops",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786157901857,
+      "tag": "0006_right_scalphunter",
+      "breakpoints": true
     }
   ]
 }

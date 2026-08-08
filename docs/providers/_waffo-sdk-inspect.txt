@@ -1,0 +1,3022 @@
+# Temporary Waffo Pancake SDK inspection
+
+Package metadata:
+{
+  "name": "@waffo/pancake-ts",
+  "version": "0.16.0",
+  "description": "TypeScript SDK for Waffo Pancake MoR platform — RSA-SHA256 signing, zero runtime dependencies",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "docs",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run lint && npm run test && npm run build",
+    "prepare": "husky"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
+    "@types/node": "^20.19.39",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^9",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsdoc": "^62.9.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^4.0.16"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css}": "prettier --write"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/waffo-com/waffo-pancake-sdk-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/waffo-com/waffo-pancake-sdk-ts/issues"
+  },
+  "homepage": "https://github.com/waffo-com/waffo-pancake-sdk-ts#readme"
+}
+
+Files:
+node_modules/@waffo/pancake-ts/CHANGELOG.md
+node_modules/@waffo/pancake-ts/LICENSE
+node_modules/@waffo/pancake-ts/README.md
+node_modules/@waffo/pancake-ts/dist/index.cjs
+node_modules/@waffo/pancake-ts/dist/index.cjs.map
+node_modules/@waffo/pancake-ts/dist/index.d.cts
+node_modules/@waffo/pancake-ts/dist/index.d.ts
+node_modules/@waffo/pancake-ts/dist/index.js
+node_modules/@waffo/pancake-ts/dist/index.js.map
+node_modules/@waffo/pancake-ts/docs/api-reference.md
+node_modules/@waffo/pancake-ts/docs/graphql-guide.md
+node_modules/@waffo/pancake-ts/docs/webhook-guide.md
+node_modules/@waffo/pancake-ts/package.json
+
+README:
+# @waffo/pancake-ts
+
+TypeScript SDK for the Waffo Pancake Merchant of Record (MoR) payment platform.
+
+- Zero runtime dependencies, ESM + CJS, Node >= 20
+- Automatic RSA-SHA256 request signing with deterministic idempotency keys
+- Full TypeScript type definitions (15 enums, 40+ interfaces)
+- Webhook verification with embedded public keys (test/prod)
+
+## Installation
+
+```bash
+npm install @waffo/pancake-ts
+```
+
+## Quick Start
+
+> Most merchants create stores and products in the [Dashboard](https://pancake.waffo.ai/dashboard). The SDK is primarily used for **checkout integration** — redirecting customers from your site to the Waffo checkout page.
+
+```typescript
+import { WaffoPancake } from "@waffo/pancake-ts";
+
+// Merchant ID and API Key are available in Dashboard > Settings > Developers
+const client = new WaffoPancake({
+  merchantId: process.env.WAFFO_MERCHANT_ID!, // MER_{base62} format
+  privateKey: process.env.WAFFO_PRIVATE_KEY!,
+});
+
+// Create a checkout session — one call handles token + session + URL
+const result = await client.checkout.authenticated.create({
+  productId: "PROD_xxx", // from Dashboard > Products
+  currency: "USD",
+  buyerIdentity: req.user.email, // your user's identity
+});
+
+// Redirect customer to the checkout page (opens in new tab)
+res.json({ checkoutUrl: result.checkoutUrl });
+// => checkoutUrl includes #token=... (form pre-filled)
+```
+
+## Configuration
+
+| Parameter          | Type                         | Required | Description                                                                        |
+| ------------------ | ---------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `merchantId`       | `string`                     | Yes      | Merchant ID in `MER_{base62}` format                                               |
+| `privateKey`       | `string`                     | Yes      | RSA private key in PEM format (auto-normalized, see [docs](docs/api-reference.md)) |
+| `baseUrl`          | `string`                     | No       | API base URL override                                                              |
+| `fetch`            | `typeof fetch`               | No       | Custom fetch implementation                                                        |
+| `webhookPublicKey` | `string \| { test?, prod? }` | No       | Custom webhook public key(s)                                                       |
+
+The SDK auto-normalizes key formats: standard PEM, PKCS#1, literal `\n` from env vars, raw base64, and Windows line endings are all accepted.
+
+## Checkout Integration
+
+Waffo supports two checkout modes based on whether the merchant knows the customer's identity:
+
+- **Merchants with their own sites** know who the customer is — they have user accounts, login systems, or collect customer info before checkout. The merchant provides the customer's identity upfront, and the checkout form arrives pre-filled.
+- **Template stores and shared links** have no prior customer context — the customer arrives directly at the checkout page and fills in their own details.
+
+| Mode              | Method                            | Customer Identity | Form State | Use Case                                 |
+| ----------------- | --------------------------------- | ----------------- | ---------- | ---------------------------------------- |
+| **Authenticated** | `checkout.authenticated.create()` | Merchant provides | Pre-filled | Merchant sites with user accounts        |
+| **Anonymous**     | `checkout.anonymous.create()`     | Not provided      | Empty      | Template stores, one-time purchase links |
+
+> **We recommend authenticated checkout whenever possible.** The most important reason: authenticated checkout binds the order to the `buyerIdentity` you provide, which is a **merchant-controlled stable identifier**. Even if the customer changes the email on the checkout form, the order is still tied to the identity you specified. In anonymous mode, the customer self-reports their email on the form — if they enter a different address, the system treats them as a new user, which means **previous orders become unlinked** and **subscription trial periods can be exploited** (a new email = a new user = a fresh trial).
+>
+> |                   | Authenticated                                                           | Anonymous                                          |
+> | ----------------- | ----------------------------------------------------------------------- | -------------------------------------------------- |
+> | **Identity**      | Merchant-provided, stable across orders                                 | Self-reported email, may vary                      |
+> | **Form**          | Pre-filled from merchant-provided identity                              | Empty, customer fills manually                     |
+> | **Post-purchase** | Full self-service (see [Customer Self-Service](#customer-self-service)) | Create orders only — no post-purchase self-service |
+> | **Session**       | 5-minute TTL, auto-refreshes                                            | 1-minute, single-use                               |
+
+Both modes support **dynamic pricing** and **trial control** at checkout time:
+
+- `priceSnapshot` — override the product's stored price with a custom amount (e.g., coupon, volume discount)
+- `withTrial` — explicitly enable or disable the trial period for subscriptions (`true` = force trial, `false` = skip trial, omit = use default rules)
+
+### Authenticated Checkout (Recommended)
+
+The merchant provides customer identity — the SDK issues a session token, creates a checkout session, and returns a checkout URL with the token appended as a URL fragment. One call does everything.
+
+`buyerIdentity` is for order attribution and trial tracking only — it is not rendered on the checkout page. To pre-fill the email field on the checkout form, pass `buyerEmail` explicitly.
+
+```typescript
+// Basic — customer identity only (checkout page email field stays empty)
+const result = await client.checkout.authenticated.create({
+  productId: "PROD_xxx",
+  currency: "USD",
+  buyerIdentity: "userIdInYourSystem",
+});
+
+// With dynamic pricing — override stored price (e.g., coupon, volume discount)
+const result = await client.checkout.authenticated.create({
+  productId: "PROD_xxx",
+  currency: "USD",
+  buyerIdentity: "userIdInYourSystem",
+  buyerEmail: "customer@example.com",
+  priceSnapshot: { amount: "19.99", taxCategory: "digital_goods" },
+});
+
+// Subscription with trial control + billing detail pre-fill
+const result = await client.checkout.authenticated.create({
+  productId: "PROD_xxx",
+  currency: "USD",
+  buyerIdentity: "userIdInYourSystem",
+  buyerEmail: "customer@example.com",
+  withTrial: true, // force enable trial (false = skip, omit = default rules)
+  billingDetail: { country: "US", isBusiness: false },
+  orderMerchantExternalId: "ORDER-2026-00891", // optional, see Business-Side Identifiers below
+});
+
+// result.checkoutUrl = "https://pancake.waffo.ai/store/{slug}/checkout/{sessionId}#token={JWT}"
+window.open(result.checkoutUrl, "_blank", "noopener,noreferrer");
+```
+
+The token is passed via the URL fragment (after `#`), which is never sent to the server and never appears in the `Referer` header.
+
+### Anonymous Checkout
+
+No customer identity required — the customer fills in billing details manually on the checkout page.
+
+```typescript
+const result = await client.checkout.anonymous.create({
+  productId: "PROD_xxx",
+  currency: "USD",
+});
+
+// Also supports priceSnapshot, withTrial, and orderMerchantExternalId
+const result = await client.checkout.anonymous.create({
+  productId: "PROD_xxx",
+  currency: "USD",
+  priceSnapshot: { amount: "4.99", taxCategory: "saas" },
+  withTrial: false, // skip trial for this session
+  orderMerchantExternalId: "ORDER-2026-00891", // optional, API Key auth only
+  language: "pt-BR", // optional, sets the default checkout language (IETF BCP 47)
+  includePaymentMethods: ["card", "applepay"], // optional whitelist; or excludePaymentMethods to drop specific ones
+});
+
+window.open(result.checkoutUrl, "_blank", "noopener,noreferrer");
+```
+
+### Opening the Checkout Page
+
+**We recommend opening the checkout page in a new tab** rather than navigating in the current page:
+
+- Customers can return to your site immediately after payment or if they close the checkout tab
+- Merchant page state (cart, forms, scroll position) is preserved
+- Payment flow is decoupled from the browsing experience, reducing checkout abandonment
+
+```typescript
+// Recommended: open in a new tab
+window.open(result.checkoutUrl, "_blank", "noopener,noreferrer");
+
+// Or via an <a> tag
+// <a href={checkoutUrl} target="_blank" rel="noopener noreferrer">Proceed to Checkout</a>
+```
+
+> **Not recommended:** `window.location.href = result.checkoutUrl` replaces the current page, preventing customers from returning to your site without browser back navigation.
+
+See [API Reference — Checkout](docs/api-reference.md#checkout) for full parameter tables and `BillingDetail` field requirements.
+
+## Webhook Verification
+
+After a customer completes payment, Waffo sends webhook events to your server with rich data including order details, amounts, product info, and event-specific fields (payment, subscription, or refund). The SDK provides two ways to verify signatures:
+
+### Standalone Function (built-in keys)
+
+```typescript
+import { verifyWebhook, WebhookEventType } from "@waffo/pancake-ts";
+
+// Express (IMPORTANT: use raw body — parsed JSON breaks signature verification)
+app.post("/webhooks", express.raw({ type: "application/json" }), (req, res) => {
+  try {
+    const event = verifyWebhook(req.body.toString("utf-8"), req.headers["x-waffo-signature"] as string);
+
+    // Respond immediately, process asynchronously
+    res.status(200).send("OK");
+
+    switch (event.eventType) {
+      case WebhookEventType.OrderCompleted:
+        // Rich data: order, amount, product, payment fields
+        console.log(`Order ${event.data.orderId} completed — ${event.data.total} ${event.data.currency}`);
+        console.log(`Product: ${event.data.productName}, Customer: ${event.data.buyerEmail}`);
+        if (event.data.orderMetadata) console.log("Metadata:", event.data.orderMetadata);
+        break;
+      case WebhookEventType.SubscriptionActivated:
+        console.log(`Subscription activated for ${event.data.buyerEmail}`);
+        console.log(`Period: ${event.data.billingPeriod}, ends ${event.data.currentPeriodEnd}`);
+        break;
+      case WebhookEventType.RefundSucceeded:
+        console.log(`Refund succeeded: ${event.data.refundReason}`);
+        // refund.* events carry both business identifiers (see Business-Side Identifiers section)
+        await ledger.closeRefundTicket(event.data.refundTicketMerchantExternalId, event.data.orderMerchantExternalId);
+        break;
+    }
+  } catch {
+    res.status(401).send("Invalid signature");
+  }
+});
+
+// Next.js App Router
+export async function POST(request: Request) {
+  const body = await request.text();
+  const sig = request.headers.get("x-waffo-signature");
+  try {
+    const event = verifyWebhook(body, sig);
+    return new Response("OK");
+  } catch {
+    return new Response("Invalid signature", { status: 401 });
+  }
+}
+```
+
+### Client Instance Method (multi-level key resolution)
+
+```typescript
+const client = new WaffoPancake({
+  merchantId: "MER_xxx",
+  privateKey: "...",
+  webhookPublicKey: {
+    test: process.env.WAFFO_TEST_PUB_KEY!,
+    prod: process.env.WAFFO_PROD_PUB_KEY!,
+  },
+});
+const event = client.webhooks.verify(rawBody, sig, { environment: "prod" });
+```
+
+See [Webhook Guide](docs/webhook-guide.md) for event types, `WebhookEventData` field reference, dual-environment key architecture, key resolution chain, retry mechanism, and best practices.
+
+## Customer Self-Service
+
+Beyond checkout, you can let customers manage their own orders and subscriptions — for example, embedding a "Cancel Subscription" or "Request Refund" button in your site.
+
+Issue a session token, then use `client.customer(token)` to get a session with self-service methods:
+
+```typescript
+// Your backend — issue a session token for the customer
+const { token } = await client.auth.issueSessionToken({
+  storeId: "STO_xxx",
+  buyerIdentity: req.user.email,
+});
+
+// Create a customer session
+const customer = client.customer(token);
+
+// Cancel a subscription
+const { orderId, status } = await customer.cancelSubscription({ orderId: "ORD_xxx" });
+// status: "canceling" (active) or "canceled" (pending)
+
+// Reactivate a canceled subscription
+await customer.reactivateSubscription({ orderId: "ORD_xxx" });
+
+// Cancel a one-time order (while payment is pending)
+await customer.cancelOnetimeOrder({ orderId: "ORD_yyy" });
+
+// Submit a refund request
+const { ticket } = await customer.createRefundTicket({
+  paymentId: "PAY_xxx",
+  reason: "Product not as described",
+  requestedAmount: { amount: "29.00", currency: "USD" },
+  refundTicketMerchantExternalId: "REF-2026-00012", // optional, see Business-Side Identifiers below
+});
+
+// Resubmit a rejected refund ticket
+await customer.resubmitRefundTicket({
+  ticketId: "TKT_xxx",
+  paymentId: "PAY_xxx",
+  reason: "Updated reason with more detail",
+  requestedAmount: { amount: "29.00", currency: "USD" },
+});
+
+// Query the customer's own orders via GraphQL
+const result = await customer.graphql.query({
+  query: `query { orders { id status createdAt } }`,
+});
+```
+
+The token is scoped to the specified store and customer identity — customers can only access their own data. Token TTL is 5 minutes and auto-refreshes on each API call.
+
+> **Note**: This uses the same `buyerIdentity` as `checkout.authenticated.create()`. Orders placed via authenticated checkout are automatically tied to this identity, so the customer can manage them later with a token issued here.
+
+## Business-Side Identifiers
+
+Attach your own internal references to a checkout or a refund ticket so cross-system reconciliation does not require Waffo IDs. Two flat keys, both optional (max 128 chars):
+
+| Field                            | Attach at                                   | Inherited by                                               |
+| -------------------------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| `orderMerchantExternalId`        | `checkout.{authenticated,anonymous}.create` | `Order`, `Payment` (incl. subscription renewals), `Refund` |
+| `refundTicketMerchantExternalId` | `customer.createRefundTicket`               | `RefundTicket`, `Refund`                                   |
+
+The same field name appears at every layer it surfaces: request body, response entity, webhook payload (`data.orderMerchantExternalId` / `data.refundTicketMerchantExternalId`), and every GraphQL type that carries the value. A `refund.*` webhook event carries **both** keys (order key inherited from the originating order). Query by either key via GraphQL filters — see [GraphQL Guide](docs/graphql-guide.md).
+
+## GraphQL — Typed Queries
+
+```typescript
+// Simple query
+interface StoresQuery {
+  stores: Array<{ id: string; name: string; status: string }>;
+}
+const result = await client.graphql.query<StoresQuery>({
+  query: `query { stores { id name status } }`,
+});
+
+// Query with variables
+const product = await client.graphql.query({
+  query: `query ($id: ID!) { onetimeProduct(id: $id) { id name prices } }`,
+  variables: { id: "PROD_xxx" },
+});
+
+// Nested relationships in a single request
+const detail = await client.graphql.query({
+  query: `query ($id: ID!) {
+    store(id: $id) {
+      id name
+      onetimeProducts { id name status prices }
+      subscriptionProducts { id name billingPeriod status }
+    }
+  }`,
+  variables: { id: "STO_xxx" },
+});
+
+// Look up by your business-side identifier (see Business-Side Identifiers above)
+const byRef = await client.graphql.query({
+  query: `query ($ref: String!) {
+    payments(filter: { orderMerchantExternalId: { eq: $ref } }) {
+      id orderId status orderMerchantExternalId
+    }
+  }`,
+  variables: { ref: "ORDER-2026-00891" },
+});
+```
+
+See [GraphQL Guide](docs/graphql-guide.md) for filters, analytics queries, delivery logs, and more.
+
+## Warnings (Migration Notices)
+
+Every successful REST action and GraphQL query may carry a `warnings` array alongside the data. Warnings describe non-fatal advisories the server wants you to act on — typically deprecated parameters, fields scheduled for removal, or new APIs you should switch to. Each `Notice` has `message` (human-readable), `layer` (which service produced it), and `aiHint` (a structured migration instruction aimed at LLM consumers).
+
+```typescript
+// REST action — warnings spread onto the result alongside the typed payload
+const { store, warnings } = await client.stores.update({
+  id: "STO_xxx",
+  webhookSettings: { ... },  // deprecated input
+});
+if (warnings) {
+  for (const w of warnings) {
+    console.warn(`[${w.layer}] ${w.message}`, w.aiHint);
+    // e.g. layer=store, aiHint="Switch to client.webhooks.add / update / remove"
+  }
+}
+
+// GraphQL — warnings sit on the envelope alongside data and errors
+const result = await client.graphql.query<StoresQuery>({
+  query: `query { stores { id } }`,
+});
+result.warnings?.forEach(w => console.warn(w.message, w.aiHint));
+```
+
+**LLM/agent consumers**: always check `aiHint` on every warning — it is the canonical migration instruction (npm package, version, method name, endpoint path) the platform team intends for you to follow when the underlying API evolves.
+
+## Programmatic Store & Product Management
+
+> Most merchants manage stores and products in the [Dashboard](https://pancake.waffo.ai/dashboard). The following APIs are for merchants who need programmatic automation.
+
+### Stores
+
+```typescript
+// Create a store
+const { store } = await client.stores.create({ name: "My Store" });
+
+// Update settings (notification, checkout theme).
+// NOTE: webhook configuration moved to client.webhooks (see Webhooks section below).
+// NOTE: only merchant-facing `notify*` toggles (notifyNewOrders / notifyNewSubscriptions /
+//       notifySubscription* / notifyChargeback / notifyPayout*) are writable here;
+//       consumer email toggles (emailOrderConfirmation, emailSubscription*, emailTrial*) are
+//       managed by the PANCAKE platform and silently dropped if passed.
+const { store: updated } = await client.stores.update({
+  id: store.id,
+  supportEmail: "help@example.com",
+  notificationSettings: {
+    notifyNewOrders: true,
+    notifyNewSubscriptions: false,
+  },
+});
+
+// Soft-delete
+const { store: deleted } = await client.stores.delete({ id: store.id });
+```
+
+### Webhooks
+
+Manage webhook endpoints across HTTP, Feishu, Discord, Telegram, and Slack. Each store can have up to 20 webhooks across all channels.
+
+```typescript
+import { WebhookEventType } from "@waffo/pancake-ts";
+
+// Add a standard HTTPS webhook (RSA-signed envelope)
+const { webhook } = await client.webhooks.add({
+  storeId: store.id,
+  channel: "http",
+  url: "https://example.com/webhooks/pancake",
+  events: [WebhookEventType.OrderCompleted, WebhookEventType.RefundSucceeded],
+  testMode: false,
+});
+
+// Add a Discord webhook (uses Discord embed format)
+await client.webhooks.add({
+  storeId: store.id,
+  channel: "discord",
+  url: "https://discord.com/api/webhooks/123/abc",
+  events: [WebhookEventType.OrderCompleted],
+  testMode: false,
+});
+
+// Add a Telegram webhook (chat_id stored in `secret`)
+await client.webhooks.add({
+  storeId: store.id,
+  channel: "telegram",
+  url: "https://api.telegram.org/bot123:ABC/sendMessage",
+  events: [WebhookEventType.OrderCompleted],
+  testMode: false,
+  secret: "8737101383",
+});
+
+// Update events
+await client.webhooks.update({
+  id: webhook.id,
+  events: [WebhookEventType.OrderCompleted, WebhookEventType.RefundSucceeded, WebhookEventType.SubscriptionCanceled],
+});
+
+// Hard-delete a webhook (delivery history retained for audit)
+await client.webhooks.remove({ id: webhook.id });
+```
+
+> **Listing**: query the configured webhook list via GraphQL `Store.storeWebhooks` (filtered by environment automatically). The SDK does not expose a `list` method — `client.graphql.query` is the only read path, by design.
+
+### Products
+
+```typescript
+import { TaxCategory, BillingPeriod, ProductVersionStatus } from "@waffo/pancake-ts";
+
+// One-time product with multi-currency pricing
+const { product } = await client.onetimeProducts.create({
+  storeId: "STO_xxx",
+  name: "E-Book: TypeScript Handbook",
+  description: "Complete TypeScript guide for developers",
+  prices: {
+    USD: { amount: "29.00", taxCategory: TaxCategory.DigitalGoods },
+    EUR: { amount: "27.00", taxCategory: TaxCategory.DigitalGoods },
+    JPY: { amount: "4500", taxCategory: TaxCategory.DigitalGoods },
+  },
+  media: [{ type: "image", url: "https://example.com/cover.jpg", alt: "Book cover" }],
+  metadata: { sku: "ebook-ts-001" },
+});
+
+// Update (creates a new immutable version; skips if unchanged)
+await client.onetimeProducts.update({
+  id: product.id,
+  name: "E-Book: TypeScript Handbook v2",
+  prices: { USD: { amount: "39.00", taxCategory: "digital_goods" } },
+});
+
+// Publish test version → production
+await client.onetimeProducts.publish({ id: product.id });
+
+// Deactivate
+await client.onetimeProducts.updateStatus({ id: product.id, status: ProductVersionStatus.Inactive });
+
+// Subscription product
+const { product: sub } = await client.subscriptionProducts.create({
+  storeId: "STO_xxx",
+  name: "Pro Plan",
+  billingPeriod: BillingPeriod.Monthly,
+  prices: { USD: { amount: "9.99", taxCategory: TaxCategory.SaaS } },
+});
+await client.subscriptionProducts.publish({ id: sub.id });
+```
+
+### Subscription Product Groups
+
+```typescript
+// Create a group linking related subscription tiers
+const { group } = await client.subscriptionProductGroups.create({
+  storeId: "STO_xxx",
+  name: "Pro Plans",
+  rules: { sharedTrial: true },
+  productIds: ["PROD_aaa", "PROD_bbb"],
+});
+
+// Update members (full replacement, not merge)
+await client.subscriptionProductGroups.update({
+  id: group.id,
+  productIds: ["PROD_aaa", "PROD_bbb", "PROD_ccc"],
+});
+
+// Publish / delete
+await client.subscriptionProductGroups.publish({ id: group.id });
+await client.subscriptionProductGroups.delete({ id: group.id });
+```
+
+### Orders
+
+```typescript
+const { orderId, status } = await client.orders.cancelSubscription({
+  orderId: "ORD_xxx",
+});
+// status: "canceled" (was pending) or "canceling" (was active, PSP notified)
+```
+
+### Content Safety
+
+Scan a user's prompt for content-safety compliance before AIGC generation — continue only when `action` is `allow`. Stateless (prompt text is never stored); fails closed to `review` if the safety service is briefly unavailable.
+
+```typescript
+const verdict = await client.contentSafety.scanPrompt({ prompt: "a cat riding a bike" });
+if (verdict.action !== "allow") {
+  // do not generate — verdict.action is "review" or "block"
+}
+```
+
+## Error Handling
+
+API errors throw `WaffoPancakeError` with the HTTP status code and a call-stack-ordered errors array.
+
+```typescript
+import { WaffoPancakeError } from "@waffo/pancake-ts";
+
+try {
+  await client.stores.create({ name: "" });
+} catch (err) {
+  if (err instanceof WaffoPancakeError) {
+    console.log(err.status); // 400
+    console.log(err.errors); // [{ message: "...", layer: "store" }, ...]
+    // errors[0] = deepest layer, errors[n] = outermost layer
+  }
+}
+```
+
+## Resources
+
+| Namespace                          | Methods                                                                                                                  | Description                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| `client.checkout.authenticated`    | `create()`                                                                                                               | Authenticated checkout (recommended)    |
+| `client.checkout.anonymous`        | `create()`                                                                                                               | Anonymous checkout                      |
+| `client.checkout`                  | `createSession()`                                                                                                        | Low-level checkout session              |
+| `client.customer(token)`           | `cancelSubscription()` `cancelOnetimeOrder()` `reactivateSubscription()` `createRefundTicket()` `resubmitRefundTicket()` | Customer self-service                   |
+| `client.customer(token).graphql`   | `query<T>()`                                                                                                             | Customer-scoped GraphQL queries         |
+| `client.webhooks`                  | `verify<T>()` `add()` `update()` `remove()`                                                                              | Webhook config + signature verification |
+| `client.graphql`                   | `query<T>()`                                                                                                             | Merchant GraphQL queries                |
+| `client.auth`                      | `issueSessionToken()`                                                                                                    | Issue a customer session token (JWT)    |
+| `client.stores`                    | `create()` `update()` `delete()`                                                                                         | Store management                        |
+| `client.storeMerchants`            | `add()` `remove()` `updateRole()`                                                                                        | Store members (coming soon)             |
+| `client.onetimeProducts`           | `create()` `update()` `publish()` `updateStatus()`                                                                       | One-time products                       |
+| `client.subscriptionProducts`      | `create()` `update()` `publish()` `updateStatus()`                                                                       | Subscription products                   |
+| `client.subscriptionProductGroups` | `create()` `update()` `delete()` `publish()`                                                                             | Product groups                          |
+| `client.orders`                    | `cancelSubscription()`                                                                                                   | Order management                        |
+| `client.contentSafety`             | `scanPrompt()`                                                                                                           | AIGC prompt content-safety scan         |
+
+## Documentation
+
+| Document                               | Content                                                                                 |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| [API Reference](docs/api-reference.md) | Complete method reference — parameters, return types, `BillingDetail` fields            |
+| [GraphQL Guide](docs/graphql-guide.md) | Queries, filters, analytics, introspection, delivery logs                               |
+| [Webhook Guide](docs/webhook-guide.md) | Signature verification, event types, event data fields, key resolution, retry mechanism |
+| [Changelog](CHANGELOG.md)              | Version history and migration guides                                                    |
+
+## Exports
+
+### Classes & Functions
+
+| Export              | Description                                 |
+| ------------------- | ------------------------------------------- |
+| `WaffoPancake`      | SDK client with auto-signed requests        |
+| `WaffoPancakeError` | API error with status and call-stack errors |
+| `verifyWebhook`     | Standalone webhook signature verification   |
+
+### Enums
+
+| Export                       | Values                                                                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Environment`                | `Test`, `Prod`                                                                                                                                                                                                                        |
+| `TaxCategory`                | `DigitalGoods`, `SaaS`, `Software`, `Ebook`, `OnlineCourse`, `Consulting`, `ProfessionalService`                                                                                                                                      |
+| `BillingPeriod`              | `Weekly`, `Monthly`, `Quarterly`, `Yearly`                                                                                                                                                                                            |
+| `ProductVersionStatus`       | `Active`, `Inactive`                                                                                                                                                                                                                  |
+| `EntityStatus`               | `Active`, `Inactive`, `Suspended`                                                                                                                                                                                                     |
+| `StoreRole`                  | `Owner`, `Admin`, `Member`                                                                                                                                                                                                            |
+| `OnetimeOrderStatus`         | `Pending`, `Completed`, `Canceled`                                                                                                                                                                                                    |
+| `SubscriptionOrderStatus`    | `Pending`, `Active`, `Canceling`, `PastDue`, `Closed`, `Canceled`, `Expired`                                                                                                                                                          |
+| `PaymentStatus`              | `Pending`, `Succeeded`, `Failed`, `Canceled`                                                                                                                                                                                          |
+| `RefundTicketStatus`         | `Pending`, `Approved`, `Rejected`, `Processing`, `Succeeded`, `Failed`                                                                                                                                                                |
+| `RefundStatus`               | `Succeeded`, `Failed`                                                                                                                                                                                                                 |
+| `MediaType`                  | `Image`, `Video`                                                                                                                                                                                                                      |
+| `CheckoutSessionProductType` | `Onetime`, `Subscription`                                                                                                                                                                                                             |
+| `ErrorLayer`                 | `Gateway`, `User`, `Store`, `Product`, `Order`, `Ticket`, `GraphQL`, `Resource`, `Email`                                                                                                                                              |
+| `WebhookEventType`           | `OrderCompleted`, `SubscriptionActivated`, `SubscriptionPaymentSucceeded`, `SubscriptionCanceling`, `SubscriptionUncanceled`, `SubscriptionUpdated`, `SubscriptionCanceled`, `SubscriptionPastDue`, `RefundSucceeded`, `RefundFailed` |
+
+### Types
+
+Key types: `WaffoPancakeConfig`, `AuthenticatedCheckoutParams`, `AuthenticatedCheckoutResult`, `AnonymousCheckoutParams`, `CheckoutSessionResult`, `CashierLanguage`, `Store`, `OnetimeProductDetail`, `SubscriptionProductDetail`, `WebhookEvent<T>`, `WebhookEventData`, `GraphQLResponse<T>`, and 30+ more. `WebhookEventData` includes rich fields organized by section: order info, amounts, product, payment, subscription, and refund (conditional by event type). See [API Reference](docs/api-reference.md#types) for the full list.
+
+## Development
+
+```bash
+npm run lint            # ESLint 9 (TypeScript ESLint + import order + JSDoc)
+npm run test            # Vitest
+npm run test:watch      # Vitest in watch mode
+npm run test:coverage   # Vitest with v8 coverage
+npm run build           # tsup → ESM + CJS + DTS
+```
+
+## Project Structure
+
+```
+src/
+├── index.ts               # Unified export entry
+├── client.ts              # WaffoPancake main class
+├── http-client.ts         # HTTP client (API Key, auto-signing + idempotency)
+├── customer-http-client.ts   # HTTP client (Bearer token, customer self-service)
+├── signing.ts             # RSA-SHA256 request signing
+├── errors.ts              # WaffoPancakeError
+├── webhooks.ts            # Webhook verification (embedded keys)
+├── validation.ts          # Client-side input validation
+├── types.ts               # Type definitions & enums
+├── __tests__/             # Test suite
+└── resources/             # API resource classes
+    ├── auth.ts
+    ├── stores.ts
+    ├── store-merchants.ts
+    ├── onetime-products.ts
+    ├── subscription-products.ts
+    ├── subscription-product-groups.ts
+    ├── customer.ts
+    ├── orders.ts
+    ├── checkout.ts
+    ├── checkout-anonymous.ts
+    ├── checkout-authenticated.ts
+    ├── graphql.ts
+    └── webhooks.ts
+docs/
+├── api-reference.md       # Complete API reference
+├── graphql-guide.md       # GraphQL queries & analytics
+└── webhook-guide.md       # Webhook verification guide
+```
+
+## License
+
+MIT
+
+Type declarations:
+node_modules/@waffo/pancake-ts/dist/index.d.ts
+interface WaffoPancakeConfig {
+    /** Merchant ID in `MER_{base62}` format (sent as X-Merchant-Id header) */
+    merchantId: string;
+    /** RSA private key in PEM format for request signing */
+    privateKey: string;
+    /** Base URL override (default: https://api.waffo.ai) */
+    baseUrl?: string;
+    /** Custom fetch implementation (default: global fetch) */
+    fetch?: typeof fetch;
+    /**
+     * Custom RSA public key(s) for webhook signature verification.
+     *
+     * - `string` — single key used for both test and prod environments
+     * - `{ test?, prod? }` — per-environment keys
+     *
+     * Resolution order per environment: config key → env var → built-in key.
+     * @see {@link VerifyWebhookOptions} for per-call overrides
+     */
+    webhookPublicKey?: WebhookPublicKeys;
+}
+/**
+ * Options for {@link HttpClient.post}.
+ * Not exported publicly — used by resource classes.
+ */
+interface PostOptions {
+    /**
+     * Time window in seconds for idempotency key rotation.
+     * When set, a floored timestamp is mixed into the key so identical params
+     * produce a new key after the window elapses (e.g. 60 = per-minute dedup).
+     */
+    idempotencyWindow?: number;
+    /**
+     * Skip the X-Idempotency-Key header entirely. Set for read-only queries
+     * (e.g. GraphQL) so the gateway's 24h idempotency cache does not serve
+     * stale data on identical repeat queries.
+     */
+    noIdempotency?: boolean;
+}
+/**
+ * Single Notice entry within `errors` or `warnings` arrays.
+ *
+ * Both REST and GraphQL envelopes use the same Notice shape. `aiHint` is the
+ * structured migration instruction for LLM consumers (see handbook
+ * `command-layer.md` aiHint four-line template).
+ *
+ * @example
+ * { message: "Store slug already exists", layer: "store" }
+ * @example
+ * { message: "webhookSettings field ignored", layer: "store",
+ *   aiHint: "Switch to client.webhooks.add / update / remove" }
+ */
+interface Notice {
+    /** Human-readable message */
+    message: string;
+    /** Layer that produced this notice */
+    layer: `${ErrorLayer}`;
+    /** Structured migration / remediation instruction for LLM consumers */
+    aiHint?: string;
+}
+/** @deprecated Use {@link Notice}. Kept for backwards compatibility with existing imports. */
+type ApiError = Notice;
+/**
+ * API response envelope. Both REST writes and GraphQL queries return this shape:
+ * - Success: `{ data: T }` (optionally with `warnings`)
+ * - Failure: `{ data: null, errors: Notice[] }`
+ * - Partial success (GraphQL only): `{ data: T, errors: Notice[] }`
+ *
+ * `errors` are ordered by call stack: `[0]` is the deepest layer, `[n]` is the outermost.
+ *
+ * See handbook `coding-standards/code-style-guide/command-layer.md` for the wire contract.
+ */
+interface Envelope<T> {
+    data: T | null;
+    errors?: Notice[];
+    warnings?: Notice[];
+}
+/** Transport-layer result: HTTP status plus the parsed envelope. */
+interface PostResult<T> extends Envelope<T> {
+    /** HTTP status code from the response */
+    status: number;
+}
+/**
+ * Environment type.
+ * @see docs/api-reference/authentication.mdx
+ */
+declare enum Environment {
+    Test = "test",
+    Prod = "prod"
+}
+/**
+ * Tax category for products.
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ */
+declare enum TaxCategory {
+    DigitalGoods = "digital_goods",
+    SaaS = "saas",
+    Software = "software",
+    Ebook = "ebook",
+    OnlineCourse = "online_course",
+    Consulting = "consulting",
+    ProfessionalService = "professional_service"
+}
+/**
+ * Subscription billing period.
+ * @see docs/api-reference/endpoints/subscription-products/overview.mdx
+ */
+declare enum BillingPeriod {
+    Weekly = "weekly",
+    Monthly = "monthly",
+    Quarterly = "quarterly",
+    Yearly = "yearly"
+}
+/**
+ * Product version status.
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ */
+declare enum ProductVersionStatus {
+    Active = "active",
+    Inactive = "inactive"
+}
+/**
+ * Store entity status.
+ * @see docs/api-reference/endpoints/stores/overview.mdx
+ */
+declare enum EntityStatus {
+    Active = "active",
+    Inactive = "inactive",
+    Suspended = "suspended"
+}
+/**
+ * Store member role.
+ * @see docs/api-reference/endpoints/stores/overview.mdx
+ */
+declare enum StoreRole {
+    Owner = "owner",
+    Admin = "admin",
+    Member = "member"
+}
+/**
+ * One-time order status.
+ * @see docs/api-reference/endpoints/orders/overview.mdx
+ */
+declare enum OnetimeOrderStatus {
+    Pending = "pending",
+    Completed = "completed",
+    Canceled = "canceled"
+}
+/**
+ * Subscription order status.
+ *
+ * State machine:
+ * - pending -> active, canceled, closed (PSP CLOSE from never-activated)
+ * - active -> canceling, past_due, canceled, expired
+ * - canceling -> active, canceled
+ * - past_due -> active, canceled
+ * - closed -> terminal (never-activated subscription closed by PSP)
+ * - canceled -> terminal
+ * - expired -> terminal
+ *
+ * @see docs/api-reference/endpoints/subscriptions/overview.mdx
+ */
+declare enum SubscriptionOrderStatus {
+    Pending = "pending",
+    Active = "active",
+    Canceling = "canceling",
+    PastDue = "past_due",
+    Closed = "closed",
+    Canceled = "canceled",
+    Expired = "expired"
+}
+/**
+ * Payment status.
+ * @see docs/api-reference/endpoints/orders/overview.mdx
+ */
+declare enum PaymentStatus {
+    Pending = "pending",
+    Succeeded = "succeeded",
+    Failed = "failed",
+    Canceled = "canceled"
+}
+/**
+ * Refund ticket status.
+ * @see docs/api-reference/endpoints/refunds/overview.mdx
+ */
+declare enum RefundTicketStatus {
+    Pending = "pending",
+    UnderReview = "under_review",
+    Approved = "approved",
+    Rejected = "rejected",
+    Returned = "returned",
+    Processing = "processing",
+    Succeeded = "succeeded",
+    Failed = "failed",
+    Cancelled = "cancelled"
+}
+/**
+ * Refund status.
+ * @see docs/api-reference/endpoints/refunds/overview.mdx
+ */
+declare enum RefundStatus {
+    Succeeded = "succeeded",
+    Failed = "failed"
+}
+/**
+ * Media asset type.
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ */
+declare enum MediaType {
+    Image = "image",
+    Video = "video"
+}
+/** Error layer identifier in the call stack. */
+declare enum ErrorLayer {
+    Gateway = "gateway",
+    User = "user",
+    Store = "store",
+    Product = "product",
+    Order = "order",
+    Ticket = "ticket",
+    GraphQL = "graphql",
+    Resource = "resource",
+    /** SDK-specific layer for email delivery errors (not part of the service-side error layers). */
+    Email = "email",
+    /** SDK-side input validation (caught before network request). */
+    Sdk = "sdk"
+}
+/**
+ * Parameters for issuing a customer session token.
+ *
+ * Provide either `storeId` or `productId` (at least one required).
+ * When `productId` is given without `storeId`, the server derives the store from the product.
+ *
+ * @see docs/api-reference/endpoints/auth/issue-session-token.mdx
+ */
+interface IssueSessionTokenParams {
+    /**
+     * Customer identity — encoded into the JWT payload for merchant-side customer
+     * identification. Accepts an email or any merchant-provided identifier string.
+     * To pre-fill the checkout page's email field, use `buyerEmail` on
+     * `checkout.authenticated.create`.
+     */
+    buyerIdentity: string;
+    /** Store ID (optional when `productId` is provided) */
+    storeId?: string;
+    /** Product ID — used to derive the store when `storeId` is omitted */
+    productId?: string;
+}
+/**
+ * Issued session token response.
+ *
+ * @example
+ * { token: "eyJhbGciOi...", expiresAt: "2026-03-10T09:00:00.000Z" }
+ */
+interface SessionToken {
+    /** JWT token string */
+    token: string;
+    /** Expiration time (ISO 8601 UTC) */
+    expiresAt: string;
+}
+/**
+ * Webhook channel — HTTP for the standard RSA-signed envelope, the rest for
+ * IM platform native payloads (Feishu / Discord / Telegram / Slack).
+ */
+type WebhookChannel = "http" | "feishu" | "discord" | "telegram" | "slack";
+/**
+ * Configured webhook endpoint (one row of `store.store_webhooks`).
+ *
+ * @see docs/api-reference/endpoints/webhooks/overview.mdx
+ */
+interface StoreWebhook {
+    /** Webhook UUID (not Short ID) */
+    id: string;
+    /** Owning store Short ID (`STO_…`) */
+    storeId: string;
+    channel: WebhookChannel;
+    /** Target webhook URL */
+    url: string;
+    /** Subscribed event types (use `WebhookEventType` enum or its string literal) */
+    events: `${WebhookEventType}`[];
+    /** Whether this webhook fires in test or prod environment */
+    testMode: boolean;
+    /** Channel-specific credential (e.g. Telegram chat_id) */
+    secret: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+/** Parameters for creating a webhook. */
+interface AddWebhookParams {
+    /** Store Short ID (`STO_…`) */
+    storeId: string;
+    channel: WebhookChannel;
+    /** Target webhook URL */
+    url: string;
+    /** Subscribed event types (use `WebhookEventType` enum or its string literal) */
+    events: `${WebhookEventType}`[];
+    /** Whether this webhook fires in test (true) or prod (false) */
+    testMode: boolean;
+    /** Channel-specific credential (e.g. Telegram chat_id) */
+    secret?: string | null;
+}
+/** Parameters for updating a webhook. `channel` and `testMode` are immutable. */
+interface UpdateWebhookParams {
+    /** Webhook UUID */
+    id: string;
+    /** Replace target URL (must remain on the same channel host) */
+    url?: string;
+    /** Replace subscribed event types (use `WebhookEventType` enum or its string literal) */
+    events?: `${WebhookEventType}`[];
+    /** Replace channel-specific credential */
+    secret?: string | null;
+}
+/** Parameters for hard-deleting a webhook. */
+interface RemoveWebhookParams {
+    /** Webhook UUID */
+    id: string;
+}
+/**
+ * Notification settings (all default to true).
+ * @see docs/api-reference/endpoints/stores/overview.mdx
+ */
+interface NotificationSettings {
+    emailOrderConfirmation: boolean;
+    emailSubscriptionConfirmation: boolean;
+    emailSubscriptionCycled: boolean;
+    emailSubscriptionCanceled: boolean;
+    emailSubscriptionRevoked: boolean;
+    emailSubscriptionPastDue: boolean;
+    emailTrialStarted: boolean;
+    emailTrialEnding: boolean;
+    emailUpcomingCharge: boolean;
+    notifyNewOrders: boolean;
+    notifyNewSubscriptions: boolean;
+    notifySubscriptionCanceled: boolean;
+    notifySubscriptionEnded: boolean;
+    notifySubscriptionPastDue: boolean;
+    notifySubscriptionRenewed: boolean;
+    notifySubscriptionUncanceled: boolean;
+    notifySubscriptionUpdated: boolean;
+    notifyChargeback: boolean;
+}
+/**
+ * Merchant-writable subset of {@link NotificationSettings}.
+ *
+ * Consumer-email toggles (`email*`) are managed by the PANCAKE platform and **not**
+ * writable from this SDK; they would be silently dropped by the `update-store`
+ * endpoint if included. Payout result notifications are platform-managed and always
+ * delivered — they have no toggle key. Use this type for any merchant-side update.
+ */
+type MerchantWritableNotificationSettings = Pick<NotificationSettings, "notifyNewOrders" | "notifyNewSubscriptions" | "notifySubscriptionCanceled" | "notifySubscriptionEnded" | "notifySubscriptionPastDue" | "notifySubscriptionRenewed" | "notifySubscriptionUncanceled" | "notifySubscriptionUpdated" | "notifyChargeback">;
+/**
+ * Single-theme checkout page styling.
+ * @see docs/api-reference/endpoints/stores/overview.mdx
+ */
+interface CheckoutThemeSettings {
+    checkoutLogo: string | null;
+    checkoutColorPrimary: string;
+    checkoutColorBackground: string;
+    checkoutColorCard: string;
+    checkoutColorText: string;
+    checkoutBorderRadius: string;
+}
+/**
+ * Checkout page configuration (light and dark themes).
+ * @see docs/api-reference/endpoints/stores/overview.mdx
+ */
+interface CheckoutSettings {
+    defaultDarkMode: boolean;
+    light: CheckoutThemeSettings;
+    dark: CheckoutThemeSettings;
+}
+/**
+ * Store entity.
+ * @see docs/api-reference/endpoints/stores/overview.mdx
+ */
+interface Store {
+    id: string;
+    name: string;
+    status: EntityStatus;
+    logo: string | null;
+    supportEmail: string | null;
+    website: string | null;
+    slug: string | null;
+    prodEnabled: boolean;
+    notificationSettings: NotificationSettings | null;
+    checkoutSettings: CheckoutSettings | null;
+    deletedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+/** Parameters for creating a store. */
+interface CreateStoreParams {
+    /** Store name (slug is auto-generated) */
+    name: string;
+}
+/**
+ * Parameters for updating a store.
+ *
+ * Settings objects support partial updates — omitted sub-fields keep their
+ * existing values, `null` clears a field, and a concrete value sets it.
+ * Pass the entire settings object as `null` to clear all fields in the group.
+ *
+ * **BREAKING (2026-05)**: the legacy `webhookSettings` field is removed.
+ * Manage webhooks via `client.webhooks.add / update / remove`; query the
+ * webhook list through GraphQL `Store.storeWebhooks`.
+ */
+interface UpdateStoreParams {
+    /** Store ID */
+    id: string;
+    /** Store display name */
+    name?: string;
+    /** Store status */
+    status?: EntityStatus;
+    /** Store logo URL (set to `null` to remove) */
+    logo?: string | null;
+    /** Support email address (set to `null` to remove) */
+    supportEmail?: string | null;
+    /** Store website URL (set to `null` to remove) */
+    website?: string | null;
+    /** Notification preferences (partial update — omitted fields keep existing values, set to `null` to clear all) */
+    notificationSettings?: Partial<MerchantWritableNotificationSettings> | null;
+    /** Checkout page theme configuration (partial update — omitted fields keep existing values, set to `null` to clear all) */
+    checkoutSettings?: Partial<CheckoutSettings> | null;
+}
+/** Parameters for deleting (soft-delete) a store. */
+interface DeleteStoreParams {
+    /** Store ID */
+    id: string;
+}
+/** Parameters for adding a merchant to a store. */
+interface AddMerchantParams {
+    storeId: string;
+    email: string;
+    role: "admin" | "member";
+}
+/** Result of adding a merchant to a store. */
+interface AddMerchantResult {
+    storeId: string;
+    merchantId: string;
+    email: string;
+    role: string;
+    status: string;
+    addedAt: string;
+}
+/** Parameters for removing a merchant from a store. */
+interface RemoveMerchantParams {
+    storeId: string;
+    merchantId: string;
+}
+/** Result of removing a merchant from a store. */
+interface RemoveMerchantResult {
+    message: string;
+    removedAt: string;
+}
+/** Parameters for updating a merchant's role. */
+interface UpdateRoleParams {
+    storeId: string;
+    merchantId: string;
+    role: "admin" | "member";
+}
+/** Result of updating a merchant's role. */
+interface UpdateRoleResult {
+    storeId: string;
+    merchantId: string;
+    role: string;
+    updatedAt: string;
+}
+/**
+ * Price for a single currency.
+ *
+ * Amounts are represented as display strings (e.g., "9.99" for USD, "1000" for JPY).
+ * The server handles conversion to/from smallest currency units internally.
+ *
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ *
+ * @example
+ * // USD $9.99
+ * { amount: "9.99", taxCategory: "saas" }
+ *
+ * @example
+ * // JPY ¥1000
+ * { amount: "1000", taxCategory: "software" }
+ */
+interface PriceInfo {
+    /** Price amount as display string (e.g., "9.99" for USD, "1000" for JPY) */
+    amount: string;
+    /** Tax category */
+    taxCategory: TaxCategory;
+}
+/**
+ * Multi-currency prices (keyed by ISO 4217 currency code).
+ *
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ *
+ * @example
+ * {
+ *   "USD": { amount: "9.99", taxCategory: "saas" },
+ *   "EUR": { amount: "8.99", taxCategory: "saas" }
+ * }
+ */
+type Prices = Record<string, PriceInfo>;
+/**
+ * Media asset (image or video).
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ */
+interface MediaItem {
+    /** Media type */
+    type: `${MediaType}`;
+    /** Asset URL */
+    url: string;
+    /** Alt text */
+    alt?: string;
+    /** Thumbnail URL */
+    thumbnail?: string;
+}
+/**
+ * One-time product detail (public API shape).
+ * @see docs/api-reference/endpoints/onetime-products/overview.mdx
+ */
+interface OnetimeProductDetail {
+    id: string;
+    storeId: string;
+    name: string;
+    description: string | null;
+    prices: Prices;
+    media: MediaItem[];
+    successUrl: string | null;
+    metadata: Record<string, unknown>;
+    status: ProductVersionStatus;
+    createdAt: string;
+    updatedAt: string;
+}
+/**
+ * Parameters for creating a one-time product.
+ * @see docs/api-reference/endpoints/onetime-products/create-product.mdx
+ */
+interface CreateOnetimeProductParams {
+    storeId: string;
+    name: string;
+    prices: Prices;
+    description?: string | null;
+    media?: MediaItem[];
+    successUrl?: string | null;
+    metadata?: Record<string, unknown>;
+}
+/**
+ * Parameters for updating a one-time product (creates a new version; skips if unchanged).
+ * @see docs/api-reference/endpoints/onetime-products/update-product.mdx
+ */
+interface UpdateOnetimeProductParams {
+    id: string;
+    name?: string;
+    prices?: Prices;
+    description?: string | null;
+    media?: MediaItem[];
+    successUrl?: string | null;
+    metadata?: Record<string, unknown>;
+}
+/** Parameters for publishing a one-time product's test version to production. */
+interface PublishOnetimeProductParams {
+    /** Product ID */
+    id: string;
+}
+/**
+ * Parameters for updating a one-time product's status.
+ * @see docs/api-reference/endpoints/onetime-products/update-status.mdx
+ */
+interface UpdateOnetimeStatusParams {
+    id: string;
+    status: ProductVersionStatus;
+}
+/**
+ * Subscription product detail (public API shape).
+ * @see docs/api-reference/endpoints/subscription-products/overview.mdx
+ */
+interface SubscriptionProductDetail {
+    id: string;
+    storeId: string;
+    name: string;
+    description: string | null;
+    billingPeriod: BillingPeriod;
+    prices: Prices;
+    media: MediaItem[];
+    successUrl: string | null;
+    metadata: Record<string, unknown>;
+    status: ProductVersionStatus;
+    createdAt: string;
+    updatedAt: string;
+}
+/**
+ * Parameters for creating a subscription product.
+ * @see docs/api-reference/endpoints/subscription-products/create-product.mdx
+ */
+interface CreateSubscriptionProductParams {
+    storeId: string;
+    name: string;
+    billingPeriod: BillingPeriod;
+    prices: Prices;
+    description?: string | null;
+    media?: MediaItem[];
+    successUrl?: string | null;
+    metadata?: Record<string, unknown>;
+}
+/**
+ * Parameters for updating a subscription product (creates a new version; skips if unchanged).
+ * @see docs/api-reference/endpoints/subscription-products/update-product.mdx
+ */
+interface UpdateSubscriptionProductParams {
+    id: string;
+    name?: string;
+    billingPeriod?: BillingPeriod;
+    prices?: Prices;
+    description?: string | null;
+    media?: MediaItem[];
+    successUrl?: string | null;
+    metadata?: Record<string, unknown>;
+}
+/** Parameters for publishing a subscription product's test version to production. */
+interface PublishSubscriptionProductParams {
+    /** Product ID */
+    id: string;
+}
+/**
+ * Parameters for updating a subscription product's status.
+ * @see docs/api-reference/endpoints/subscription-products/update-status.mdx
+ */
+interface UpdateSubscriptionStatusParams {
+    id: string;
+    status: ProductVersionStatus;
+}
+/**
+ * Group rules for subscription product groups.
+ * @see docs/api-reference/endpoints/subscription-products/overview.mdx
+ */
+interface GroupRules {
+    /** Whether trial period is shared across products in the group */
+    sharedTrial: boolean;
+}
+/**
+ * Subscription product group entity.
+ * @see docs/api-reference/endpoints/subscription-products/overview.mdx
+ */
+interface SubscriptionProductGroup {
+    id: string;
+    storeId: string;
+    name: string;
+    description: string | null;
+    rules: GroupRules;
+    productIds: string[];
+    environment: Environment;
+    createdAt: string;
+    updatedAt: string;
+}
+/**
+ * Parameters for creating a subscription product group.
+ * @see docs/api-reference/endpoints/subscription-products/create-group.mdx
+ */
+interface CreateSubscriptionProductGroupParams {
+    storeId: string;
+    name: string;
+    description?: string;
+    rules?: GroupRules;
+    productIds?: string[];
+}
+/**
+ * Parameters for updating a subscription product group (`productIds` is a full replacement).
+ * @see docs/api-reference/endpoints/subscription-products/update-group.mdx
+ */
+interface UpdateSubscriptionProductGroupParams {
+    id: string;
+    name?: string;
+    description?: string;
+    rules?: GroupRules;
+    productIds?: string[];
+}
+/** Parameters for hard-deleting a subscription product group. */
+interface DeleteSubscriptionProductGroupParams {
+    /** Group ID */
+    id: string;
+}
+/** Parameters for publishing a test-environment group to production (upsert). */
+interface PublishSubscriptionProductGroupParams {
+    /** Group ID */
+    id: string;
+}
+/** Parameters for canceling a subscription order. */
+interface CancelSubscriptionParams {
+    /** Order ID */
+    orderId: string;
+}
+/**
+ * Result of canceling a subscription order.
+ * @see docs/api-reference/endpoints/subscriptions/cancel-subscription.mdx
+ */
+interface CancelSubscriptionResult {
+    orderId: string;
+    /** Status after cancellation (`"canceled"` or `"canceling"`) */
+    status: `${SubscriptionOrderStatus}`;
+}
+/**
+ * Customer billing details for checkout.
+ * @see docs/api-reference/endpoints/orders/overview.mdx
+ */
+interface BillingDetail {
+    /** Country code (ISO 3166-1 alpha-2) */
+    country: string;
+    /** Whether this is a business purchase */
+    isBusiness: boolean;
+    /** Postal / ZIP code (required for US, at least one of postcode/state for CA) */
+    postcode?: string;
+    /** State / province code (at least one of state/postcode for CA) */
+    state?: string;
+    /** Business name (recommended for invoicing, does not affect tax calculation) */
+    businessName?: string;
+    /** Tax ID / VAT number (EU businesses: triggers reverse charge 0% when provided) */
+    taxId?: string;
+}
+/**
+ * Supported checkout cashier languages (IETF BCP 47 tags).
+ *
+ * The default language of the hosted checkout page. Pass one of these values as
+ * {@link CreateCheckoutSessionParams.language}; the customer can still switch language
+ * on the checkout page. Language×currency mismatches are rejected by the payment provider.
+ */
+type CashierLanguage = "en" | "pt-BR" | "es-MX" | "id-ID" | "vi-VN" | "ru-RU" | "en-KE" | "es-PE" | "es-CO" | "es-CL" | "zh-Hant-TW" | "zh-Hant-HK" | "th-TH" | "ja-JP" | "en-NG" | "ko-KR" | "en-HK" | "zh-Hans-HK" | "pl-PL" | "tr-TR" | "zh-Hans" | "ms-MY";
+/**
+ * Payment methods that can be offered on the hosted checkout page.
+ *
+ * Availability depends on the product type × currency pair. One-time: `USD` supports all four;
+ * `EUR` / `GBP` / `HKD` / `JPY` support `card` / `applepay` / `googlepay`; `CNY` supports `wechat`.
+ * Subscription: `USD` / `EUR` / `GBP` / `HKD` / `JPY` support `card` / `applepay` / `googlepay`.
+ * Currencies outside this matrix cannot be charged at all — checkout session creation is rejected with a 400.
+ */
+type PaymentMethod = "card" | "applepay" | "googlepay" | "wechat";
+/**
+ * Parameters for creating a checkout session.
+ * @see docs/api-reference/endpoints/orders/create-checkout-session.mdx
+ */
+interface CreateCheckoutSessionParams {
+    /** Product ID */
+    productId: string;
+    /** Currency code (ISO 4217) */
+    currency: string;
+    /** Optional price snapshot override (reads from DB if omitted) */
+    priceSnapshot?: PriceInfo;
+    /** Trial toggle override (subscription only) */
+    withTrial?: boolean;
+    /** Pre-filled customer email */
+    buyerEmail?: string;
+    /** Pre-filled billing details */
+    billingDetail?: BillingDetail;
+    /** Redirect URL after successful payment */
+    successUrl?: string;
+    /** Session expiration in seconds (default: 45 minutes) */
+    expiresInSeconds?: number;
+    /** Dark mode override (true=dark, false=light, omit=use store default) */
+    darkMode?: boolean;
+    /** Custom metadata */
+    metadata?: Record<string, string>;
+    /** Order-side business identifier (max 128 chars); inherited by orders, payments, refunds */
+    orderMerchantExternalId?: string;
+    /**
+     * Default language of the hosted checkout page ({@link CashierLanguage}, IETF BCP 47).
+     * The customer can switch language on the checkout page. Omit to let the provider infer.
+     */
+    language?: CashierLanguage;
+    /**
+     * Whitelist — offer only these payment methods ({@link PaymentMethod}).
+     * Every value must be supported by the product type × currency pair, otherwise the request is rejected.
+     * Mutually exclusive with {@link CreateCheckoutSessionParams.excludePaymentMethods}.
+     * Omit both to offer every method the currency supports.
+     */
+    includePaymentMethods?: PaymentMethod[];
+    /**
+     * Blacklist — offer every method the currency supports except these ({@link PaymentMethod}).
+     * Values the currency does not offer are ignored, so one blacklist can be reused across currencies.
+     * Mutually exclusive with {@link CreateCheckoutSessionParams.includePaymentMethods}.
+     */
+    excludePaymentMethods?: PaymentMethod[];
+}
+/** Result of creating a checkout session. */
+interface CheckoutSessionResult {
+    /** Session ID */
+    sessionId: string;
+    /** URL to redirect the customer to */
+    checkoutUrl: string;
+    /** Session expiration time (ISO 8601 UTC) */
+    expiresAt: string;
+}
+/** Parameters for canceling a one-time order (customer-side). */
+interface CancelOnetimeOrderParams {
+    /** Order ID */
+    orderId: string;
+}
+/** Result of canceling a one-time order. */
+interface CancelOnetimeOrderResult {
+    /** Order ID */
+    orderId: string;
+    /** Resulting status (`"canceled"`) */
+    status: string;
+}
+/** Parameters for reactivating a subscription (customer-side). */
+interface ReactivateSubscriptionParams {
+    /** Subscription order ID */
+    orderId: string;
+}
+/** Result of reactivating a subscription. */
+interface ReactivateSubscriptionResult {
+    /** Order ID */
+    orderId: string;
+    /** Resulting status (`"active"`) */
+    status: string;
+}
+/** Requested refund amount. */
+interface RequestedAmount {
+    /** Refund amount in display format (e.g., `"29.00"`) */
+    amount: string;
+    /** Currency code (ISO 4217) */
+    currency: string;
+}
+/**
+ * Per-version data for a refund ticket. Each ticket can be submitted/resubmitted
+ * multiple times; this is the shape of a single submission.
+ */
+interface RefundTicketVersionData {
+    /** Refund reason supplied by the customer */
+    reason: string;
+    /** Requested refund amount; `null` if the version has no amount recorded */
+    requestedAmount: RequestedAmount | null;
+}
+/** Parameters for creating a refund ticket (customer-side). */
+interface CreateRefundTicketParams {
+    /** Payment ID to refund */
+    paymentId: string;
+    /** Reason for the refund request */
+    reason: string;
+    /** Requested refund amount */
+    requestedAmount: RequestedAmount;
+    /** Custom metadata */
+    metadata?: Record<string, unknown>;
+    /** Refund-ticket business-side identifier (max 128 chars); inherited by the executed refund on PSP success */
+    refundTicketMerchantExternalId?: string;
+}
+/** Parameters for resubmitting a rejected refund ticket (customer-side). */
+interface ResubmitRefundTicketParams {
+    /** Existing ticket ID */
+    ticketId: string;
+    /** Payment ID */
+    paymentId: string;
+    /** Updated reason */
+    reason: string;
+    /** Updated requested amount */
+    requestedAmount: RequestedAmount;
+}
+/** Refund ticket entity returned from create/resubmit operations. */
+interface RefundTicket {
+    /** Ticket ID */
+    id: string;
+    /** Ticket type (e.g., `"refund"`) */
+    type: string;
+    /** Ticket status (e.g., `"pending"`, `"approved"`, `"rejected"`) */
+    status: string;
+    /** Associated payment ID */
+    subjectId: string;
+    /** Submitter identifier (email or merchant ID) */
+    submitterId: string;
+    /** Submitter type (e.g., `"customer"`, `"merchant"`) */
+    submitterType: string;
+    /** Current version ID */
+    currentVersionId: string | null;
+    /** Reviewer ID (null if not yet reviewed) */
+    reviewerId: string | null;
+    /** Review timestamp (ISO 8601, null if not yet reviewed) */
+    reviewedAt: string | null;
+    /** Reviewer's note */
+    reviewNote: string | null;
+    /** Rejection reason (null if approved or pending) */
+    rejectReason: string | null;
+    /** Execution timestamp (ISO 8601, null if not yet executed) */
+    executedAt: string | null;
+    /** Custom metadata */
+    metadata: Record<string, unknown>;
+    /** Refund-ticket business-side identifier (max 128 chars, immutable across resubmits) */
+    refundTicketMerchantExternalId: string | null;
+    /** Current version number */
+    versionNumber: number | null;
+    /** Current (latest) version data */
+    versionData: RefundTicketVersionData | null;
+    /** Creation timestamp (ISO 8601) */
+    createdAt: string;
+    /** Last update timestamp (ISO 8601) */
+    updatedAt: string;
+}
+/**
+ * Parameters for anonymous checkout.
+ *
+ * The customer reaches the checkout page without a session token. Merchants may still
+ * pre-fill `buyerEmail` and `billingDetail`; omitting them leaves the form blank.
+ *
+ * Accepts every field of {@link CreateCheckoutSessionParams} — this wrapper simply
+ * forwards the params unchanged to `/v1/actions/checkout/create-session`.
+ *
+ * @example
+ * const result = await client.checkout.anonymous.create({
+ *   productId: "PROD_xxx",
+ *   currency: "USD",
+ * });
+ * // Redirect to result.checkoutUrl
+ */
+type AnonymousCheckoutParams = CreateCheckoutSessionParams;
+/**
+ * Parameters for authenticated checkout.
+ *
+ * Merges the checkout-session fields ({@link CreateCheckoutSessionParams}) with the
+ * extra `buyerIdentity` required by `issue-session-token`. The wrapper splits the
+ * input: `buyerIdentity` goes to the token call; everything else (including
+ * `buyerEmail`) goes to the create-session call. The two fields are independent.
+ *
+ * @example
+ * const result = await client.checkout.authenticated.create({
+ *   productId: "PROD_xxx",
+ *   currency: "USD",
+ *   buyerIdentity: "user-123",            // merchant-side customer id (goes into JWT)
+ *   buyerEmail: "customer@example.com",   // pre-filled on the checkout page
+ * });
+ * // Redirect to result.checkoutUrl (includes #token=...)
+ */
+interface AuthenticatedCheckoutParams extends CreateCheckoutSessionParams {
+    /**
+     * Customer identity — sent to `issue-session-token` and encoded into the JWT
+     * payload for merchant-side customer identification. Accepts an email or any
+     * merchant-provided identifier string. Use `buyerEmail` to pre-fill the
+     * checkout page's email input.
+     */
+    buyerIdentity: string;
+}
+/**
+ * Result of an authenticated checkout creation.
+ *
+ * Extends the base session result with the issued token details.
+ */
+interface AuthenticatedCheckoutResult {
+    /** Session ID */
+    sessionId: string;
+    /** Checkout URL with session token appended as URL fragment (`#token=...`) */
+    checkoutUrl: string;
+    /** Session expiration time (ISO 8601 UTC) */
+    expiresAt: string;
+    /** Issued JWT token */
+    token: string;
+    /** Token expiration time (ISO 8601 UTC) */
+    tokenExpiresAt: string;
+}
+/** Parameters for a GraphQL query. */
+interface GraphQLParams {
+    /** GraphQL query string */
+    query: string;
+    /** Query variables */
+    variables?: Record<string, unknown>;
+}
+/**
+ * GraphQL response envelope. Same shape as {@link Envelope}, but `errors` entries
+ * may additionally carry `locations` and `path` (graphql-js fields). The `layer`
+ * field is optional on GraphQL because resolver errors don't carry one.
+ */
+interface GraphQLResponse<T = Record<string, unknown>> {
+    data: T | null;
+    errors?: Array<{
+        message: string;
+        locations?: Array<{
+            line: number;
+            column: number;
+        }>;
+        path?: string[];
+        aiHint?: string;
+        /** Service stage that produced the error ("graphql", "gateway"). Resolver errors omit it. */
+        layer?: string;
+    }>;
+    warnings?: Notice[];
+}
+/**
+ * Webhook event types.
+ * @see docs/api-reference/webhooks.mdx
+ */
+declare enum WebhookEventType {
+    /** One-time order first payment succeeded */
+    OrderCompleted = "order.completed",
+    /** Subscription first payment succeeded (newly activated) */
+    SubscriptionActivated = "subscription.activated",
+    /** Subscription renewal payment succeeded */
+    SubscriptionPaymentSucceeded = "subscription.payment_succeeded",
+    /** Customer initiated cancellation (expires at end of current period) */
+    SubscriptionCanceling = "subscription.canceling",
+    /** Customer withdrew cancellation (subscription restored) */
+    SubscriptionUncanceled = "subscription.uncanceled",
+    /** Subscription product changed (upgrade/downgrade) */
+    SubscriptionUpdated = "subscription.updated",
+    /** Subscription fully terminated */
+    SubscriptionCanceled = "subscription.canceled",
+    /** Renewal payment failed (past due) */
+    SubscriptionPastDue = "subscription.past_due",
+    /** Refund succeeded */
+    RefundSucceeded = "refund.succeeded",
+    /** Refund failed */
+    RefundFailed = "refund.failed"
+}
+/**
+ * Common data fields in a webhook event payload.
+ * @see docs/api-reference/webhooks.mdx
+ */
+interface WebhookEventData {
+    orderId: string;
+    /** Order status (e.g., "completed", "active", "canceling") */
+    orderStatus?: string;
+    buyerEmail: string;
+    /** Merchant-provided customer identity from checkout session */
+    merchantProvidedBuyerIdentity?: string;
+    /** Order business identifier; present on order/payment + refund events (inherited from order) */
+    orderMerchantExternalId?: string;
+    /** Refund-ticket business identifier; only present on refund.* events */
+    refundTicketMerchantExternalId?: string;
+    currency: string;
+    /** Billing/shipping address (structured object) */
+    billingDetail?: Record<string, unknown>;
+    /** Order-level metadata from checkout session (flat key-value pairs) */
+    orderMetadata?: Record<string, string>;
+    /** Amount as display string (e.g., "9.99" for USD, "1000" for JPY) */
+    amount: string;
+    /** Tax amount as display string (e.g., "0.91" for USD) */
+    taxAmount: string;
+    /** Tax rate as decimal (e.g., 0.1 for 10%) */
+    taxRate?: number;
+    /** Tax name (e.g., "Consumption Tax") */
+    taxName?: string;
+    /** Subtotal as display string (before tax) */
+    subtotal?: string;
+    /** Total as display string (after tax) */
+    total?: string;
+    productName: string;
+    /** Product description */
+    productDescription?: string;
+    /** Product-level metadata set when creating/updating the product */
+    productMetadata?: Record<string, string>;
+    /** Payment ID */
+    paymentId?: string;
+    /** Payment status (e.g., "succeeded", "failed") */
+    paymentStatus?: string;
+    /** Payment method type (e.g., "card") */
+    paymentMethod?: string;
+    /** Last 4 digits of payment instrument */
+    paymentLast4?: string;
+    /** Payment failure reason (present when payment failed) */
+    paymentFailureReason?: string;
+    /** Payment date (ISO 8601 date, e.g., "2026-04-18") */
+    paymentDate?: string;
+    /** Billing period: "weekly", "monthly", "quarterly", "yearly" */
+    billingPeriod?: string;
+    /** Current billing period start date (ISO 8601, e.g., "2026-04-01") */
+    currentPeriodStart?: string;
+    /** Current billing period end date (ISO 8601, e.g., "2026-05-01") */
+    currentPeriodEnd?: string;
+    /** Subscription cancellation timestamp (ISO 8601, present when canceled) */
+    canceledAt?: string;
+    /** Refund status (e.g., "succeeded", "failed") */
+    refundStatus?: string;
+    /** Refund reason */
+    refundReason?: string;
+    /** Refund creation timestamp (ISO 8601) */
+    refundCreatedAt?: string;
+}
+/**
+ * Webhook event payload.
+ *
+ * @see docs/api-reference/webhooks.mdx
+ *
+ * @example
+ * {
+ *   id: "550e8400-...",
+ *   timestamp: "2026-03-10T08:30:00.000Z",
+ *   eventType: "order.completed",
+ *   eventId: "PAY_5xK9mRtYvWnPqLsJ3hBfDe",
+ *   storeId: "STO_2aUyqjCzEIiEcYMKj7TZtw",
+ *   storeName: "My Store",
+ *   mode: "prod",
+ *   data: { orderId: "...", buyerEmail: "...", currency: "USD", amount: "29.00", taxAmount: "2.90", productName: "Pro Plan", orderMetadata: { planId: "pro" } }
+ * }
+ */
+interface WebhookEvent<T = WebhookEventData> {
+    /** Delivery record unique ID (UUID), usable for idempotent deduplication */
+    id: string;
+    /** Event timestamp (ISO 8601 UTC) */
+    timestamp: string;
+    /** Event type */
+    eventType: `${WebhookEventType}` | (string & {});
+    /** Business event ID (e.g. payment ID, order ID) */
+    eventId: string;
+    /** Store ID the event belongs to */
+    storeId: string;
+    /** Store name */
+    storeName: string;
+    /** Environment identifier */
+    mode: `${Environment}`;
+    /** Event data */
+    data: T;
+}
+/**
+ * Webhook public key configuration.
+ *
+ * - `string` — single key used for both test and prod environments
+ * - `{ test?, prod? }` — per-environment keys
+ */
+type WebhookPublicKeys = string | {
+    test?: string;
+    prod?: string;
+};
+/** Options for {@link verifyWebhook}. */
+interface VerifyWebhookOptions {
+    /**
+     * Specify which environment's public key to use for verification.
+     * When omitted, both keys are tried automatically (prod first).
+     * Ignored when `publicKey` is provided.
+     */
+    environment?: `${Environment}`;
+    /**
+     * Timestamp tolerance window in milliseconds for replay protection.
+     * Set to 0 to skip timestamp checking.
+     * @default 300000 (5 minutes)
+     */
+    toleranceMs?: number;
+    /**
+     * Per-call public key override (highest priority).
+     * When provided, skips all other key resolution (config, env vars, built-in).
+     */
+    publicKey?: string;
+    /**
+     * Config-level public key(s) for the resolution chain.
+     * When using `client.webhooks.verify()`, this is set automatically from `WaffoPancakeConfig.webhookPublicKey`.
+     * When using the standalone `verifyWebhook()`, you can pass this directly for config-level key injection.
+     *
+     * Resolution order per environment:
+     * 1. `publicKey` (per-call override)
+     * 2. `publicKeys[env]` or `publicKeys` (config)
+     * 3. `WAFFO_WEBHOOK_{TEST|PROD}_PUBLIC_KEY` (env var)
+     * 4. `WAFFO_WEBHOOK_PUBLIC_KEY` (env var)
+     * 5. Built-in hardcoded key
+     */
+    publicKeys?: WebhookPublicKeys;
+}
+/**
+ * Content-safety scan verdict.
+ * @see docs/api-reference/endpoints/content-safety/scan-prompt.mdx
+ */
+declare enum ScanAction {
+    Allow = "allow",
+    Review = "review",
+    Block = "block"
+}
+/**
+ * Scan verdict reason code.
+ * @see docs/api-reference/endpoints/content-safety/scan-prompt.mdx
+ */
+declare enum ScanReasonCode {
+    Allowed = "allowed",
+    ReviewRequired = "review_required",
+    RestrictedContent = "restricted_content",
+    ServiceDegraded = "service_degraded"
+}
+/**
+ * Matched content-safety policy category.
+ * @see docs/api-reference/endpoints/content-safety/scan-prompt.mdx
+ */
+declare enum ScanPolicyCategory {
+    CsamMinor = "csam_minor",
+    SexualViolenceNonconsensual = "sexual_violence_nonconsensual",
+    UndressTransform = "undress_transform",
+    FaceSwapIdentity = "face_swap_identity",
+    BestialityRestricted = "bestiality_restricted",
+    AdultNsfw = "adult_nsfw"
+}
+/**
+ * Semantic scan channel mode.
+ * @see docs/api-reference/endpoints/content-safety/scan-prompt.mdx
+ */
+declare enum ScanSemanticMode {
+    Off = "off",
+    Shadow = "shadow",
+    Enforce = "enforce"
+}
+/**
+ * Semantic scan channel status.
+ * @see docs/api-reference/endpoints/content-safety/scan-prompt.mdx
+ */
+declare enum ScanSemanticStatus {
+    Disabled = "disabled",
+    Scored = "scored",
+    ShadowScored = "shadow_scored",
+    SkippedRulesBlock = "skipped_rules_block",
+    SkippedBudget = "skipped_budget",
+    ProviderTimeout = "provider_timeout",
+    ProviderError = "provider_error"
+}
+/** Parameters for scanning a prompt before AIGC generation. */
+interface ScanPromptParams {
+    /** The user's text prompt to scan (1–10,000 characters). */
+    prompt: string;
+    /** Prompt text language (default "en"). */
+    locale?: "ja" | "en" | "zh";
+    /** How the external semantic channel participates. */
+    semantic?: ScanSemanticMode;
+}
+/** Redacted scan verdict — no scores, thresholds, or keyword text. */
+interface ScanResult {
+    /** Final verdict; continue only when `allow`. */
+    action: ScanAction;
+    /** Stable machine-readable reason. */
+    reasonCode: ScanReasonCode;
+    /** Matched policy categories; empty when allowed. */
+    matchedCategories: ScanPolicyCategory[];
+    /** Correlation id for support and appeals; safe to log. */
+    requestId: string;
+    /** Whether/how the semantic channel contributed to this scan. */
+    semanticStatus: ScanSemanticStatus;
+}
+
+/**
+ * Internal HTTP client that auto-signs requests.
+ *
+ * The transport is intentionally thin: one {@link post} method that signs,
+ * sends, and parses the {data, errors?, warnings?} envelope. It does NOT
+ * unwrap `data`, throw on `errors[]`, or hide `warnings` — those are policy
+ * choices that belong to the resource layer. See handbook
+ * `coding-standards/code-style-guide/command-layer.md`.
+ *
+ * The `X-Merchant-Id` header is sent in `MER_{base62}` format as provided
+ * by the user. The gateway decodes it to a raw UUID before forwarding.
+ *
+ * Not exported publicly — used by resource classes via {@link WaffoPancake}.
+ */
+declare class HttpClient {
+    private readonly merchantId;
+    private readonly privateKey;
+    private readonly baseUrl;
+    private readonly _fetch;
+    constructor(config: WaffoPancakeConfig);
+    /**
+     * Send a signed POST and return the full envelope plus HTTP status.
+     *
+     * Behavior:
+     * - Builds RSA-SHA256 signature (`X-Merchant-Id` / `X-Timestamp` / `X-Signature`)
+     * - Attaches `X-Idempotency-Key` (deterministic `sha256(merchantId + path + body)`)
+     *   unless `options.noIdempotency` is set
+     * - When `options.idempotencyWindow` is set, a floored timestamp is mixed into the
+     *   key so identical params produce a new key after the window elapses
+     * - Does NOT throw on `errors[]` or non-2xx status — caller inspects the result
+     * - Throws {@link WaffoPancakeError} only on transport failures (non-JSON body)
+     *
+     * @param path - API path (e.g. `/v1/actions/store/create-store`, `/v1/graphql`)
+     * @param body - Request body object
+     * @param options - Optional settings
+     * @returns Parsed envelope with HTTP status
+     * @throws {WaffoPancakeError} When the response body is not valid JSON
+     */
+    post<T>(path: string, body: object, options?: PostOptions): Promise<PostResult<T>>;
+}
+
+/** Authentication resource — issue session tokens for customers. */
+declare class AuthResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Issue a session token for a customer.
+     *
+     * @param params - Token issuance parameters
+     * @returns Issued session token with expiration
+     *
+     * @example
+     * // By store ID
+     * const { token, expiresAt } = await client.auth.issueSessionToken({
+     *   storeId: "STO_xxx",
+     *   buyerIdentity: "customer@example.com",
+     * });
+     *
+     * @example
+     * // By product ID (store derived automatically)
+     * const { token, expiresAt } = await client.auth.issueSessionToken({
+     *   productId: "PROD_xxx",
+     *   buyerIdentity: "customer@example.com",
+     * });
+     */
+    issueSessionToken(params: IssueSessionTokenParams): Promise<SessionToken & {
+        warnings?: Notice[];
+    }>;
+}
+
+/**
+ * Anonymous checkout — no customer identity provided.
+ *
+ * The customer reaches the checkout page without a session token. Merchants may still
+ * pre-fill `buyerEmail` and `billingDetail` on the page by passing them here.
+ * Internally creates a checkout session and returns the redirect URL.
+ */
+declare class CheckoutAnonymousResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Create an anonymous checkout session.
+     *
+     * @param params - Checkout parameters (no customer identity required)
+     * @returns Session ID, checkout URL, and expiration
+     *
+     * @example
+     * // Minimal — customer fills everything on the page
+     * const result = await client.checkout.anonymous.create({
+     *   productId: "PROD_xxx",
+     *   currency: "USD",
+     * });
+     *
+     * @example
+     * // Pre-fill email + billing + attach business-side order reference
+     * const result = await client.checkout.anonymous.create({
+     *   productId: "PROD_xxx",
+     *   currency: "USD",
+     *   buyerEmail: "customer@example.com",
+     *   billingDetail: { country: "US", isBusiness: false, postcode: "10001" },
+     *   orderMerchantExternalId: "ORDER-2026-00891",
+     * });
+     */
+    create(params: AnonymousCheckoutParams): Promise<CheckoutSessionResult & {
+        warnings?: Notice[];
+    }>;
+}
+
+/**
+ * Authenticated checkout — merchant provides customer identity.
+ *
+ * Issues a session token, creates a checkout session, and returns a
+ * checkout URL with the token appended as a URL fragment (`#token=...`).
+ * The checkout page reads the fragment to pre-fill customer information.
+ */
+declare class CheckoutAuthenticatedResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Create an authenticated checkout session.
+     *
+     * Behavior:
+     * - Issues a session token via `issue-session-token` (receives `buyerIdentity` + `productId` only)
+     * - Creates a checkout session via `create-session` (receives every other field unchanged)
+     * - Appends the token to the checkout URL as a URL fragment (`#token=...`)
+     *
+     * `buyerIdentity` and `buyerEmail` are independent inputs: identity is for the JWT,
+     * email is for pre-filling the checkout page. The SDK forwards each to its own endpoint.
+     *
+     * @param params - Checkout parameters including customer identity
+     * @returns Session details with token-appended checkout URL
+     *
+     * @example
+     * const result = await client.checkout.authenticated.create({
+     *   productId: "PROD_xxx",
+     *   currency: "USD",
+     *   buyerIdentity: "user-123",
+     *   buyerEmail: "customer@example.com",
+     *   orderMerchantExternalId: "ORDER-2026-00891",
+     * });
+     * // Redirect to result.checkoutUrl (includes #token=...)
+     */
+    create(params: AuthenticatedCheckoutParams): Promise<AuthenticatedCheckoutResult & {
+        warnings?: Notice[];
+    }>;
+}
+
+/**
+ * Checkout resource — create checkout sessions for payments.
+ *
+ * Provides two convenience sub-resources for the common checkout flows:
+ * - `anonymous` — no customer identity, empty form
+ * - `authenticated` — merchant provides customer identity, pre-filled form + token
+ *
+ * The low-level `createSession()` method is still available for full control.
+ *
+ * @example
+ * // Anonymous checkout (no identity)
+ * const result = await client.checkout.anonymous.create({
+ *   productId: "PROD_xxx",
+ *   currency: "USD",
+ * });
+ *
+ * @example
+ * // Authenticated checkout (with customer identity)
+ * const result = await client.checkout.authenticated.create({
+ *   productId: "PROD_xxx",
+ *   currency: "USD",
+ *   buyerIdentity: "userIdInYourSystem",
+ *   buyerEmail: "customer@example.com",
+ * });
+ * // result.checkoutUrl includes #token=...
+ */
+declare class CheckoutResource {
+    private readonly http;
+    /** Anonymous checkout — no customer identity, empty form. */
+    readonly anonymous: CheckoutAnonymousResource;
+    /** Authenticated checkout — merchant provides customer identity. */
+    readonly authenticated: CheckoutAuthenticatedResource;
+    constructor(http: HttpClient);
+    /**
+     * Create a checkout session (low-level). Returns a URL to redirect the customer to.
+     *
+     * For most use cases, prefer `checkout.anonymous.create()` or
+     * `checkout.authenticated.create()` which handle the full flow automatically.
+     *
+     * @param params - Checkout session parameters
+     * @returns Session ID, checkout URL, and expiration
+     *
+     * @example
+     * const session = await client.checkout.createSession({
+     *   productId: "PROD_xxx",
+     *   currency: "USD",
+     *   buyerEmail: "customer@example.com",
+     * });
+     * // Redirect to session.checkoutUrl
+     */
+    createSession(params: CreateCheckoutSessionParams): Promise<CheckoutSessionResult & {
+        warnings?: Notice[];
+    }>;
+}
+
+/** Content safety resource — scan user prompts before AIGC generation. */
+declare class ContentSafetyResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Scan a user's text prompt for content-safety compliance before AIGC
+     * generation. Call this before invoking your image/video model and continue
+     * only when `action` is `allow`.
+     *
+     * Stateless — the check never stores prompt text. If the safety service is
+     * briefly unavailable, the verdict fails closed to `review` so an
+     * unmoderated prompt is never let through.
+     *
+     * @param params - Scan parameters (prompt required; locale / semantic optional)
+     * @returns Redacted scan verdict
+     *
+     * @example
+     * const verdict = await client.contentSafety.scanPrompt({ prompt: "a cat riding a bike" });
+     * if (verdict.action !== "allow") {
+     *   // do not generate
+     * }
+     */
+    scanPrompt(params: ScanPromptParams): Promise<ScanResult>;
+}
+
+/**
+ * Internal HTTP client for customer-side requests using Bearer token authentication.
+ *
+ * Unlike {@link HttpClient} which signs requests with RSA-SHA256 (API Key auth),
+ * this client attaches a session token as `Authorization: Bearer <token>` and
+ * never sends an idempotency key (customer session actions are not protected by
+ * gateway idempotency in the current architecture).
+ *
+ * Not exported publicly — used internally by {@link CustomerSession}.
+ */
+declare class CustomerHttpClient {
+    private readonly token;
+    private readonly baseUrl;
+    private readonly _fetch;
+    constructor(token: string, config: Pick<WaffoPancakeConfig, "baseUrl" | "fetch">);
+    /**
+     * Send a Bearer-authenticated POST and return the full envelope plus HTTP status.
+     *
+     * Does NOT throw on `errors[]` or non-2xx status — caller inspects the result.
+     * Throws {@link WaffoPancakeError} only when the response body is not valid JSON.
+     */
+    post<T>(path: string, body: object): Promise<PostResult<T>>;
+}
+
+/**
+ * Customer session — lets authenticated customers manage their own orders and subscriptions.
+ *
+ * Created via `client.customer(token)` using a session token issued by
+ * `client.auth.issueSessionToken()`. All requests use Bearer token authentication.
+ *
+ * @example
+ * const { token } = await client.auth.issueSessionToken({
+ *   storeId: "STO_xxx",
+ *   buyerIdentity: "customer@example.com",
+ * });
+ * const customer = client.customer(token);
+ * await customer.cancelSubscription({ orderId: "ORD_xxx" });
+ */
+declare class CustomerSession {
+    private readonly http;
+    /** GraphQL query access scoped to the customer's data. */
+    readonly graphql: CustomerGraphQL;
+    constructor(http: CustomerHttpClient);
+    /**
+     * Cancel a subscription order.
+     *
+     * @param params - Order to cancel
+     * @returns Order ID and resulting status
+     *
+     * @example
+     * const { orderId, status } = await customer.cancelSubscription({ orderId: "ORD_xxx" });
+     * // status: "canceled" (was pending) or "canceling" (was active)
+     */
+    cancelSubscription(params: CancelSubscriptionParams): Promise<CancelSubscriptionResult & {
+        warnings?: Notice[];
+    }>;
+    /**
+     * Cancel a one-time order (only while payment is still pending).
+     *
+     * @param params - Order to cancel
+     * @returns Order ID and resulting status
+     *
+     * @example
+     * const { orderId, status } = await customer.cancelOnetimeOrder({ orderId: "ORD_xxx" });
+     */
+    cancelOnetimeOrder(params: CancelOnetimeOrderParams): Promise<CancelOnetimeOrderResult & {
+        warnings?: Notice[];
+    }>;
+    /**
+     * Reactivate a subscription that is in `canceling` status.
+     *
+     * @param params - Order to reactivate
+     * @returns Order ID and resulting status
+     *
+     * @example
+     * const { orderId, status } = await customer.reactivateSubscription({ orderId: "ORD_xxx" });
+     * // status: "active"
+     */
+    reactivateSubscription(params: ReactivateSubscriptionParams): Promise<ReactivateSubscriptionResult & {
+        warnings?: Notice[];
+    }>;
+    /**
+     * Submit a refund request for a payment.
+     *
+     * @param params - Refund ticket details
+     * @returns Created refund ticket
+     *
+     * @example
+     * const { ticket } = await customer.createRefundTicket({
+     *   paymentId: "PAY_xxx",
+     *   reason: "Product not as described",
+     *   requestedAmount: { amount: "29.00", currency: "USD" },
+     *   refundTicketMerchantExternalId: "REF-2026-00891",
+     * });
+     */
+    createRefundTicket(params: CreateRefundTicketParams): Promise<{
+        ticket: RefundTicket;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Resubmit a previously rejected refund ticket with updated details.
+     *
+     * @param params - Updated ticket details
+     * @returns Updated refund ticket
+     *
+     * @example
+     * const { ticket } = await customer.resubmitRefundTicket({
+     *   ticketId: "TKT_xxx",
+     *   paymentId: "PAY_xxx",
+     *   reason: "Updated reason with more detail",
+     *   requestedAmount: { amount: "29.00", currency: "USD" },
+     * });
+     */
+    resubmitRefundTicket(params: ResubmitRefundTicketParams): Promise<{
+        ticket: RefundTicket;
+        warnings?: Notice[];
+    }>;
+}
+/**
+ * GraphQL access scoped to the customer's session token.
+ */
+declare class CustomerGraphQL {
+    private readonly http;
+    constructor(http: CustomerHttpClient);
+    /**
+     * Execute a GraphQL query scoped to the customer's data.
+     *
+     * @param params - GraphQL query and variables
+     * @returns GraphQL response
+     *
+     * @example
+     * const result = await customer.graphql.query({
+     *   query: `query { orders { id status } }`,
+     * });
+     */
+    query<T = Record<string, unknown>>(params: GraphQLParams): Promise<GraphQLResponse<T>>;
+}
+
+/** GraphQL query resource (Query only, no Mutations). */
+declare class GraphQLResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Execute a GraphQL query (Query only, no Mutations).
+     *
+     * @param params - GraphQL query and optional variables
+     * @returns GraphQL response with data and optional errors
+     *
+     * @example
+     * const result = await client.graphql.query<{ stores: Array<{ id: string; name: string }> }>({
+     *   query: `query { stores { id name status } }`,
+     * });
+     * console.log(result.data?.stores);
+     *
+     * @example
+     * const result = await client.graphql.query({
+     *   query: `query ($id: ID!) { onetimeProduct(id: $id) { id name prices } }`,
+     *   variables: { id: "PROD_xxx" },
+     * });
+     */
+    query<T = Record<string, unknown>>(params: GraphQLParams): Promise<GraphQLResponse<T>>;
+}
+
+/** One-time product management resource. */
+declare class OnetimeProductsResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Create a one-time product with multi-currency pricing.
+     *
+     * @param params - Product creation parameters
+     * @returns Created product detail
+     *
+     * @example
+     * const { product } = await client.onetimeProducts.create({
+     *   storeId: "STO_xxx",
+     *   name: "E-Book",
+     *   prices: { USD: { amount: "29.00", taxCategory: "digital_goods" } },
+     * });
+     */
+    create(params: CreateOnetimeProductParams): Promise<{
+        product: OnetimeProductDetail;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update a one-time product. Creates a new version; skips if unchanged.
+     *
+     * @param params - Product update parameters (only `id` is required)
+     * @returns Updated product detail
+     *
+     * @example
+     * // Update only the name
+     * const { product } = await client.onetimeProducts.update({
+     *   id: "PROD_xxx",
+     *   name: "E-Book v2",
+     * });
+     *
+     * @example
+     * // Update prices while preserving other fields
+     * const { product } = await client.onetimeProducts.update({
+     *   id: "PROD_xxx",
+     *   prices: { USD: { amount: "39.00", taxCategory: "digital_goods" } },
+     * });
+     */
+    update(params: UpdateOnetimeProductParams): Promise<{
+        product: OnetimeProductDetail;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Publish a one-time product's test version to production.
+     *
+     * @param params - Product to publish
+     * @returns Published product detail
+     *
+     * @example
+     * const { product } = await client.onetimeProducts.publish({ id: "PROD_xxx" });
+     */
+    publish(params: PublishOnetimeProductParams): Promise<{
+        product: OnetimeProductDetail;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update a one-time product's status (active/inactive).
+     *
+     * @param params - Status update parameters
+     * @returns Updated product detail
+     *
+     * @example
+     * const { product } = await client.onetimeProducts.updateStatus({
+     *   id: "PROD_xxx",
+     *   status: ProductVersionStatus.Inactive,
+     * });
+     */
+    updateStatus(params: UpdateOnetimeStatusParams): Promise<{
+        product: OnetimeProductDetail;
+        warnings?: Notice[];
+    }>;
+}
+
+/** Order management resource. */
+declare class OrdersResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Cancel a subscription order.
+     *
+     * - pending -> canceled (immediate)
+     * - active/trialing -> canceling (PSP cancel, webhook updates later)
+     *
+     * @param params - Order to cancel
+     * @returns Order ID and resulting status
+     *
+     * @example
+     * const { orderId, status } = await client.orders.cancelSubscription({
+     *   orderId: "ORD_xxx",
+     * });
+     * // status: "canceled" or "canceling"
+     */
+    cancelSubscription(params: CancelSubscriptionParams): Promise<CancelSubscriptionResult & {
+        warnings?: Notice[];
+    }>;
+}
+
+/** Store merchant management resource (coming soon — endpoints return 501). */
+declare class StoreMerchantsResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Add a merchant to a store.
+     *
+     * @param params - Merchant addition parameters
+     * @returns Added merchant details
+     *
+     * @example
+     * const result = await client.storeMerchants.add({
+     *   storeId: "STO_xxx",
+     *   email: "member@example.com",
+     *   role: "admin",
+     * });
+     */
+    add(params: AddMerchantParams): Promise<AddMerchantResult & {
+        warnings?: Notice[];
+    }>;
+    /**
+     * Remove a merchant from a store.
+     *
+     * @param params - Merchant removal parameters
+     * @returns Removal confirmation
+     *
+     * @example
+     * const result = await client.storeMerchants.remove({
+     *   storeId: "STO_xxx",
+     *   merchantId: "MER_xxx",
+     * });
+     */
+    remove(params: RemoveMerchantParams): Promise<RemoveMerchantResult & {
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update a merchant's role in a store.
+     *
+     * @param params - Role update parameters
+     * @returns Updated role details
+     *
+     * @example
+     * const result = await client.storeMerchants.updateRole({
+     *   storeId: "STO_xxx",
+     *   merchantId: "MER_xxx",
+     *   role: "member",
+     * });
+     */
+    updateRole(params: UpdateRoleParams): Promise<UpdateRoleResult & {
+        warnings?: Notice[];
+    }>;
+}
+
+/** Store management resource — create, update, and delete stores. */
+declare class StoresResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Create a new store. Slug is auto-generated from the name.
+     *
+     * @param params - Store creation parameters
+     * @returns Created store entity
+     *
+     * @example
+     * const { store } = await client.stores.create({ name: "My Store" });
+     */
+    create(params: CreateStoreParams): Promise<{
+        store: Store;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update an existing store's settings.
+     *
+     * Settings objects (`notificationSettings`, `checkoutSettings`) support
+     * partial updates: omitted sub-fields keep existing values, `null` clears a
+     * field. Pass the entire settings object as `null` to clear all fields.
+     *
+     * **BREAKING (2026-05)**: the legacy `webhookSettings` parameter is removed.
+     * Use `client.webhooks.add / update / remove` to manage webhook endpoints,
+     * and query the configured webhook list via GraphQL `Store.storeWebhooks`.
+     *
+     * @param params - Fields to update (only provided fields are changed)
+     * @returns Updated store entity
+     *
+     * @example
+     * // Update name
+     * const { store } = await client.stores.update({
+     *   id: "STO_xxx",
+     *   name: "Updated Name",
+     * });
+     *
+     * @example
+     * // Toggle a notification preference
+     * const { store } = await client.stores.update({
+     *   id: "STO_xxx",
+     *   notificationSettings: { emailOrderConfirmation: false },
+     * });
+     */
+    update(params: UpdateStoreParams): Promise<{
+        store: Store;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Soft-delete a store. Only the owner can delete.
+     *
+     * @param params - Store to delete
+     * @returns Deleted store entity (with `deletedAt` set)
+     *
+     * @example
+     * const { store } = await client.stores.delete({ id: "STO_xxx" });
+     */
+    delete(params: DeleteStoreParams): Promise<{
+        store: Store;
+        warnings?: Notice[];
+    }>;
+}
+
+/** Subscription product group management resource (shared trial, plan switching). */
+declare class SubscriptionProductGroupsResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Create a subscription product group for shared-trial or plan switching.
+     *
+     * @param params - Group creation parameters
+     * @returns Created group entity
+     *
+     * @example
+     * const { group } = await client.subscriptionProductGroups.create({
+     *   storeId: "STO_xxx",
+     *   name: "Pro Plans",
+     *   rules: { sharedTrial: true },
+     *   productIds: ["PROD_aaa", "PROD_bbb"],
+     * });
+     */
+    create(params: CreateSubscriptionProductGroupParams): Promise<{
+        group: SubscriptionProductGroup;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update a subscription product group. `productIds` is a full replacement.
+     *
+     * @param params - Group update parameters
+     * @returns Updated group entity
+     *
+     * @example
+     * const { group } = await client.subscriptionProductGroups.update({
+     *   id: "GRP_xxx",
+     *   productIds: ["PROD_aaa", "PROD_bbb", "PROD_ccc"],
+     * });
+     */
+    update(params: UpdateSubscriptionProductGroupParams): Promise<{
+        group: SubscriptionProductGroup;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Hard-delete a subscription product group.
+     *
+     * @param params - Group to delete
+     * @returns Deleted group entity
+     *
+     * @example
+     * const { group } = await client.subscriptionProductGroups.delete({ id: "GRP_xxx" });
+     */
+    delete(params: DeleteSubscriptionProductGroupParams): Promise<{
+        group: SubscriptionProductGroup;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Publish a test-environment group to production (upsert).
+     *
+     * @param params - Group to publish
+     * @returns Published group entity
+     *
+     * @example
+     * const { group } = await client.subscriptionProductGroups.publish({ id: "GRP_xxx" });
+     */
+    publish(params: PublishSubscriptionProductGroupParams): Promise<{
+        group: SubscriptionProductGroup;
+        warnings?: Notice[];
+    }>;
+}
+
+/** Subscription product management resource. */
+declare class SubscriptionProductsResource {
+    private readonly http;
+    constructor(http: HttpClient);
+    /**
+     * Create a subscription product with billing period and multi-currency pricing.
+     *
+     * @param params - Product creation parameters
+     * @returns Created product detail
+     *
+     * @example
+     * const { product } = await client.subscriptionProducts.create({
+     *   storeId: "STO_xxx",
+     *   name: "Pro Plan",
+     *   billingPeriod: "monthly",
+     *   prices: { USD: { amount: "9.99", taxCategory: "saas" } },
+     * });
+     */
+    create(params: CreateSubscriptionProductParams): Promise<{
+        product: SubscriptionProductDetail;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update a subscription product. Creates a new version; skips if unchanged.
+     *
+     * @param params - Product update parameters (only `id` is required)
+     * @returns Updated product detail
+     *
+     * @example
+     * // Update only the name
+     * const { product } = await client.subscriptionProducts.update({
+     *   id: "PROD_xxx",
+     *   name: "Pro Plan v2",
+     * });
+     *
+     * @example
+     * // Update prices and billing period
+     * const { product } = await client.subscriptionProducts.update({
+     *   id: "PROD_xxx",
+     *   billingPeriod: "yearly",
+     *   prices: { USD: { amount: "99.00", taxCategory: "saas" } },
+     * });
+     */
+    update(params: UpdateSubscriptionProductParams): Promise<{
+        product: SubscriptionProductDetail;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Publish a subscription product's test version to production.
+     *
+     * @param params - Product to publish
+     * @returns Published product detail
+     *
+     * @example
+     * const { product } = await client.subscriptionProducts.publish({ id: "PROD_xxx" });
+     */
+    publish(params: PublishSubscriptionProductParams): Promise<{
+        product: SubscriptionProductDetail;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update a subscription product's status (active/inactive).
+     *
+     * @param params - Status update parameters
+     * @returns Updated product detail
+     *
+     * @example
+     * const { product } = await client.subscriptionProducts.updateStatus({
+     *   id: "PROD_xxx",
+     *   status: ProductVersionStatus.Active,
+     * });
+     */
+    updateStatus(params: UpdateSubscriptionStatusParams): Promise<{
+        product: SubscriptionProductDetail;
+        warnings?: Notice[];
+    }>;
+}
+
+/**
+ * Webhook resource — manages webhook configurations (HTTP / Feishu / Discord
+ * / Telegram / Slack) and verifies inbound webhook signatures.
+ *
+ * **Mutations only**: `add`, `update`, `remove` all hit POST endpoints.
+ * To list a store's webhooks, use GraphQL `Store.storeWebhooks` via
+ * `client.graphql.query`.
+ *
+ * Verification (`verify`) is a local cryptographic operation that does not
+ * require API calls.
+ */
+declare class WebhooksResource {
+    private readonly http;
+    private readonly publicKeys;
+    /**
+     * @param http - HTTP client (used for add/update/remove)
+     * @param publicKeys - Optional config-level public key(s) from WaffoPancakeConfig
+     */
+    constructor(http: HttpClient, publicKeys: WebhookPublicKeys | undefined);
+    /**
+     * Add a webhook endpoint to a store.
+     *
+     * @param params - Webhook configuration
+     * @returns Created webhook entity
+     *
+     * @example
+     * // HTTP webhook (RSA-signed envelope, default)
+     * const { webhook } = await client.webhooks.add({
+     *   storeId: "STO_xxx",
+     *   channel: "http",
+     *   url: "https://example.com/webhook",
+     *   events: ["order.completed", "refund.succeeded"],
+     *   testMode: false,
+     * });
+     *
+     * @example
+     * // Discord webhook (uses Discord embed format)
+     * await client.webhooks.add({
+     *   storeId: "STO_xxx",
+     *   channel: "discord",
+     *   url: "https://discord.com/api/webhooks/...",
+     *   events: ["order.completed"],
+     *   testMode: false,
+     * });
+     *
+     * @example
+     * // Telegram bot — chat_id goes in `secret`; URL is the bot's sendMessage endpoint
+     * await client.webhooks.add({
+     *   storeId: "STO_xxx",
+     *   channel: "telegram",
+     *   url: "https://api.telegram.org/bot123:ABC/sendMessage",
+     *   events: ["order.completed"],
+     *   testMode: false,
+     *   secret: "8737101383",
+     * });
+     */
+    add(params: AddWebhookParams): Promise<{
+        webhook: StoreWebhook;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Update an existing webhook (only `url`, `events`, and `secret` are mutable).
+     *
+     * `channel` and `testMode` cannot be changed — remove the webhook and
+     * re-add it instead. URL changes must remain on the same channel host
+     * whitelist.
+     *
+     * @param params - Fields to update
+     * @returns Updated webhook entity
+     *
+     * @example
+     * await client.webhooks.update({
+     *   id: "11111111-2222-3333-4444-555555555555",
+     *   events: ["order.completed", "refund.succeeded", "subscription.canceled"],
+     * });
+     */
+    update(params: UpdateWebhookParams): Promise<{
+        webhook: StoreWebhook;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Hard-delete a webhook. Historical `webhook_deliveries` rows are retained
+     * (with `storeWebhookId` set to null) for audit purposes.
+     *
+     * @param params - Webhook to remove
+     * @returns The removed webhook entity (snapshot before deletion)
+     *
+     * @example
+     * await client.webhooks.remove({ id: "11111111-..." });
+     */
+    remove(params: RemoveWebhookParams): Promise<{
+        webhook: StoreWebhook;
+        warnings?: Notice[];
+    }>;
+    /**
+     * Verify and parse an incoming webhook event.
+     *
+     * Key resolution order:
+     * 1. `options.publicKey` — per-call override (highest priority)
+     * 2. `config.webhookPublicKey[env]` or `config.webhookPublicKey` (string)
+     * 3. `WAFFO_WEBHOOK_{TEST|PROD}_PUBLIC_KEY` environment variable
+     * 4. `WAFFO_WEBHOOK_PUBLIC_KEY` environment variable
+     * 5. Built-in hardcoded key
+     *
+     * @param payload - Raw request body string (must be unparsed)
+     * @param signatureHeader - Value of the `X-Waffo-Signature` header
+     * @param options - Verification options (optional)
+     * @returns Parsed webhook event
+     * @throws Error if signature is invalid, header is malformed, or timestamp is stale
+     *
+     * @example
+     * const event = client.webhooks.verify(rawBody, signatureHeader);
+     *
+     * @example
+     * // Specify environment
+     * const event = client.webhooks.verify(rawBody, sig, { environment: "test" });
+     *
+     * @example
+     * // Per-call key override
+     * const event = client.webhooks.verify(rawBody, sig, { publicKey: oneOffKey });
+     */
+    verify<T = Record<string, unknown>>(payload: string, signatureHeader: string | undefined | null, options?: VerifyWebhookOptions): WebhookEvent<T>;
+}
+
+/**
+ * Waffo Pancake TypeScript SDK client.
+ *
+ * Uses Merchant API Key (RSA-SHA256) authentication. All requests are
+ * automatically signed — no manual header construction needed.
+ *
+ * @example
+ * import { WaffoPancake } from "@waffo/pancake-ts";
+ *
+ * const client = new WaffoPancake({
+ *   merchantId: "MER_2D5F8G3H1K4M6N9P0Q7R8S", // MER_{base62} format
+ *   privateKey: process.env.WAFFO_PRIVATE_KEY!,
+ * });
+ *
+ * // Create a store — IDs are returned in {prefix}_{base62} format
+ * const { store } = await client.stores.create({ name: "My Store" });
+ * // => store.id = "STO_..."
+ *
+ * // Create a product
+ * const { product } = await client.onetimeProducts.create({
+ *   storeId: store.id, // "STO_..."
+ *   name: "E-Book",
+ *   prices: { USD: { amount: "29.00", taxCategory: "digital_goods" } },
+ * });
+ * // => product.id = "PROD_..."
+ *
+ * // Create a checkout session
+ * const session = await client.checkout.createSession({
+ *   productId: product.id,
+ *   currency: "USD",
+ * });
+ * // => redirect customer to session.checkoutUrl
+ *
+ * // Query data via GraphQL
+ * const result = await client.graphql.query({
+ *   query: `query { stores { id name status } }`,
+ * });
+ *
+ * @example
+ * // Per-environment webhook public keys
+ * const client = new WaffoPancake({
+ *   merchantId: "...",
+ *   privateKey: "...",
+ *   webhookPublicKey: {
+ *     test: process.env.WAFFO_TEST_PUB_KEY!,
+ *     prod: process.env.WAFFO_PROD_PUB_KEY!,
+ *   },
+ * });
+ * const event = client.webhooks.verify(rawBody, signatureHeader);
+ */
+declare class WaffoPancake {
+    private readonly http;
+    private readonly config;
+    readonly auth: AuthResource;
+    readonly stores: StoresResource;
+    readonly storeMerchants: StoreMerchantsResource;
+    readonly onetimeProducts: OnetimeProductsResource;
+    readonly subscriptionProducts: SubscriptionProductsResource;
+    readonly subscriptionProductGroups: SubscriptionProductGroupsResource;
+    readonly orders: OrdersResource;
+    readonly checkout: CheckoutResource;
+    readonly graphql: GraphQLResource;
+    readonly webhooks: WebhooksResource;
+    readonly contentSafety: ContentSafetyResource;
+    constructor(config: WaffoPancakeConfig);
+    /**
+     * Create a customer session for self-service operations.
+     *
+     * The returned session uses Bearer token authentication and provides
+     * methods for order cancellation, subscription management, refund tickets,
+     * and scoped GraphQL queries.
+     *
+     * @param token - Session token from `client.auth.issueSessionToken()`
+     * @returns A customer session with self-service methods
+     *
+     * @example
+     * const { token } = await client.auth.issueSessionToken({
+     *   storeId: "STO_xxx",
+     *   buyerIdentity: "customer@example.com",
+     * });
+     * const customer = client.customer(token);
+     * await customer.cancelSubscription({ orderId: "ORD_xxx" });
+     */
+    customer(token: string): CustomerSession;
+    /**
+     * Create a customer session for self-service operations.
+     *
+     * @param token - Session token from `client.auth.issueSessionToken()`
+     * @returns A customer session with self-service methods
+     *
+     * @example
+     * ```typescript
+     * const session = client.buyer(token); // prefer client.customer(token)
+     * ```
+     *
+     * @deprecated Use {@link WaffoPancake.customer} instead.
+     */
+    buyer(token: string): CustomerSession;
+}
+
+/**
+ * Error thrown when the API returns a non-success response.
+ *
+ * @example
+ * try {
+ *   await client.stores.create({ name: "My Store" });
+ * } catch (err) {
+ *   if (err instanceof WaffoPancakeError) {
+ *     console.log(err.status);        // 400
+ *     console.log(err.errors[0]);     // { message: "...", layer: "store" }
+ *   }
+ * }
+ */
+declare class WaffoPancakeError extends Error {
+    readonly status: number;
+    readonly errors: ApiError[];
+    constructor(status: number, errors: ApiError[]);
+}
+
+/**
+ * Verify and parse an incoming Waffo Pancake webhook event.
+ *
+ * Public key resolution (per environment):
+ * 1. `options.publicKey` — per-call override (highest priority, skips all other resolution)
+ * 2. `options.publicKeys[env]` or `options.publicKeys` (string) — config-level
+ * 3. `WAFFO_WEBHOOK_{TEST|PROD}_PUBLIC_KEY` environment variable
+ * 4. `WAFFO_WEBHOOK_PUBLIC_KEY` environment variable
+ * 5. Built-in hardcoded key
+ *
+ * Behavior:
+ * - Parses the `X-Waffo-Signature` header (`t=<timestamp>,v1=<base64sig>`)
+ * - Builds signature input `${t}.${rawBody}` and verifies with RSA-SHA256
+ * - When `environment` is not specified, tries prod key first, then test key
+ * - Optional: checks timestamp to prevent replay attacks (default 5-minute tolerance)
+ *
+ * @param payload - Raw request body string (must be unparsed)
+ * @param signatureHeader - Value of the `X-Waffo-Signature` header
+ * @param options - Verification options
+ * @returns Parsed webhook event
+ * @throws Error if header is missing/malformed, signature is invalid, or timestamp is stale
+ *
+ * @example
+ * // Express (use raw body!)
+ * app.post("/webhooks", express.raw({ type: "application/json" }), (req, res) => {
+ *   try {
+ *     const event = verifyWebhook(
+ *       req.body.toString("utf-8"),
+ *       req.headers["x-waffo-signature"] as string,
+ *     );
+ *     res.status(200).send("OK");
+ *     handleEventAsync(event).catch(console.error);
+ *   } catch {
+ *     res.status(401).send("Invalid signature");
+ *   }
+ * });
+ *
+ * @example
+ * // Next.js App Router
+ * export async function POST(request: Request) {
+ *   const body = await request.text();
+ *   const sig = request.headers.get("x-waffo-signature");
+ *   const event = verifyWebhook(body, sig);
+ *   // handle event ...
+ *   return new Response("OK");
+ * }
+ *
+ * @example
+ * // Specify environment explicitly
+ * const event = verifyWebhook(body, sig, { environment: "prod" });
+ *
+ * @example
+ * // Disable replay protection
+ * const event = verifyWebhook(body, sig, { toleranceMs: 0 });
+ */
+declare function verifyWebhook<T = Record<string, unknown>>(payload: string, signatureHeader: string | undefined | null, options?: VerifyWebhookOptions): WebhookEvent<T>;
+
+export { type AddMerchantParams, type AddMerchantResult, type AddWebhookParams, type AnonymousCheckoutParams, type ApiError, type AuthenticatedCheckoutParams, type AuthenticatedCheckoutResult, type BillingDetail, BillingPeriod, type CancelOnetimeOrderParams, type CancelOnetimeOrderResult, type CancelSubscriptionParams, type CancelSubscriptionResult, type CashierLanguage, type CheckoutSessionResult, type CheckoutSettings, type CheckoutThemeSettings, type CreateCheckoutSessionParams, type CreateOnetimeProductParams, type CreateRefundTicketParams, type CreateStoreParams, type CreateSubscriptionProductGroupParams, type CreateSubscriptionProductParams, type DeleteStoreParams, type DeleteSubscriptionProductGroupParams, EntityStatus, type Envelope, Environment, ErrorLayer, type GraphQLParams, type GraphQLResponse, type GroupRules, type IssueSessionTokenParams, type MediaItem, MediaType, type MerchantWritableNotificationSettings, type Notice, type NotificationSettings, OnetimeOrderStatus, type OnetimeProductDetail, type PaymentMethod, PaymentStatus, type PostResult, type PriceInfo, type Prices, ProductVersionStatus, type PublishOnetimeProductParams, type PublishSubscriptionProductGroupParams, type PublishSubscriptionProductParams, type ReactivateSubscriptionParams, type ReactivateSubscriptionResult, RefundStatus, type RefundTicket, RefundTicketStatus, type RefundTicketVersionData, type RemoveMerchantParams, type RemoveMerchantResult, type RemoveWebhookParams, type RequestedAmount, type ResubmitRefundTicketParams, ScanAction, ScanPolicyCategory, type ScanPromptParams, ScanReasonCode, type ScanResult, ScanSemanticMode, ScanSemanticStatus, type SessionToken, type Store, StoreRole, type StoreWebhook, SubscriptionOrderStatus, type SubscriptionProductDetail, type SubscriptionProductGroup, TaxCategory, type UpdateOnetimeProductParams, type UpdateOnetimeStatusParams, type UpdateRoleParams, type UpdateRoleResult, type UpdateStoreParams, type UpdateSubscriptionProductGroupParams, type UpdateSubscriptionProductParams, type UpdateSubscriptionStatusParams, type UpdateWebhookParams, type VerifyWebhookOptions, WaffoPancake, type WaffoPancakeConfig, WaffoPancakeError, type WebhookChannel, type WebhookEvent, type WebhookEventData, WebhookEventType, type WebhookPublicKeys, verifyWebhook };

@@ -36,7 +36,9 @@ export const commerceProducts = pgTable(
     fulfillmentKey: text("fulfillment_key").notNull(),
     refundPolicyKey: text("refund_policy_key").notNull(),
     enabled: boolean("enabled").default(true).notNull(),
-    activeFrom: timestamp("active_from", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    activeFrom: timestamp("active_from", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
     activeTo: timestamp("active_to", { withTimezone: true, mode: "date" }),
   },
   (table) => [
@@ -114,8 +116,14 @@ export const payments = pgTable(
     index("payment_order_idx").on(table.orderId),
     check("payment_amount_nonnegative", sql`${table.amountMinor} >= 0`),
     check("payment_environment_valid", sql`${table.environment} in ('test','production')`),
-    check("payment_status_valid", sql`${table.status} in ('pending','succeeded','failed','canceled')`),
-    check("payment_refund_status_valid", sql`${table.refundStatus} in ('none','partial','refunded','failed')`),
+    check(
+      "payment_status_valid",
+      sql`${table.status} in ('pending','succeeded','failed','canceled')`,
+    ),
+    check(
+      "payment_refund_status_valid",
+      sql`${table.refundStatus} in ('none','partial','refunded','failed')`,
+    ),
   ],
 );
 
@@ -128,7 +136,9 @@ export const paymentWebhookInbox = pgTable(
     dedupHash: text("dedup_hash").notNull(),
     eventType: text("event_type").notNull(),
     signatureValid: boolean("signature_valid").notNull(),
-    normalizedPayloadJson: jsonb("normalized_payload_json").$type<Record<string, unknown>>().notNull(),
+    normalizedPayloadJson: jsonb("normalized_payload_json")
+      .$type<Record<string, unknown>>()
+      .notNull(),
     payloadHash: text("payload_hash").notNull(),
     payloadSizeBytes: integer("payload_size_bytes").notNull(),
     rawPayloadCiphertext: bytea("raw_payload_ciphertext"),
@@ -141,9 +151,13 @@ export const paymentWebhookInbox = pgTable(
     attempts: integer("attempts").default(0).notNull(),
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
-    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
     lastErrorCode: text("last_error_code"),
-    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
     processedAt: timestamp("processed_at", { withTimezone: true, mode: "date" }),
   },
   (table) => [
@@ -175,7 +189,9 @@ export const fulfillmentJobs = pgTable(
     attempts: integer("attempts").default(0).notNull(),
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
-    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
     lastErrorCode: text("last_error_code"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
@@ -183,7 +199,10 @@ export const fulfillmentJobs = pgTable(
   (table) => [
     uniqueIndex("fulfillment_idempotency_uq").on(table.idempotencyKey),
     index("fulfillment_due_idx").on(table.state, table.nextAttemptAt),
-    check("fulfillment_state_valid", sql`${table.state} in ('pending','processing','completed','dead_letter')`),
+    check(
+      "fulfillment_state_valid",
+      sql`${table.state} in ('pending','processing','completed','dead_letter')`,
+    ),
   ],
 );
 

@@ -1,4 +1,9 @@
-import { formatDisplayAmount, parseDisplayAmount, type Money, type SupportedCurrency } from "./money";
+import {
+  formatDisplayAmount,
+  parseDisplayAmount,
+  type Money,
+  type SupportedCurrency,
+} from "./money";
 
 export type CommerceEnvironment = "test" | "production";
 export type CommercialModel = "one_time" | "subscription";

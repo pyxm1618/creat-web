@@ -45,5 +45,7 @@ export function projectPayment(current: PaymentProjection, event: PaymentEvent):
       if (current.status === "succeeded") return { ...current, refundStatus: "failed" };
       break;
   }
-  throw new Error(`invalid payment transition: ${current.status}/${current.refundStatus} -> ${event}`);
+  throw new Error(
+    `invalid payment transition: ${current.status}/${current.refundStatus} -> ${event}`,
+  );
 }
