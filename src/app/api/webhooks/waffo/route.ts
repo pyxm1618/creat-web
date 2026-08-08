@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
+import { attemptFulfillmentForSource } from "@/platform/commerce/application/attempt-fulfillment";
 import { ingestProviderWebhook } from "@/platform/commerce/application/ingest-provider-webhook";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { payloadHash } from "@/platform/commerce/application/webhook-retention";
@@ -46,6 +48,16 @@ export async function POST(request: Request): Promise<Response> {
           eq(paymentWebhookInbox.providerEventId, ingested.event.eventId),
         ),
       );
+
+    if (ingested.event.type === "one_time_payment_succeeded") {
+      await attemptFulfillmentForSource({
+        database: commerce.database,
+        fulfillment: commerce.fulfillment,
+        sourceType: "payment",
+        sourceId: ingested.event.externalPaymentId,
+        owner: `webhook:${randomUUID()}`,
+      });
+    }
   } catch {
     // The durable inbox remains pending; scheduled recovery will retry without losing the signed event.
   }
