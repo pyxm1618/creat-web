@@ -22,6 +22,7 @@ export type WaffoProviderConfig = {
   readonly storeId?: string;
   readonly webhookPublicKey?: string | { readonly test?: string; readonly prod?: string };
   readonly baseUrl?: string;
+  readonly fetch?: typeof fetch;
 };
 
 type PaymentQueryResult = {
@@ -62,6 +63,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
     merchantId: config.merchantId,
     privateKey: config.privateKey,
     ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+    ...(config.fetch ? { fetch: config.fetch } : {}),
     ...(config.webhookPublicKey ? { webhookPublicKey: config.webhookPublicKey } : {}),
   });
 
