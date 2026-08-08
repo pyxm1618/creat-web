@@ -34,7 +34,7 @@
   routine: [32m'truncate_identifier'[39m
 }
 
- [32m✓[39m tests/integration/credits/ledger.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 651[2mms[22m[39m
+ [32m✓[39m tests/integration/credits/ledger.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 597[2mms[22m[39m
 [90mstdout[2m | tests/integration/credits/finalization.test.ts
 [22m[39m{
   severity_local: [32m'NOTICE'[39m,
@@ -104,11 +104,11 @@
   routine: [32m'truncate_identifier'[39m
 }
 
- [32m✓[39m tests/integration/credits/finalization.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 518[2mms[22m[39m
+ [32m✓[39m tests/integration/credits/finalization.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 414[2mms[22m[39m
 
 [2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
 [2m      Tests [22m [1m[32m7 passed[39m[22m[90m (7)[39m
-[2m   Start at [22m 05:06:28
-[2m   Duration [22m 3.23s[2m (transform 308ms, setup 0ms, import 1.64s, tests 1.17s, environment 0ms)[22m
+[2m   Start at [22m 05:07:48
+[2m   Duration [22m 2.40s[2m (transform 232ms, setup 0ms, import 1.11s, tests 1.01s, environment 0ms)[22m
 
 exit_code=0
