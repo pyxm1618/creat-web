@@ -128,7 +128,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       }
 
       return {
-        environment: "test",
+        environment: input.environment,
         externalOrderId: payment.orderId,
         externalPaymentId: payment.id,
         ...(payment.orderMerchantExternalId
