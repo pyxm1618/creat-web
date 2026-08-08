@@ -7,6 +7,7 @@ export type CreateOneTimeCheckoutInput = {
   readonly expectedDisplayAmount: string;
   readonly currency: string;
   readonly buyerIdentity: string;
+  readonly buyerEmail?: string;
   readonly successUrl: string;
   readonly cancelUrl: string;
 };
@@ -21,6 +22,7 @@ export interface PaymentProvider {
   readonly name: "waffo";
   createOneTimeCheckout(input: CreateOneTimeCheckoutInput): Promise<CreatedCheckout>;
   getPayment(input: {
+    readonly merchantOrderReference?: string;
     readonly externalOrderId?: string;
     readonly externalPaymentId?: string;
   }): Promise<NormalizedPaymentSnapshot | null>;
