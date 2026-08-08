@@ -119,6 +119,9 @@ it("rejects non-positive immutable ledger entries", async () => {
     }),
   ).rejects.toThrow();
   expect(
-    await database.db.select().from(creditLedgerEntries).where(eq(creditLedgerEntries.sourceId, "bad")),
+    await database.db
+      .select()
+      .from(creditLedgerEntries)
+      .where(eq(creditLedgerEntries.sourceId, "bad")),
   ).toHaveLength(0);
 });

@@ -45,7 +45,9 @@ it("reports no issues for a coherent active ledger", async () => {
     expiresAt: new Date("2026-08-08T14:00:00Z"),
     now: new Date("2026-08-08T13:00:00Z"),
   });
-  expect(await reconcileCreditLedger(database.db, { now: new Date("2026-08-08T13:30:00Z") })).toEqual([]);
+  expect(
+    await reconcileCreditLedger(database.db, { now: new Date("2026-08-08T13:30:00Z") }),
+  ).toEqual([]);
 });
 
 it("detects allocation corruption without repairing it silently", async () => {
@@ -74,6 +76,8 @@ it("detects allocation corruption without repairing it silently", async () => {
     .set({ quantity: 2 })
     .where(sql`${creditReservationAllocations.reservationId} = ${reservation.id}::uuid`);
 
-  const issues = await reconcileCreditLedger(database.db, { now: new Date("2026-08-08T15:30:00Z") });
+  const issues = await reconcileCreditLedger(database.db, {
+    now: new Date("2026-08-08T15:30:00Z"),
+  });
   expect(issues.some((issue) => issue.code === "RESERVATION_ALLOCATION_MISMATCH")).toBe(true);
 });

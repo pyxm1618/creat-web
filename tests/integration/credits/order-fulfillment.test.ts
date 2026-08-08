@@ -95,7 +95,9 @@ it("grants paid-order credits exactly once", async () => {
   await fulfill(input);
   await fulfill(input);
 
-  expect(await getCreditBalance(database.db, { subjectId: subject.id, creditType: "reading" })).toMatchObject({
+  expect(
+    await getCreditBalance(database.db, { subjectId: subject.id, creditType: "reading" }),
+  ).toMatchObject({
     available: 3,
   });
   const grants = await database.db
