@@ -7,6 +7,7 @@ export type NormalizedProviderEvent =
       readonly eventId: string;
       readonly environment: CommerceEnvironment;
       readonly externalOrderId: string;
+      readonly merchantOrderReference?: string;
       readonly externalPaymentId: string;
       readonly amount: Money;
       readonly occurredAt: Date;
@@ -18,6 +19,7 @@ export type NormalizedProviderEvent =
       readonly eventId: string;
       readonly environment: CommerceEnvironment;
       readonly externalOrderId: string;
+      readonly merchantOrderReference?: string;
       readonly externalPaymentId?: string;
       readonly occurredAt: Date;
       readonly merchantId?: string;
@@ -28,6 +30,7 @@ export type NormalizedProviderEvent =
       readonly eventId: string;
       readonly environment: CommerceEnvironment;
       readonly externalPaymentId: string;
+      readonly merchantOrderReference?: string;
       readonly amount: Money;
       readonly occurredAt: Date;
     }
@@ -36,6 +39,7 @@ export type NormalizedProviderEvent =
       readonly eventId: string;
       readonly environment: CommerceEnvironment;
       readonly externalPaymentId: string;
+      readonly merchantOrderReference?: string;
       readonly occurredAt: Date;
     }
   | {
@@ -49,6 +53,7 @@ export type NormalizedProviderEvent =
 export type NormalizedPaymentSnapshot = {
   readonly environment: CommerceEnvironment;
   readonly externalOrderId: string;
+  readonly merchantOrderReference?: string;
   readonly externalPaymentId?: string;
   readonly status: "pending" | "succeeded" | "failed" | "canceled";
   readonly amount?: Money;
