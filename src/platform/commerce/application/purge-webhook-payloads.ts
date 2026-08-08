@@ -37,7 +37,12 @@ export async function purgeExpiredWebhookPayloads(
           rawPayloadExpiresAt: null,
           rawPayloadPurgedAt: now,
         })
-        .where(and(isNotNull(paymentWebhookInbox.rawPayloadCiphertext), lte(paymentWebhookInbox.id, row.id)));
+        .where(
+          and(
+            isNotNull(paymentWebhookInbox.rawPayloadCiphertext),
+            lte(paymentWebhookInbox.id, row.id),
+          ),
+        );
     }
 
     return rows.length;
