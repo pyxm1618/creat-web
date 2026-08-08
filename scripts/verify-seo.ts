@@ -50,7 +50,8 @@ if (graph.broken.length || graph.orphans.length) {
   throw new Error(`invalid link graph: ${JSON.stringify(graph)}`);
 }
 
-if (process.env.APP_ENV === "production" && seoConfig.releaseStatus !== "reviewed") {
+const isReviewed = (status: string): boolean => status === "reviewed";
+if (process.env.APP_ENV === "production" && !isReviewed(seoConfig.releaseStatus)) {
   throw new Error("production SEO config must be reviewed");
 }
 if (process.env.APP_ENV === "production" && /example\.com/i.test(seoConfig.canonicalOrigin)) {
