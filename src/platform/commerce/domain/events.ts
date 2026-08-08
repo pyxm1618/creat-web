@@ -15,7 +15,18 @@ export type NormalizedProviderEvent =
       readonly storeId?: string;
     }
   | {
-      readonly type: "one_time_payment_failed" | "one_time_payment_canceled";
+      readonly type: "one_time_payment_failed";
+      readonly eventId: string;
+      readonly environment: CommerceEnvironment;
+      readonly externalOrderId: string;
+      readonly merchantOrderReference?: string;
+      readonly externalPaymentId?: string;
+      readonly occurredAt: Date;
+      readonly merchantId?: string;
+      readonly storeId?: string;
+    }
+  | {
+      readonly type: "one_time_payment_canceled";
       readonly eventId: string;
       readonly environment: CommerceEnvironment;
       readonly externalOrderId: string;
