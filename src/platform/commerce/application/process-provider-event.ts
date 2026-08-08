@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
+import { commerceAppliedEvents } from "@/platform/database/commerce-event-schema";
 import {
   commerceProducts,
   fulfillmentJobs,
@@ -26,7 +27,9 @@ function parseOrderStatus(value: string): OrderStatus {
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 async function lockOrderForProviderEvent(
@@ -34,7 +37,10 @@ async function lockOrderForProviderEvent(
   event: Extract<
     NormalizedProviderEvent,
     {
-      type: "one_time_payment_succeeded" | "one_time_payment_failed" | "one_time_payment_canceled";
+      type:
+        | "one_time_payment_succeeded"
+        | "one_time_payment_failed"
+        | "one_time_payment_canceled";
     }
   >,
 ) {
@@ -44,7 +50,10 @@ async function lockOrderForProviderEvent(
       .select()
       .from(orders)
       .where(
-        and(eq(orders.id, event.merchantOrderReference), eq(orders.environment, event.environment)),
+        and(
+          eq(orders.id, event.merchantOrderReference),
+          eq(orders.environment, event.environment),
+        ),
       )
       .limit(1)
       .for("update");
@@ -78,6 +87,20 @@ export async function processProviderEvent(
   if (event.type === "unsupported_signed_event") return;
 
   await database.transaction(async (tx) => {
+    const [application] = await tx
+      .insert(commerceAppliedEvents)
+      .values({
+        environment: event.environment,
+        providerEventId: event.eventId,
+        eventType: event.type,
+        payloadHash,
+      })
+      .onConflictDoNothing({
+        target: [commerceAppliedEvents.environment, commerceAppliedEvents.providerEventId],
+      })
+      .returning({ id: commerceAppliedEvents.id });
+    if (!application) return;
+
     if (event.type === "one_time_payment_succeeded") {
       const order = await lockOrderForProviderEvent(tx, event);
       const expected = {
