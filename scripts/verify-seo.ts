@@ -20,15 +20,17 @@ for (const route of indexable) {
   if (Number.isNaN(Date.parse(`${route.lastModified}T00:00:00Z`))) {
     throw new Error(`invalid lastModified: ${route.route}`);
   }
-  const canonical = sitemap.find((entry) => entry.route === route.route)?.canonical;
-  if (!canonical || new URL(canonical).origin !== new URL(seoConfig.canonicalOrigin).origin) {
+  const sitemapEntry = sitemap.find((entry) => entry.route === route.route);
+  if (!sitemapEntry) throw new Error(`missing sitemap entry: ${route.route}`);
+  if (new URL(sitemapEntry.canonical).origin !== new URL(seoConfig.canonicalOrigin).origin) {
     throw new Error(`invalid canonical: ${route.route}`);
   }
 }
 
-for (const route of routeRegistry.routes) {
-  if ((route.class === "private" || route.class === "system") && route.class === "public_indexable") {
-    throw new Error(`private/system route is indexable: ${route.route}`);
+for (const entry of sitemap) {
+  const route = routeRegistry.get(entry.route);
+  if (route.class !== "public_indexable") {
+    throw new Error(`non-indexable route entered sitemap: ${entry.route}`);
   }
 }
 
