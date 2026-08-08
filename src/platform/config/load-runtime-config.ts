@@ -21,7 +21,14 @@ export type RuntimeEnv = {
   readonly googleClientId: string | undefined;
   readonly googleClientSecret: string | undefined;
   readonly resendApiKey: string | undefined;
+  readonly waffoMerchantId: string | undefined;
   readonly waffoPrivateKey: string | undefined;
+  readonly waffoStoreId: string | undefined;
+  readonly waffoWebhookTestPublicKey: string | undefined;
+  readonly waffoWebhookProdPublicKey: string | undefined;
+  readonly waffoContractVerified: boolean;
+  readonly commerceRetentionKey: string | undefined;
+  readonly commerceRetentionKeyId: string | undefined;
   readonly ga4MeasurementId: string | undefined;
 };
 
@@ -39,7 +46,14 @@ const baseSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
+  WAFFO_MERCHANT_ID: z.string().optional(),
   WAFFO_PRIVATE_KEY: z.string().optional(),
+  WAFFO_STORE_ID: z.string().optional(),
+  WAFFO_WEBHOOK_TEST_PUBLIC_KEY: z.string().optional(),
+  WAFFO_WEBHOOK_PROD_PUBLIC_KEY: z.string().optional(),
+  WAFFO_CONTRACT_VERIFIED: z.enum(["0", "1"]).optional(),
+  COMMERCE_RETENTION_KEY: z.string().optional(),
+  COMMERCE_RETENTION_KEY_ID: z.string().optional(),
   GA4_MEASUREMENT_ID: z.string().optional(),
 });
 
@@ -93,9 +107,9 @@ function resolveAuthSecret(
 
 function resolveCronSecret(
   parsed: z.infer<typeof baseSchema>,
-  authEnabled: boolean,
+  enabled: boolean,
 ): string | undefined {
-  if (!authEnabled) return undefined;
+  if (!enabled) return undefined;
   if (parsed.APP_ENV === "local" || parsed.APP_ENV === "test") {
     return parsed.CRON_SECRET ?? TEST_ONLY_CRON_SECRET;
   }
@@ -120,6 +134,14 @@ function resolveEmailTransport(
   return transport;
 }
 
+function validateRetentionKey(value: string): string {
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.byteLength !== 32 || decoded.toString("base64").replace(/=+$/, "") !== value.replace(/=+$/, "")) {
+    throw new Error("COMMERCE_RETENTION_KEY must be base64 for exactly 32 bytes");
+  }
+  return value;
+}
+
 export function loadRuntimeEnv(
   source: EnvironmentSource,
   features: ProductConfig["features"],
@@ -139,14 +161,20 @@ export function loadRuntimeEnv(
   }
 
   const betterAuthSecret = resolveAuthSecret(parsed, features.auth.enabled);
-  const cronSecret = resolveCronSecret(parsed, features.auth.enabled);
+  const cronSecret = resolveCronSecret(parsed, features.auth.enabled || features.commerce.enabled);
   let googleClientId: string | undefined;
   let googleClientSecret: string | undefined;
   let resendApiKey: string | undefined;
   let emailFrom: string | undefined;
   let supportEmail: string | undefined;
   let testEmailDirectory: string | undefined;
+  let waffoMerchantId: string | undefined;
   let waffoPrivateKey: string | undefined;
+  let waffoStoreId: string | undefined;
+  let waffoWebhookTestPublicKey: string | undefined;
+  let waffoWebhookProdPublicKey: string | undefined;
+  let commerceRetentionKey: string | undefined;
+  let commerceRetentionKeyId: string | undefined;
   let ga4MeasurementId: string | undefined;
 
   if (features.auth.google) {
@@ -172,7 +200,34 @@ export function loadRuntimeEnv(
   }
 
   if (features.commerce.enabled) {
+    waffoMerchantId = requireSecret(parsed.WAFFO_MERCHANT_ID, "Waffo merchant configuration");
     waffoPrivateKey = requireSecret(parsed.WAFFO_PRIVATE_KEY, "Waffo credentials");
+    waffoStoreId = requireSecret(parsed.WAFFO_STORE_ID, "Waffo store configuration");
+    waffoWebhookTestPublicKey = requireSecret(
+      parsed.WAFFO_WEBHOOK_TEST_PUBLIC_KEY,
+      "Waffo test webhook public key",
+    );
+    if (parsed.APP_ENV === "production") {
+      waffoWebhookProdPublicKey = requireSecret(
+        parsed.WAFFO_WEBHOOK_PROD_PUBLIC_KEY,
+        "Waffo production webhook public key",
+      );
+    } else {
+      waffoWebhookProdPublicKey = parsed.WAFFO_WEBHOOK_PROD_PUBLIC_KEY;
+    }
+    commerceRetentionKey = validateRetentionKey(
+      requireSecret(parsed.COMMERCE_RETENTION_KEY, "Commerce retention key"),
+    );
+    commerceRetentionKeyId = requireSecret(
+      parsed.COMMERCE_RETENTION_KEY_ID,
+      "Commerce retention key id",
+    );
+    if (
+      (parsed.APP_ENV === "staging" || parsed.APP_ENV === "production") &&
+      parsed.WAFFO_CONTRACT_VERIFIED !== "1"
+    ) {
+      throw new Error("Waffo contract must be verified before deployed commerce is enabled");
+    }
   }
 
   if (features.analytics.ga4) {
@@ -193,7 +248,14 @@ export function loadRuntimeEnv(
     googleClientId,
     googleClientSecret,
     resendApiKey,
+    waffoMerchantId,
     waffoPrivateKey,
+    waffoStoreId,
+    waffoWebhookTestPublicKey,
+    waffoWebhookProdPublicKey,
+    waffoContractVerified: parsed.WAFFO_CONTRACT_VERIFIED === "1",
+    commerceRetentionKey,
+    commerceRetentionKeyId,
     ga4MeasurementId,
   };
 }
