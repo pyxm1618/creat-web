@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { accountSubjects } from "@/platform/database/account-subject-schema";
@@ -121,7 +121,7 @@ async function loadActiveReserved(
       and(
         inArray(creditReservationAllocations.grantId, [...grantIds]),
         eq(creditReservations.status, "active"),
-        sql`${creditReservations.expiresAt} > ${now}`,
+        gt(creditReservations.expiresAt, now),
       ),
     )
     .groupBy(creditReservationAllocations.grantId);
@@ -330,7 +330,7 @@ export async function reserveCredits(
           eq(creditGrants.subjectId, input.subjectId),
           eq(creditGrants.creditType, input.creditType),
           eq(creditGrants.state, "active"),
-          or(isNull(creditGrants.expiresAt), sql`${creditGrants.expiresAt} >= ${input.expiresAt}`),
+          or(isNull(creditGrants.expiresAt), gte(creditGrants.expiresAt, input.expiresAt)),
         ),
       )
       .for("update");
