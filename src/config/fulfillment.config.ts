@@ -7,6 +7,8 @@ export const fulfillmentHandlers = {} as const satisfies Readonly<
   Record<string, FulfillmentHandler>
 >;
 
-export function createConfiguredOrderFulfillment() {
-  return new RegistryOrderFulfillment(fulfillmentHandlers);
+export function createConfiguredOrderFulfillment(
+  extensions: Readonly<Record<string, FulfillmentHandler>> = {},
+) {
+  return new RegistryOrderFulfillment({ ...fulfillmentHandlers, ...extensions });
 }
