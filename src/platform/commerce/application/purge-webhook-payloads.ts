@@ -1,4 +1,4 @@
-import { and, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lte, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { paymentWebhookInbox } from "@/platform/database/commerce-schema";
@@ -39,8 +39,8 @@ export async function purgeExpiredWebhookPayloads(
         })
         .where(
           and(
+            eq(paymentWebhookInbox.id, row.id),
             isNotNull(paymentWebhookInbox.rawPayloadCiphertext),
-            lte(paymentWebhookInbox.id, row.id),
           ),
         );
     }
