@@ -1,0 +1,58 @@
+name: Diagnose Credits PostgreSQL
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.ref == 'feat/credits-ledger' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: creat_web_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d creat_web_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: test
+      APP_ORIGIN: http://localhost:3000
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_test
+      BETTER_AUTH_SECRET: diagnostic-better-auth-secret-with-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/credits-ledger
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Run focused credit integration tests and capture output
+        id: test
+        shell: bash
+        run: |
+          set +e
+          bunx vitest run --config vitest.integration.config.ts tests/integration/credits/ledger.test.ts tests/integration/credits/finalization.test.ts > /tmp/credits-test.log 2>&1
+          status=$?
+          tail -n 180 /tmp/credits-test.log > docs/debug-credits-postgres.txt
+          echo "exit_code=$status" >> docs/debug-credits-postgres.txt
+          exit 0
+      - name: Commit diagnostic summary
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/debug-credits-postgres.txt
+          git commit -m "chore: capture credit PostgreSQL diagnostic"
+          git push origin HEAD:feat/credits-ledger
