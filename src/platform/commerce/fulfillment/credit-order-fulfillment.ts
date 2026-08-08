@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import type {
   FulfillmentHandler,
@@ -20,9 +20,10 @@ export function createCreditOrderFulfillment(
   definition: CreditOrderFulfillmentDefinition,
 ): FulfillmentHandler {
   return async (input: FulfillmentInput) => {
-    if (input.sourceType !== "payment")
+    if (input.sourceType !== "payment") {
       throw new Error("credit fulfillment requires payment source");
-    const [fact] = await database
+    }
+    const facts = await database
       .select({
         paymentStatus: payments.status,
         orderId: orders.id,
@@ -34,8 +35,12 @@ export function createCreditOrderFulfillment(
       .from(payments)
       .innerJoin(orders, eq(orders.id, payments.orderId))
       .innerJoin(commerceProducts, eq(commerceProducts.id, orders.productId))
-      .where(and(eq(payments.externalPaymentId, input.sourceId), eq(payments.status, "succeeded")))
-      .limit(1);
+      .where(eq(payments.externalPaymentId, input.sourceId))
+      .limit(2);
+    if (facts.length !== 1) {
+      throw new Error("payment fulfillment source is missing or ambiguous");
+    }
+    const fact = facts[0];
     if (!fact || fact.paymentStatus !== "succeeded" || fact.orderStatus !== "paid") {
       throw new Error("successful paid order is required for credit fulfillment");
     }
