@@ -53,7 +53,11 @@ export async function ingestProviderWebhook(input: {
   readonly signature: string;
   readonly retention: RetentionConfig;
   readonly now?: Date;
-}): Promise<{ readonly accepted: boolean; readonly duplicate: boolean; readonly event?: NormalizedProviderEvent }> {
+}): Promise<{
+  readonly accepted: boolean;
+  readonly duplicate: boolean;
+  readonly event?: NormalizedProviderEvent;
+}> {
   const now = input.now ?? new Date();
   const size = input.rawBody.byteLength;
   if (size === 0 || size > MAX_WEBHOOK_BYTES) throw new Error("invalid webhook payload size");
@@ -98,7 +102,10 @@ export async function ingestProviderWebhook(input: {
     if (!input.retention.encryptionKeyBase64 || !input.retention.keyId) {
       throw new Error("encrypted webhook retention key is required for unsupported signed events");
     }
-    rawPayloadCiphertext = encryptWebhookPayload(input.rawBody, input.retention.encryptionKeyBase64);
+    rawPayloadCiphertext = encryptWebhookPayload(
+      input.rawBody,
+      input.retention.encryptionKeyBase64,
+    );
     rawPayloadExpiresAt = retentionExpiry("unresolved_encrypted", now);
   }
 
@@ -114,7 +121,9 @@ export async function ingestProviderWebhook(input: {
       payloadHash: hash,
       payloadSizeBytes: size,
       ...(rawPayloadCiphertext ? { rawPayloadCiphertext } : {}),
-      ...(input.retention.keyId && rawPayloadCiphertext ? { rawPayloadKeyId: input.retention.keyId } : {}),
+      ...(input.retention.keyId && rawPayloadCiphertext
+        ? { rawPayloadKeyId: input.retention.keyId }
+        : {}),
       ...(rawPayloadExpiresAt ? { rawPayloadExpiresAt } : {}),
       retentionClass,
       state: unsupported ? "unsupported" : "pending",
