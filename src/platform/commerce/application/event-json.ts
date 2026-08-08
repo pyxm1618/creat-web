@@ -1,10 +1,11 @@
 import { z } from "zod";
 
 import type { NormalizedProviderEvent } from "../domain/events";
+import { currencyExponent, type SupportedCurrency } from "../domain/money";
 import type { CommerceEnvironment } from "../domain/product";
 
 const amountSchema = z.object({
-  currency: z.string().min(3).max(3),
+  currency: z.string().length(3),
   minor: z.string().regex(/^\d+$/),
 });
 const base = z.object({
@@ -13,6 +14,11 @@ const base = z.object({
   environment: z.enum(["test", "production"]),
   occurredAt: z.iso.datetime(),
 });
+
+function supportedCurrency(value: string): SupportedCurrency {
+  currencyExponent(value);
+  return value.toUpperCase() as SupportedCurrency;
+}
 
 export function parseNormalizedProviderEvent(
   payload: Record<string, unknown>,
@@ -26,6 +32,7 @@ export function parseNormalizedProviderEvent(
       const parsed = base
         .extend({
           externalOrderId: z.string().min(1),
+          merchantOrderReference: z.string().min(1).optional(),
           externalPaymentId: z.string().min(1),
           amount: amountSchema,
           merchantId: z.string().optional(),
@@ -37,8 +44,14 @@ export function parseNormalizedProviderEvent(
         eventId: parsed.eventId,
         environment,
         externalOrderId: parsed.externalOrderId,
+        ...(parsed.merchantOrderReference
+          ? { merchantOrderReference: parsed.merchantOrderReference }
+          : {}),
         externalPaymentId: parsed.externalPaymentId,
-        amount: { currency: parsed.amount.currency as never, minor: BigInt(parsed.amount.minor) },
+        amount: {
+          currency: supportedCurrency(parsed.amount.currency),
+          minor: BigInt(parsed.amount.minor),
+        },
         occurredAt,
         ...(parsed.merchantId ? { merchantId: parsed.merchantId } : {}),
         ...(parsed.storeId ? { storeId: parsed.storeId } : {}),
@@ -47,37 +60,62 @@ export function parseNormalizedProviderEvent(
     case "one_time_payment_failed":
     case "one_time_payment_canceled": {
       const parsed = base
-        .extend({ externalOrderId: z.string().min(1), externalPaymentId: z.string().optional() })
+        .extend({
+          externalOrderId: z.string().min(1),
+          merchantOrderReference: z.string().min(1).optional(),
+          externalPaymentId: z.string().optional(),
+        })
         .parse(payload);
       return {
         type: parsedBase.type,
         eventId: parsed.eventId,
         environment,
         externalOrderId: parsed.externalOrderId,
+        ...(parsed.merchantOrderReference
+          ? { merchantOrderReference: parsed.merchantOrderReference }
+          : {}),
         occurredAt,
         ...(parsed.externalPaymentId ? { externalPaymentId: parsed.externalPaymentId } : {}),
       };
     }
     case "refund_succeeded": {
       const parsed = base
-        .extend({ externalPaymentId: z.string().min(1), amount: amountSchema })
+        .extend({
+          externalPaymentId: z.string().min(1),
+          merchantOrderReference: z.string().min(1).optional(),
+          amount: amountSchema,
+        })
         .parse(payload);
       return {
         type: "refund_succeeded",
         eventId: parsed.eventId,
         environment,
         externalPaymentId: parsed.externalPaymentId,
-        amount: { currency: parsed.amount.currency as never, minor: BigInt(parsed.amount.minor) },
+        ...(parsed.merchantOrderReference
+          ? { merchantOrderReference: parsed.merchantOrderReference }
+          : {}),
+        amount: {
+          currency: supportedCurrency(parsed.amount.currency),
+          minor: BigInt(parsed.amount.minor),
+        },
         occurredAt,
       };
     }
     case "refund_failed": {
-      const parsed = base.extend({ externalPaymentId: z.string().min(1) }).parse(payload);
+      const parsed = base
+        .extend({
+          externalPaymentId: z.string().min(1),
+          merchantOrderReference: z.string().min(1).optional(),
+        })
+        .parse(payload);
       return {
         type: "refund_failed",
         eventId: parsed.eventId,
         environment,
         externalPaymentId: parsed.externalPaymentId,
+        ...(parsed.merchantOrderReference
+          ? { merchantOrderReference: parsed.merchantOrderReference }
+          : {}),
         occurredAt,
       };
     }
