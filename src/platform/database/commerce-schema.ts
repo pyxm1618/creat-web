@@ -68,6 +68,12 @@ export const orders = pgTable(
     expectedCurrency: text("expected_currency").notNull(),
     expectedMinor: bigint("expected_minor", { mode: "bigint" }).notNull(),
     checkoutIdempotencyKey: text("checkout_idempotency_key").notNull(),
+    checkoutState: text("checkout_state").default("creating").notNull(),
+    checkoutLeaseToken: text("checkout_lease_token"),
+    checkoutLeaseExpiresAt: timestamp("checkout_lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     externalCheckoutSessionId: text("external_checkout_session_id"),
     externalOrderId: text("external_order_id"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
@@ -86,6 +92,10 @@ export const orders = pgTable(
       "order_status_valid",
       sql`${table.status} in ('pending','paid','canceled','partially_refunded','refunded')`,
     ),
+    check(
+      "order_checkout_state_valid",
+      sql`${table.checkoutState} in ('creating','created','failed')`,
+    ),
   ],
 );
 
@@ -102,6 +112,7 @@ export const payments = pgTable(
     refundStatus: text("refund_status").default("none").notNull(),
     currency: text("currency").notNull(),
     amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+    refundedMinor: bigint("refunded_minor", { mode: "bigint" }).default(0n).notNull(),
     providerCreatedAt: timestamp("provider_created_at", { withTimezone: true, mode: "date" }),
     rawPayloadHash: text("raw_payload_hash").notNull(),
     reconciledAt: timestamp("reconciled_at", { withTimezone: true, mode: "date" }),
@@ -115,6 +126,10 @@ export const payments = pgTable(
     ),
     index("payment_order_idx").on(table.orderId),
     check("payment_amount_nonnegative", sql`${table.amountMinor} >= 0`),
+    check(
+      "payment_refunded_minor_valid",
+      sql`${table.refundedMinor} >= 0 and ${table.refundedMinor} <= ${table.amountMinor}`,
+    ),
     check("payment_environment_valid", sql`${table.environment} in ('test','production')`),
     check(
       "payment_status_valid",
