@@ -21,9 +21,7 @@ function parseOrderStatus(value: string): OrderStatus {
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value,
-  );
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 async function lockOrderForProviderEvent(
@@ -39,10 +37,7 @@ async function lockOrderForProviderEvent(
       .select()
       .from(orders)
       .where(
-        and(
-          eq(orders.id, event.merchantOrderReference),
-          eq(orders.environment, event.environment),
-        ),
+        and(eq(orders.id, event.merchantOrderReference), eq(orders.environment, event.environment)),
       )
       .limit(1)
       .for("update");
