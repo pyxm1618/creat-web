@@ -1,0 +1,29 @@
+name: Format Credit Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.event.pull_request.head.ref == 'feat/credits-ledger' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/credits-ledger
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bunx prettier --write tests/integration/credits/order-fulfillment.test.ts tests/integration/credits/reconciliation.test.ts tests/integration/credits/schema-constraints.test.ts
+      - name: Commit formatting
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/integration/credits
+          git commit -m "style: format credit integration tests"
+          git push origin HEAD:feat/credits-ledger
