@@ -22,6 +22,9 @@ function normalizedJson(event: NormalizedProviderEvent): Record<string, unknown>
         eventId: event.eventId,
         environment: event.environment,
         externalOrderId: event.externalOrderId,
+        ...(event.merchantOrderReference
+          ? { merchantOrderReference: event.merchantOrderReference }
+          : {}),
         externalPaymentId: event.externalPaymentId,
         amount: { currency: event.amount.currency, minor: event.amount.minor.toString() },
         occurredAt: event.occurredAt.toISOString(),
@@ -34,6 +37,9 @@ function normalizedJson(event: NormalizedProviderEvent): Record<string, unknown>
         eventId: event.eventId,
         environment: event.environment,
         externalPaymentId: event.externalPaymentId,
+        ...(event.merchantOrderReference
+          ? { merchantOrderReference: event.merchantOrderReference }
+          : {}),
         amount: { currency: event.amount.currency, minor: event.amount.minor.toString() },
         occurredAt: event.occurredAt.toISOString(),
       };
