@@ -19,12 +19,11 @@ export async function claimWebhookInbox(
       .from(paymentWebhookInbox)
       .where(
         and(
-          inArray(paymentWebhookInbox.state, ["pending", "retry"]),
+          inArray(paymentWebhookInbox.state, ["pending", "retry", "processing"]),
           lte(paymentWebhookInbox.nextAttemptAt, now),
           or(
             isNull(paymentWebhookInbox.leaseOwner),
             isNull(paymentWebhookInbox.leaseExpiresAt),
-            eq(paymentWebhookInbox.leaseOwner, input.owner),
             lte(paymentWebhookInbox.leaseExpiresAt, now),
           ),
         ),
@@ -60,12 +59,11 @@ export async function claimFulfillmentJobs(
       .from(fulfillmentJobs)
       .where(
         and(
-          eq(fulfillmentJobs.state, "pending"),
+          inArray(fulfillmentJobs.state, ["pending", "processing"]),
           lte(fulfillmentJobs.nextAttemptAt, now),
           or(
             isNull(fulfillmentJobs.leaseOwner),
             isNull(fulfillmentJobs.leaseExpiresAt),
-            eq(fulfillmentJobs.leaseOwner, input.owner),
             lte(fulfillmentJobs.leaseExpiresAt, now),
           ),
         ),
