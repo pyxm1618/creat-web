@@ -19,21 +19,36 @@ function keys() {
   };
 }
 
-function sign(raw: string, privateKey: string): string {
-  return createSign("RSA-SHA256").update(raw).end().sign(privateKey, "base64");
+function signatureHeader(raw: string, privateKey: string): string {
+  const timestamp = Date.now().toString();
+  const signature = createSign("RSA-SHA256")
+    .update(`${timestamp}.${raw}`)
+    .end()
+    .sign(privateKey, "base64");
+  return `t=${timestamp},v1=${signature}`;
 }
 
 describe("Waffo Pancake 0.16 contract", () => {
   it("maps authenticated checkout without accepting browser-owned price facts", async () => {
     const keyPair = keys();
-    let body: Record<string, unknown> | undefined;
-    const fakeFetch: typeof fetch = async (_input, init) => {
-      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    const requestBodies: Record<string, unknown>[] = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      const url = String(input);
+      if (url.includes("issue-session-token")) {
+        return Response.json({
+          data: {
+            token: "test-token",
+            expiresAt: "2026-08-08T12:00:00.000Z",
+          },
+        });
+      }
       return Response.json({
-        sessionId: "CHK_0123456789ABCDEFGHIJKL",
-        checkoutUrl: "https://checkout.example.test/#token=test",
-        expiresAt: "2026-08-08T12:00:00.000Z",
-        token: "test-token",
+        data: {
+          sessionId: "CHK_0123456789ABCDEFGHIJKL",
+          checkoutUrl: "https://checkout.example.test/checkout",
+          expiresAt: "2026-08-08T12:00:00.000Z",
+        },
       });
     };
     const provider = createWaffoPaymentProvider({
@@ -57,16 +72,21 @@ describe("Waffo Pancake 0.16 contract", () => {
 
     expect(result).toEqual({
       externalCheckoutSessionId: "CHK_0123456789ABCDEFGHIJKL",
-      checkoutUrl: "https://checkout.example.test/#token=test",
+      checkoutUrl: "https://checkout.example.test/checkout#token=test-token",
     });
-    expect(body).toMatchObject({
+    const checkoutBody = requestBodies.find((body) => body.orderMerchantExternalId !== undefined);
+    expect(checkoutBody).toMatchObject({
       productId,
       currency: "USD",
-      buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
       buyerEmail: "buyer@example.com",
       orderMerchantExternalId: "01989ef5-c3f7-7000-8000-000000000001",
     });
-    expect(body).not.toHaveProperty("amount");
+    expect(checkoutBody).not.toHaveProperty("buyerIdentity");
+    expect(checkoutBody).not.toHaveProperty("amount");
+    expect(requestBodies).toContainEqual({
+      productId,
+      buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
+    });
   });
 
   it("verifies an exact raw signed order.completed event and normalizes decimal money", async () => {
@@ -102,7 +122,7 @@ describe("Waffo Pancake 0.16 contract", () => {
 
     const event = await provider.verifyAndNormalizeWebhook({
       rawBody: new TextEncoder().encode(raw),
-      signature: sign(raw, keyPair.privateKey),
+      signature: signatureHeader(raw, keyPair.privateKey),
       environment: "test",
     });
     expect(event).toMatchObject({
