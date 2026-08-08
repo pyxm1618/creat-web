@@ -112,7 +112,9 @@ export const payments = pgTable(
     refundStatus: text("refund_status").default("none").notNull(),
     currency: text("currency").notNull(),
     amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
-    refundedMinor: bigint("refunded_minor", { mode: "bigint" }).default(sql`0`).notNull(),
+    refundedMinor: bigint("refunded_minor", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
     providerCreatedAt: timestamp("provider_created_at", { withTimezone: true, mode: "date" }),
     rawPayloadHash: text("raw_payload_hash").notNull(),
     reconciledAt: timestamp("reconciled_at", { withTimezone: true, mode: "date" }),

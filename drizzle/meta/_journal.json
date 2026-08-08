@@ -43,6 +43,13 @@
       "when": 1786156744390,
       "tag": "0005_chunky_cyclops",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786162864575,
+      "tag": "0006_normal_turbo",
+      "breakpoints": true
     }
   ]
 }
