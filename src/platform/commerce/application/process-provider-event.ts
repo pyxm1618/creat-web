@@ -3,9 +3,70 @@ import { and, eq } from "drizzle-orm";
 import type { DatabaseClient } from "@/platform/database/client";
 import { fulfillmentJobs, orders, payments } from "@/platform/database/commerce-schema";
 
-import { equalMoney } from "../domain/money";
-import { transitionOrder } from "../domain/order";
 import type { NormalizedProviderEvent } from "../domain/events";
+import { equalMoney, type SupportedCurrency } from "../domain/money";
+import { transitionOrder, type OrderStatus } from "../domain/order";
+
+function parseOrderStatus(value: string): OrderStatus {
+  if (
+    value === "pending" ||
+    value === "paid" ||
+    value === "canceled" ||
+    value === "partially_refunded" ||
+    value === "refunded"
+  ) {
+    return value;
+  }
+  throw new Error(`invalid persisted order status: ${value}`);
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+async function lockOrderForProviderEvent(
+  tx: Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0],
+  event: Extract<
+    NormalizedProviderEvent,
+    { type: "one_time_payment_succeeded" | "one_time_payment_failed" | "one_time_payment_canceled" }
+  >,
+) {
+  if (event.merchantOrderReference) {
+    if (!isUuid(event.merchantOrderReference)) throw new Error("invalid merchant order reference");
+    const [order] = await tx
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.id, event.merchantOrderReference),
+          eq(orders.environment, event.environment),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!order) throw new Error("order not found for merchant reference");
+    if (order.externalOrderId && order.externalOrderId !== event.externalOrderId) {
+      throw new Error("provider order id mismatch");
+    }
+    return order;
+  }
+
+  const [order] = await tx
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.environment, event.environment),
+        eq(orders.externalOrderId, event.externalOrderId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!order) throw new Error("order not found for provider event");
+  return order;
+}
 
 export async function processProviderEvent(
   database: DatabaseClient,
@@ -16,22 +77,39 @@ export async function processProviderEvent(
 
   await database.transaction(async (tx) => {
     if (event.type === "one_time_payment_succeeded") {
-      const order = await tx.query.orders.findFirst({
-        where: and(
-          eq(orders.environment, event.environment),
-          eq(orders.externalOrderId, event.externalOrderId),
-        ),
-      });
-      if (!order) throw new Error("order not found for payment event");
+      const order = await lockOrderForProviderEvent(tx, event);
       const expected = {
-        currency: order.expectedCurrency as typeof event.amount.currency,
+        currency: order.expectedCurrency as SupportedCurrency,
         minor: order.expectedMinor,
       };
       if (!equalMoney(expected, event.amount)) throw new Error("provider amount mismatch");
 
-      await tx
-        .insert(payments)
-        .values({
+      const [existingPayment] = await tx
+        .select()
+        .from(payments)
+        .where(
+          and(
+            eq(payments.environment, event.environment),
+            eq(payments.externalPaymentId, event.externalPaymentId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (existingPayment) {
+        if (
+          existingPayment.orderId !== order.id ||
+          existingPayment.currency !== event.amount.currency ||
+          existingPayment.amountMinor !== event.amount.minor
+        ) {
+          throw new Error("provider payment identity mismatch");
+        }
+        await tx
+          .update(payments)
+          .set({ status: "succeeded", rawPayloadHash: payloadHash, updatedAt: new Date() })
+          .where(eq(payments.id, existingPayment.id));
+      } else {
+        await tx.insert(payments).values({
           orderId: order.id,
           environment: event.environment,
           externalPaymentId: event.externalPaymentId,
@@ -39,22 +117,17 @@ export async function processProviderEvent(
           refundStatus: "none",
           currency: event.amount.currency,
           amountMinor: event.amount.minor,
+          refundedMinor: 0n,
           providerCreatedAt: event.occurredAt,
           rawPayloadHash: payloadHash,
-        })
-        .onConflictDoUpdate({
-          target: [payments.environment, payments.externalPaymentId],
-          set: {
-            status: "succeeded",
-            rawPayloadHash: payloadHash,
-            updatedAt: new Date(),
-          },
         });
+      }
 
       await tx
         .update(orders)
         .set({
-          status: transitionOrder(order.status as never, "payment_succeeded"),
+          status: transitionOrder(parseOrderStatus(order.status), "payment_succeeded"),
+          externalOrderId: order.externalOrderId ?? event.externalOrderId,
           paidAt: order.paidAt ?? event.occurredAt,
         })
         .where(eq(orders.id, order.id));
@@ -72,18 +145,13 @@ export async function processProviderEvent(
     }
 
     if (event.type === "one_time_payment_failed" || event.type === "one_time_payment_canceled") {
-      const order = await tx.query.orders.findFirst({
-        where: and(
-          eq(orders.environment, event.environment),
-          eq(orders.externalOrderId, event.externalOrderId),
-        ),
-      });
-      if (!order) throw new Error("order not found for failure event");
+      const order = await lockOrderForProviderEvent(tx, event);
       if (event.type === "one_time_payment_canceled") {
         await tx
           .update(orders)
           .set({
-            status: transitionOrder(order.status as never, "payment_canceled"),
+            status: transitionOrder(parseOrderStatus(order.status), "payment_canceled"),
+            externalOrderId: order.externalOrderId ?? event.externalOrderId,
             canceledAt: event.occurredAt,
           })
           .where(eq(orders.id, order.id));
@@ -91,12 +159,17 @@ export async function processProviderEvent(
       return;
     }
 
-    const payment = await tx.query.payments.findFirst({
-      where: and(
-        eq(payments.environment, event.environment),
-        eq(payments.externalPaymentId, event.externalPaymentId),
-      ),
-    });
+    const [payment] = await tx
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.environment, event.environment),
+          eq(payments.externalPaymentId, event.externalPaymentId),
+        ),
+      )
+      .limit(1)
+      .for("update");
     if (!payment) throw new Error("payment not found for refund event");
 
     if (event.type === "refund_failed") {
@@ -107,25 +180,34 @@ export async function processProviderEvent(
       return;
     }
 
-    const order = await tx.query.orders.findFirst({ where: eq(orders.id, payment.orderId) });
-    if (!order) throw new Error("order not found for refund event");
-    if (
-      event.amount.currency !== payment.currency ||
-      event.amount.minor <= 0n ||
-      event.amount.minor > payment.amountMinor
-    ) {
+    if (event.amount.currency !== payment.currency || event.amount.minor <= 0n) {
       throw new Error("invalid refund amount");
     }
-    const full = event.amount.minor === payment.amountMinor;
+    const refundedMinor = payment.refundedMinor + event.amount.minor;
+    if (refundedMinor > payment.amountMinor) throw new Error("refund exceeds captured payment");
+
+    const [order] = await tx
+      .select()
+      .from(orders)
+      .where(eq(orders.id, payment.orderId))
+      .limit(1)
+      .for("update");
+    if (!order) throw new Error("order not found for refund event");
+
+    const full = refundedMinor === payment.amountMinor;
     await tx
       .update(payments)
-      .set({ refundStatus: full ? "refunded" : "partial", updatedAt: new Date() })
+      .set({
+        refundedMinor,
+        refundStatus: full ? "refunded" : "partial",
+        updatedAt: new Date(),
+      })
       .where(eq(payments.id, payment.id));
     await tx
       .update(orders)
       .set({
         status: transitionOrder(
-          order.status as never,
+          parseOrderStatus(order.status),
           full ? "refund_full_succeeded" : "refund_partial_succeeded",
         ),
       })
