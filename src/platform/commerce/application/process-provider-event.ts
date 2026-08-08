@@ -1,7 +1,12 @@
 import { and, eq } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
-import { fulfillmentJobs, orders, payments } from "@/platform/database/commerce-schema";
+import {
+  commerceProducts,
+  fulfillmentJobs,
+  orders,
+  payments,
+} from "@/platform/database/commerce-schema";
 
 import type { NormalizedProviderEvent } from "../domain/events";
 import { equalMoney, type SupportedCurrency } from "../domain/money";
@@ -28,7 +33,12 @@ async function lockOrderForProviderEvent(
   tx: Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0],
   event: Extract<
     NormalizedProviderEvent,
-    { type: "one_time_payment_succeeded" | "one_time_payment_failed" | "one_time_payment_canceled" }
+    {
+      type:
+        | "one_time_payment_succeeded"
+        | "one_time_payment_failed"
+        | "one_time_payment_canceled";
+    }
   >,
 ) {
   if (event.merchantOrderReference) {
@@ -79,6 +89,13 @@ export async function processProviderEvent(
       };
       if (!equalMoney(expected, event.amount)) throw new Error("provider amount mismatch");
 
+      const [product] = await tx
+        .select({ fulfillmentKey: commerceProducts.fulfillmentKey })
+        .from(commerceProducts)
+        .where(eq(commerceProducts.id, order.productId))
+        .limit(1);
+      if (!product) throw new Error("order product not found");
+
       const [existingPayment] = await tx
         .select()
         .from(payments)
@@ -127,13 +144,14 @@ export async function processProviderEvent(
         })
         .where(eq(orders.id, order.id));
 
+      const operation = `fulfill:${product.fulfillmentKey}`;
       await tx
         .insert(fulfillmentJobs)
         .values({
           sourceType: "payment",
           sourceId: event.externalPaymentId,
-          operation: "fulfill",
-          idempotencyKey: `payment:${event.environment}:${event.externalPaymentId}:fulfill`,
+          operation,
+          idempotencyKey: `payment:${event.environment}:${event.externalPaymentId}:${operation}`,
         })
         .onConflictDoNothing({ target: fulfillmentJobs.idempotencyKey });
       return;
