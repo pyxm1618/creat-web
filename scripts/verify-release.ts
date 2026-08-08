@@ -2,11 +2,30 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { featuresConfig } from "@/config/features.config";
+import { legalConfig } from "@/config/legal.config";
+import { seoConfig } from "@/config/seo.config";
 import { siteConfig } from "@/config/site.config";
 import { loadRuntimeEnv } from "@/platform/config/load-runtime-config";
 import { validateProductConfig } from "@/platform/config/validate-config";
+import { validateLegalConfig } from "@/platform/legal/validate-legal-config";
 
 validateProductConfig({ site: siteConfig, features: featuresConfig });
+
+const legalFeatures = {
+  google: featuresConfig.auth.google,
+  resend: featuresConfig.auth.magicLink || featuresConfig.email.enabled,
+  waffo: featuresConfig.commerce.enabled,
+  ga4: featuresConfig.analytics.ga4,
+  clarity: featuresConfig.analytics.clarity,
+  subscriptions: featuresConfig.commerce.subscriptions,
+  credits: featuresConfig.commerce.credits,
+} as const;
+
+validateLegalConfig({
+  legal: legalConfig,
+  features: legalFeatures,
+  releaseMode: process.env.APP_ENV === "production",
+});
 
 const forbidden = [/quick[ -]?i[ -]?ching/i, /ichingcoin/i, /hexagram/i, /casting/i];
 
@@ -29,6 +48,16 @@ for (const file of await collectFiles("src")) {
 
 if (siteConfig.canonicalOrigin.includes("localhost")) {
   throw new Error("release site origin must not use localhost");
+}
+
+const isReviewed = (status: string): boolean => status === "reviewed";
+if (process.env.APP_ENV === "production") {
+  if (!isReviewed(seoConfig.releaseStatus)) {
+    throw new Error("production SEO config is not reviewed");
+  }
+  if (/example\.com/i.test(siteConfig.canonicalOrigin)) {
+    throw new Error("production site origin is still a placeholder");
+  }
 }
 
 let rejectedVercelTestMode = false;
@@ -73,6 +102,16 @@ if (!rejectedProductionTestMailbox) {
   throw new Error("production safety gate must reject test mailbox configuration");
 }
 
+let rejectedDraftLegalRelease = false;
+try {
+  validateLegalConfig({ legal: legalConfig, features: legalFeatures, releaseMode: true });
+} catch {
+  rejectedDraftLegalRelease = true;
+}
+if (legalConfig.releaseStatus === "draft" && !rejectedDraftLegalRelease) {
+  throw new Error("production release gate must reject draft legal configuration");
+}
+
 const vercelConfig = JSON.parse(await readFile("vercel.json", "utf8")) as {
   crons?: Array<{ path?: string }>;
 };
@@ -82,11 +121,14 @@ if (!vercelConfig.crons?.some((cron) => cron.path === "/api/cron/account-deletio
 
 console.log(
   JSON.stringify({
-    event: "foundation_release_verified",
+    event: "release_verified",
     site: siteConfig.slug,
     authEnabled: featuresConfig.auth.enabled,
     magicLinkEnabled: featuresConfig.auth.magicLink,
     commerceEnabled: featuresConfig.commerce.enabled,
+    seoStatus: seoConfig.releaseStatus,
+    legalStatus: legalConfig.releaseStatus,
     productionTestModeRejected: true,
+    productionDraftLegalRejected: true,
   }),
 );

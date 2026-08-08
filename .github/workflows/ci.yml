@@ -66,6 +66,8 @@ jobs:
         run: bun run verify:architecture
       - name: Repository secret scan
         run: bun run verify:secrets
+      - name: SEO verification
+        run: bun run verify:seo
       - name: Optional-provider build matrix
         run: bun run test:build-matrix
       - name: Release verification
@@ -109,5 +111,5 @@ jobs:
         run: |
           rm -rf "$TEST_EMAIL_DIR"
           bun run db:migrate
-      - name: Browser authentication tests
+      - name: Browser end-to-end tests
         run: bun run test:e2e

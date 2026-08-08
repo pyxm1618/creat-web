@@ -22,8 +22,9 @@
     "db:verify": "bun scripts/verify-migrations.ts",
     "verify:architecture": "eslint src tests scripts",
     "verify:secrets": "bun scripts/verify-secrets.ts",
+    "verify:seo": "bun scripts/verify-seo.ts",
     "verify:release": "bun scripts/verify-release.ts",
-    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run db:verify && bun run test:build-matrix && bun run verify:architecture && bun run verify:secrets && bun run verify:release"
+    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run db:verify && bun run test:build-matrix && bun run verify:architecture && bun run verify:secrets && bun run verify:seo && bun run verify:release"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.6.25",
@@ -38,6 +39,7 @@
     "zod": "4.1.13"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.57.0",
     "@types/node": "24.10.1",
     "@types/react": "19.2.7",
