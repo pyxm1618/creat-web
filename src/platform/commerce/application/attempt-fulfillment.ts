@@ -82,9 +82,7 @@ export async function attemptFulfillmentForSource(input: {
         leaseExpiresAt: null,
         lastErrorCode: null,
       })
-      .where(
-        and(eq(fulfillmentJobs.id, job.id), eq(fulfillmentJobs.leaseOwner, input.owner)),
-      );
+      .where(and(eq(fulfillmentJobs.id, job.id), eq(fulfillmentJobs.leaseOwner, input.owner)));
     return "completed";
   } catch (error) {
     const attempts = job.attempts + 1;
@@ -98,9 +96,7 @@ export async function attemptFulfillmentForSource(input: {
         leaseExpiresAt: null,
         lastErrorCode: errorCode(error),
       })
-      .where(
-        and(eq(fulfillmentJobs.id, job.id), eq(fulfillmentJobs.leaseOwner, input.owner)),
-      );
+      .where(and(eq(fulfillmentJobs.id, job.id), eq(fulfillmentJobs.leaseOwner, input.owner)));
     return "deferred";
   }
 }
