@@ -1,15 +1,15 @@
-name: Bootstrap Commerce 0007
+name: Bootstrap Commerce Migration
 
 on:
-  push:
-    branches: [feat/commerce-one-time]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   generate:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.ref == 'feat/commerce-one-time' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     env:
       APP_ENV: test
@@ -17,6 +17,8 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_generate
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: feat/commerce-one-time
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -31,6 +33,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No generated changes"
           else
-            git commit -m "chore: generate corrective commerce migration"
+            git commit -m "chore: regenerate complete commerce migration"
             git push origin HEAD:feat/commerce-one-time
           fi
