@@ -52,7 +52,9 @@ if (siteConfig.canonicalOrigin.includes("localhost")) {
 
 const isReviewed = (status: string): boolean => status === "reviewed";
 if (process.env.APP_ENV === "production") {
-  if (!isReviewed(seoConfig.releaseStatus)) throw new Error("production SEO config is not reviewed");
+  if (!isReviewed(seoConfig.releaseStatus)) {
+    throw new Error("production SEO config is not reviewed");
+  }
   if (/example\.com/i.test(siteConfig.canonicalOrigin)) {
     throw new Error("production site origin is still a placeholder");
   }
