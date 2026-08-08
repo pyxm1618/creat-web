@@ -16,8 +16,7 @@ export function createProductCatalog(definitions: readonly ProductDefinition[]):
     if (!definition.fulfillmentKey.trim() || !definition.refundPolicyKey.trim()) {
       throw new Error("product policy keys are required");
     }
-    if (definition.commercialModel === "one_time") {
-      // Parse every enabled environment mapping now so invalid price/currency fails at boot.
+    if (definition.enabled && definition.commercialModel === "one_time") {
       for (const environment of ["test", "production"] as const) {
         if (definition.providerProductIdByEnvironment[environment]) {
           productSnapshot(definition, environment);
