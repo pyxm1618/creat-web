@@ -17,6 +17,7 @@ const legalFeatures = {
   waffo: featuresConfig.commerce.enabled,
   ga4: featuresConfig.analytics.ga4,
   clarity: featuresConfig.analytics.clarity,
+  oneTime: featuresConfig.commerce.oneTime,
   subscriptions: featuresConfig.commerce.subscriptions,
   credits: featuresConfig.commerce.credits,
 } as const;
@@ -117,6 +118,12 @@ const vercelConfig = JSON.parse(await readFile("vercel.json", "utf8")) as {
 };
 if (!vercelConfig.crons?.some((cron) => cron.path === "/api/cron/account-deletions")) {
   throw new Error("durable account deletion cron is missing from vercel.json");
+}
+if (
+  featuresConfig.commerce.enabled &&
+  !vercelConfig.crons?.some((cron) => cron.path === "/api/cron/commerce")
+) {
+  throw new Error("durable commerce recovery cron is missing from vercel.json");
 }
 
 console.log(
