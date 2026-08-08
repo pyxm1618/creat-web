@@ -1,5 +1,6 @@
 import "server-only";
 
+import { creditFulfillmentDefinitions } from "@/config/credits.config";
 import { featuresConfig } from "@/config/features.config";
 import { createConfiguredOrderFulfillment } from "@/config/fulfillment.config";
 import { productCatalog } from "@/config/products.config";
@@ -40,11 +41,19 @@ export async function getCommerceRuntime() {
     },
   });
 
+  let creditHandlers = {};
+  if (featuresConfig.commerce.credits) {
+    const { createCreditFulfillmentHandlers } = await import(
+      "@/platform/credits/application/commerce-handlers"
+    );
+    creditHandlers = createCreditFulfillmentHandlers(db, creditFulfillmentDefinitions);
+  }
+
   return {
     database: db,
     provider,
     catalog: productCatalog,
-    fulfillment: createConfiguredOrderFulfillment(),
+    fulfillment: createConfiguredOrderFulfillment(creditHandlers),
     environment: commerceEnvironment(),
     retention: {
       encryptionKeyBase64: env.commerceRetentionKey,
