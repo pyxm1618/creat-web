@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 import { InvalidWebhookSignatureError } from "@/platform/commerce/application/errors";
 import { createWaffoPaymentProvider } from "@/platform/commerce/providers/waffo/adapter";
 
+const merchantId = "MER_0123456789ABCDEFGHIJKL";
+const productId = "PROD_0123456789ABCDEFGHIJKL";
+const storeId = "STO_0123456789ABCDEFGHIJKL";
+const orderId = "ORD_0123456789ABCDEFGHIJKL";
+const paymentId = "PAY_0123456789ABCDEFGHIJKL";
+const webhookId = "WHK_0123456789ABCDEFGHIJKL";
+
 function keys() {
   const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
   return {
@@ -23,14 +30,14 @@ describe("Waffo Pancake 0.16 contract", () => {
     const fakeFetch: typeof fetch = async (_input, init) => {
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Response.json({
-        sessionId: "CHK_test_session",
+        sessionId: "CHK_0123456789ABCDEFGHIJKL",
         checkoutUrl: "https://checkout.example.test/#token=test",
         expiresAt: "2026-08-08T12:00:00.000Z",
         token: "test-token",
       });
     };
     const provider = createWaffoPaymentProvider({
-      merchantId: "MER_testmerchant",
+      merchantId,
       privateKey: keyPair.privateKey,
       webhookPublicKey: keyPair.publicKey,
       fetch: fakeFetch,
@@ -39,7 +46,7 @@ describe("Waffo Pancake 0.16 contract", () => {
 
     const result = await provider.createOneTimeCheckout({
       localOrderId: "01989ef5-c3f7-7000-8000-000000000001",
-      providerProductId: "PROD_test",
+      providerProductId: productId,
       expectedDisplayAmount: "29.00",
       currency: "USD",
       buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
@@ -49,11 +56,11 @@ describe("Waffo Pancake 0.16 contract", () => {
     });
 
     expect(result).toEqual({
-      externalCheckoutSessionId: "CHK_test_session",
+      externalCheckoutSessionId: "CHK_0123456789ABCDEFGHIJKL",
       checkoutUrl: "https://checkout.example.test/#token=test",
     });
     expect(body).toMatchObject({
-      productId: "PROD_test",
+      productId,
       currency: "USD",
       buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
       buyerEmail: "buyer@example.com",
@@ -65,21 +72,21 @@ describe("Waffo Pancake 0.16 contract", () => {
   it("verifies an exact raw signed order.completed event and normalizes decimal money", async () => {
     const keyPair = keys();
     const provider = createWaffoPaymentProvider({
-      merchantId: "MER_testmerchant",
+      merchantId,
       privateKey: keyPair.privateKey,
-      storeId: "STO_test",
+      storeId,
       webhookPublicKey: { test: keyPair.publicKey },
     });
     const raw = JSON.stringify({
-      id: "WHK_delivery_1",
+      id: webhookId,
       timestamp: "2026-08-08T04:00:00.000Z",
       eventType: "order.completed",
-      eventId: "PAY_business_1",
-      storeId: "STO_test",
+      eventId: paymentId,
+      storeId,
       storeName: "Test Store",
       mode: "test",
       data: {
-        orderId: "ORD_provider_1",
+        orderId,
         orderStatus: "completed",
         buyerEmail: "buyer@example.com",
         merchantProvidedBuyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
@@ -88,7 +95,7 @@ describe("Waffo Pancake 0.16 contract", () => {
         amount: "29.00",
         taxAmount: "0.00",
         productName: "Test Product",
-        paymentId: "PAY_provider_1",
+        paymentId,
         paymentStatus: "succeeded",
       },
     });
@@ -100,20 +107,20 @@ describe("Waffo Pancake 0.16 contract", () => {
     });
     expect(event).toMatchObject({
       type: "one_time_payment_succeeded",
-      eventId: "WHK_delivery_1",
+      eventId: webhookId,
       environment: "test",
-      externalOrderId: "ORD_provider_1",
+      externalOrderId: orderId,
       merchantOrderReference: "01989ef5-c3f7-7000-8000-000000000001",
-      externalPaymentId: "PAY_provider_1",
+      externalPaymentId: paymentId,
       amount: { currency: "USD", minor: 2900n },
-      storeId: "STO_test",
+      storeId,
     });
   });
 
   it("rejects signature mismatch before mapping payload fields", async () => {
     const keyPair = keys();
     const provider = createWaffoPaymentProvider({
-      merchantId: "MER_testmerchant",
+      merchantId,
       privateKey: keyPair.privateKey,
       webhookPublicKey: keyPair.publicKey,
     });
