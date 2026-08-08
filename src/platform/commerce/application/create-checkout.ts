@@ -96,10 +96,7 @@ export async function createCheckout(
           eq(orders.id, existing.id),
           or(
             eq(orders.checkoutState, "failed"),
-            and(
-              eq(orders.checkoutState, "creating"),
-              lt(orders.checkoutLeaseExpiresAt, now),
-            ),
+            and(eq(orders.checkoutState, "creating"), lt(orders.checkoutLeaseExpiresAt, now)),
           ),
         ),
       )

@@ -136,7 +136,10 @@ function resolveEmailTransport(
 
 function validateRetentionKey(value: string): string {
   const decoded = Buffer.from(value, "base64");
-  if (decoded.byteLength !== 32 || decoded.toString("base64").replace(/=+$/, "") !== value.replace(/=+$/, "")) {
+  if (
+    decoded.byteLength !== 32 ||
+    decoded.toString("base64").replace(/=+$/, "") !== value.replace(/=+$/, "")
+  ) {
     throw new Error("COMMERCE_RETENTION_KEY must be base64 for exactly 32 bytes");
   }
   return value;

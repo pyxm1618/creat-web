@@ -32,8 +32,8 @@ export default async function CheckoutReturnPage({
               Current server-recorded status: <strong>{order.status}</strong>.
             </p>
             <p>
-              Browser return parameters are advisory only. A payment becomes successful only after a verified
-              provider event or reconciliation updates the server ledger.
+              Browser return parameters are advisory only. A payment becomes successful only after a
+              verified provider event or reconciliation updates the server ledger.
             </p>
           </>
         ) : (

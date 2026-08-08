@@ -33,8 +33,5 @@ export async function GET(request: Request): Promise<Response> {
   });
   const purgedPayloads = await purgeExpiredWebhookPayloads(commerce.database);
 
-  return Response.json(
-    { ...worker, purgedPayloads },
-    { headers: { "cache-control": "no-store" } },
-  );
+  return Response.json({ ...worker, purgedPayloads }, { headers: { "cache-control": "no-store" } });
 }

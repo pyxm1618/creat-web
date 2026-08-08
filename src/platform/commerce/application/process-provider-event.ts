@@ -34,10 +34,7 @@ async function lockOrderForProviderEvent(
   event: Extract<
     NormalizedProviderEvent,
     {
-      type:
-        | "one_time_payment_succeeded"
-        | "one_time_payment_failed"
-        | "one_time_payment_canceled";
+      type: "one_time_payment_succeeded" | "one_time_payment_failed" | "one_time_payment_canceled";
     }
   >,
 ) {

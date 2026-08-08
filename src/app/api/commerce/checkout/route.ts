@@ -13,7 +13,8 @@ const bodySchema = z.object({ productKey: z.string().trim().min(1).max(120) });
 function conflict(error: unknown): boolean {
   return (
     error instanceof Error &&
-    (error.message === "checkout initialization in progress" || error.message === "checkout already created")
+    (error.message === "checkout initialization in progress" ||
+      error.message === "checkout already created")
   );
 }
 

@@ -16,7 +16,8 @@ const catalog = createProductCatalog(productDefinitions);
 const enabledProducts = catalog.definitions.filter((product) => product.enabled);
 
 if (featuresConfig.commerce.enabled) {
-  if (enabledProducts.length === 0) throw new Error("enabled commerce requires at least one enabled product");
+  if (enabledProducts.length === 0)
+    throw new Error("enabled commerce requires at least one enabled product");
 
   for (const product of enabledProducts) {
     catalog.getEnabled(product.key, "production");

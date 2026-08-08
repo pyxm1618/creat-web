@@ -119,9 +119,9 @@ it("reuses the local order after provider failure without creating a duplicate r
     appOrigin: "https://app.example.com",
   };
 
-  await expect(createCheckout(input, { database: database.db, catalog, provider: fake })).rejects.toThrow(
-    "provider unavailable",
-  );
+  await expect(
+    createCheckout(input, { database: database.db, catalog, provider: fake }),
+  ).rejects.toThrow("provider unavailable");
   const retried = await createCheckout(input, { database: database.db, catalog, provider: fake });
   expect(retried.reused).toBe(true);
   expect(calls).toBe(2);
