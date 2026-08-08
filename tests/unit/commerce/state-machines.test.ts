@@ -10,7 +10,9 @@ it("allows idempotent payment success but rejects paid-to-canceled regression", 
 });
 
 it("projects refunds only from successful payments", () => {
-  expect(projectPayment({ status: "succeeded", refundStatus: "none" }, "refund_full_succeeded")).toEqual({
+  expect(
+    projectPayment({ status: "succeeded", refundStatus: "none" }, "refund_full_succeeded"),
+  ).toEqual({
     status: "succeeded",
     refundStatus: "refunded",
   });
