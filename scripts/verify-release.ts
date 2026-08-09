@@ -16,6 +16,8 @@ if (modeArgument && !["test", "staging", "production"].includes(modeArgument)) {
 }
 const releaseMode = modeArgument ?? process.env.APP_ENV ?? "test";
 const productionRelease = releaseMode === "production";
+const seoReleaseStatus: string = seoConfig.releaseStatus;
+const legalReleaseStatus: string = legalConfig.releaseStatus;
 
 validateProductConfig({ site: siteConfig, features: featuresConfig });
 if (!/^\d+\.\d+\.\d+$/.test(TEMPLATE_VERSION)) {
@@ -62,9 +64,8 @@ if (siteConfig.canonicalOrigin.includes("localhost")) {
   throw new Error("release site origin must not use localhost");
 }
 if (productionRelease) {
-  if (seoConfig.releaseStatus !== "reviewed")
-    throw new Error("production SEO config is not reviewed");
-  if (legalConfig.releaseStatus !== "reviewed")
+  if (seoReleaseStatus !== "reviewed") throw new Error("production SEO config is not reviewed");
+  if (legalReleaseStatus !== "reviewed")
     throw new Error("production legal config is not reviewed");
   if (/example\.(?:com|org|net)$/i.test(new URL(siteConfig.canonicalOrigin).hostname)) {
     throw new Error("production site origin is still a placeholder");
@@ -119,7 +120,7 @@ try {
 } catch {
   rejectedDraftLegalRelease = true;
 }
-if (legalConfig.releaseStatus === "draft" && !rejectedDraftLegalRelease) {
+if (legalReleaseStatus === "draft" && !rejectedDraftLegalRelease) {
   throw new Error("production release gate must reject draft legal configuration");
 }
 
@@ -160,8 +161,8 @@ console.log(
     authEnabled: featuresConfig.auth.enabled,
     magicLinkEnabled: featuresConfig.auth.magicLink,
     commerceEnabled: featuresConfig.commerce.enabled,
-    seoStatus: seoConfig.releaseStatus,
-    legalStatus: legalConfig.releaseStatus,
+    seoStatus: seoReleaseStatus,
+    legalStatus: legalReleaseStatus,
     productionTestModeRejected: true,
     productionDraftLegalRejected: true,
   }),
