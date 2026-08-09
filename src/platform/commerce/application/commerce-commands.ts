@@ -109,9 +109,7 @@ export async function enqueueRefundRequest(
       .select({ payment: payments, subjectId: orders.subjectId })
       .from(payments)
       .innerJoin(orders, eq(orders.id, payments.orderId))
-      .where(
-        and(eq(payments.id, input.paymentId), eq(payments.environment, input.environment)),
-      )
+      .where(and(eq(payments.id, input.paymentId), eq(payments.environment, input.environment)))
       .limit(1)
       .for("update", { of: payments });
     const row = rows[0];

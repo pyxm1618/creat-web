@@ -10,7 +10,11 @@ export default function AnalyticsConsentTestPage() {
   return (
     <main>
       <h1>Analytics consent test harness</h1>
-      <AnalyticsClient ga4MeasurementId="G-TESTCONSENT" clarityProjectId="test-consent" consentRequired />
+      <AnalyticsClient
+        ga4MeasurementId="G-TESTCONSENT"
+        clarityProjectId="test-consent"
+        consentRequired
+      />
     </main>
   );
 }

@@ -29,11 +29,7 @@ function parseOrderStatus(value: string): OrderStatus {
   throw new Error(`invalid persisted order status: ${value}`);
 }
 
-async function matchingRefunds(
-  tx: CommerceTransaction,
-  paymentId: string,
-  event: RefundEvent,
-) {
+async function matchingRefunds(tx: CommerceTransaction, paymentId: string, event: RefundEvent) {
   if (event.externalRefundReference) {
     return tx
       .select()
@@ -89,17 +85,35 @@ export async function processRefundEvent(
 
   const candidates = await matchingRefunds(tx, payment.id, event);
   if (event.type === "refund_failed") {
-    await tx.update(payments).set({ refundStatus: "failed", updatedAt: new Date() }).where(eq(payments.id, payment.id));
+    await tx
+      .update(payments)
+      .set({ refundStatus: "failed", updatedAt: new Date() })
+      .where(eq(payments.id, payment.id));
     if (candidates.length === 1) {
       await tx
         .update(refunds)
-        .set({ status: "failed", reversalStatus: "not_required", providerUpdatedAt: event.occurredAt, updatedAt: new Date() })
+        .set({
+          status: "failed",
+          reversalStatus: "not_required",
+          providerUpdatedAt: event.occurredAt,
+          updatedAt: new Date(),
+        })
         .where(eq(refunds.id, candidates[0]!.id));
     } else if (candidates.length > 1) {
       await tx
         .update(refunds)
-        .set({ status: "reconciliation_required", reversalStatus: "reconciliation_required", operatorReviewReason: "ambiguous failed refund webhook", updatedAt: new Date() })
-        .where(inArray(refunds.id, candidates.map((candidate) => candidate.id)));
+        .set({
+          status: "reconciliation_required",
+          reversalStatus: "reconciliation_required",
+          operatorReviewReason: "ambiguous failed refund webhook",
+          updatedAt: new Date(),
+        })
+        .where(
+          inArray(
+            refunds.id,
+            candidates.map((candidate) => candidate.id),
+          ),
+        );
     }
     return;
   }
@@ -140,8 +154,18 @@ export async function processRefundEvent(
     if (candidates.length > 1) {
       await tx
         .update(refunds)
-        .set({ status: "reconciliation_required", reversalStatus: "reconciliation_required", operatorReviewReason: "ambiguous successful refund webhook", updatedAt: new Date() })
-        .where(inArray(refunds.id, candidates.map((candidate) => candidate.id)));
+        .set({
+          status: "reconciliation_required",
+          reversalStatus: "reconciliation_required",
+          operatorReviewReason: "ambiguous successful refund webhook",
+          updatedAt: new Date(),
+        })
+        .where(
+          inArray(
+            refunds.id,
+            candidates.map((candidate) => candidate.id),
+          ),
+        );
     }
     await tx.insert(commerceReconciliationRuns).values({
       targetType: "payment_refund",

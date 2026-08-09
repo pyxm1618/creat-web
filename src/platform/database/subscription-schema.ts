@@ -99,7 +99,9 @@ export const refunds = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     currency: text("currency").notNull(),
     requestedMinor: bigint("requested_minor", { mode: "bigint" }).notNull(),
-    succeededMinor: bigint("succeeded_minor", { mode: "bigint" }).default(sql`0`).notNull(),
+    succeededMinor: bigint("succeeded_minor", { mode: "bigint" })
+      .default(sql`0`)
+      .notNull(),
     reason: text("reason").notNull(),
     status: text("status").default("pending").notNull(),
     reversalStatus: text("reversal_status").default("pending").notNull(),

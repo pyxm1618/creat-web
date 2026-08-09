@@ -136,10 +136,10 @@ export const homeConfig = {
       body: (
         <>
           <p>
-            The starter centralizes route intent, canonical policy, title and description generation,
-            one primary H1, structured data, internal-link relationships, locale alternates and
-            production review gates. Those controls make obvious launch mistakes mechanically
-            detectable instead of relying on a final manual sweep.
+            The starter centralizes route intent, canonical policy, title and description
+            generation, one primary H1, structured data, internal-link relationships, locale
+            alternates and production review gates. Those controls make obvious launch mistakes
+            mechanically detectable instead of relying on a final manual sweep.
           </p>
           <p>
             Product positioning and copy remain downstream responsibilities. The starter provides a

@@ -65,9 +65,7 @@ export type LandingSection = SectionControls &
       }
   );
 
-function ComparisonSection(
-  props: Readonly<Extract<LandingSection, { type: "comparison" }>>,
-) {
+function ComparisonSection(props: Readonly<Extract<LandingSection, { type: "comparison" }>>) {
   return (
     <section className="landing-section" aria-labelledby="comparison-heading">
       <div className="section-heading">

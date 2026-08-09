@@ -16,7 +16,13 @@ for (const required of [
 }
 
 const csp = headers.get("content-security-policy") ?? "";
-for (const directive of ["default-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'"]) {
+for (const directive of [
+  "default-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+]) {
   if (!csp.includes(directive)) throw new Error(`CSP missing directive: ${directive}`);
 }
 if (/script-src[^;]*\s\*/.test(csp) || /connect-src[^;]*\s\*/.test(csp)) {
@@ -39,7 +45,9 @@ const sensitivePatterns = [
 for (const source of sensitivePatterns) {
   const rule = headerRules.find((candidate) => candidate.source === source);
   if (!rule) throw new Error(`missing sensitive-route headers: ${source}`);
-  const ruleHeaders = new Map(rule.headers.map((header) => [header.key.toLowerCase(), header.value]));
+  const ruleHeaders = new Map(
+    rule.headers.map((header) => [header.key.toLowerCase(), header.value]),
+  );
   if (!ruleHeaders.get("cache-control")?.includes("no-store")) {
     throw new Error(`sensitive route must be no-store: ${source}`);
   }

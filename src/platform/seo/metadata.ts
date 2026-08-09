@@ -35,9 +35,7 @@ function indexableMetadata(
   return {
     title: copy.title,
     description: copy.description,
-    alternates: policy.emitCanonical
-      ? { canonical: localizedCanonical, languages }
-      : undefined,
+    alternates: policy.emitCanonical ? { canonical: localizedCanonical, languages } : undefined,
     robots: {
       index: policy.index,
       follow: policy.follow,
@@ -80,13 +78,7 @@ export function metadataForRoute(
     };
   }
 
-  return indexableMetadata(
-    registry,
-    definition,
-    mode,
-    registry.site.defaultLocale,
-    definition,
-  );
+  return indexableMetadata(registry, definition, mode, registry.site.defaultLocale, definition);
 }
 
 export function metadataForLocalizedRoute(

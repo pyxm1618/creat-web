@@ -1,10 +1,17 @@
 import { expect, test } from "@playwright/test";
 
-const analyticsHosts = ["www.googletagmanager.com", "www.google-analytics.com", "region1.google-analytics.com", "www.clarity.ms"];
+const analyticsHosts = [
+  "www.googletagmanager.com",
+  "www.google-analytics.com",
+  "region1.google-analytics.com",
+  "www.clarity.ms",
+];
 
 function isAnalytics(url: string): boolean {
   try {
-    return analyticsHosts.some((host) => new URL(url).hostname === host || new URL(url).hostname.endsWith(`.${host}`));
+    return analyticsHosts.some(
+      (host) => new URL(url).hostname === host || new URL(url).hostname.endsWith(`.${host}`),
+    );
   } catch {
     return false;
   }

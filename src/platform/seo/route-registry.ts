@@ -93,7 +93,13 @@ function assertIntentAlignment(route: IndexablePage): void {
 }
 
 function assertNoPlaceholders(route: IndexablePage): void {
-  const fields = [route.searchIntent, route.primaryKeyword, route.title, route.description, route.h1];
+  const fields = [
+    route.searchIntent,
+    route.primaryKeyword,
+    route.title,
+    route.description,
+    route.h1,
+  ];
   if (fields.some((field) => PLACEHOLDER_PATTERN.test(field))) {
     throw new Error(`placeholder SEO content: ${route.route}`);
   }

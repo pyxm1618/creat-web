@@ -57,7 +57,9 @@ for (const route of routes) {
     await expect(page.locator("h1")).toHaveCount(1);
     await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
 
-    const structuredData = await page.locator('script[type="application/ld+json"]').allTextContents();
+    const structuredData = await page
+      .locator('script[type="application/ld+json"]')
+      .allTextContents();
     expect(structuredData.length).toBeGreaterThan(0);
     for (const value of structuredData) expect(() => JSON.parse(value)).not.toThrow();
 
@@ -71,9 +73,12 @@ for (const route of routes) {
     );
     expect(imageProblems).toEqual([]);
 
-    const internalLinks = await page.locator('a[href^="/"]').evaluateAll((links) =>
-      [...new Set(links.map((link) => link.getAttribute("href")).filter(Boolean))] as string[],
-    );
+    const internalLinks = await page
+      .locator('a[href^="/"]')
+      .evaluateAll(
+        (links) =>
+          [...new Set(links.map((link) => link.getAttribute("href")).filter(Boolean))] as string[],
+      );
     for (const href of internalLinks) {
       if (href.startsWith("/api/")) continue;
       const linked = await request.get(href, { maxRedirects: 0 });
@@ -82,8 +87,8 @@ for (const route of routes) {
 
     const accessibility = await new AxeBuilder({ page }).analyze();
     expect(
-      accessibility.violations.filter((violation) =>
-        violation.impact === "critical" || violation.impact === "serious",
+      accessibility.violations.filter(
+        (violation) => violation.impact === "critical" || violation.impact === "serious",
       ),
     ).toEqual([]);
 

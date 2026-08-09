@@ -27,7 +27,14 @@ export type CreatedCheckout = {
 
 export type ProviderSubscriptionSnapshot = {
   readonly externalOrderId: string;
-  readonly status: "pending" | "active" | "past_due" | "canceling" | "canceled" | "expired" | "closed";
+  readonly status:
+    | "pending"
+    | "active"
+    | "past_due"
+    | "canceling"
+    | "canceled"
+    | "expired"
+    | "closed";
 };
 
 export type RefundRequest = {

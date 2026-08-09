@@ -43,7 +43,8 @@ export type SubscriptionTransition =
   | { readonly type: "closed"; readonly occurredAt: Date };
 
 function addUtcDays(value: Date, days: number): Date {
-  if (!Number.isInteger(days) || days < 0) throw new Error("grace days must be a nonnegative integer");
+  if (!Number.isInteger(days) || days < 0)
+    throw new Error("grace days must be a nonnegative integer");
   return new Date(value.getTime() + days * 86_400_000);
 }
 
@@ -78,7 +79,8 @@ export function applySubscriptionTransition(
     case "canceling":
       return { ...current, status: "canceling", cancelAtPeriodEnd: true };
     case "uncanceled":
-      if (current.status !== "canceling") throw new Error("only canceling subscriptions can be resumed");
+      if (current.status !== "canceling")
+        throw new Error("only canceling subscriptions can be resumed");
       return { ...current, status: "active", cancelAtPeriodEnd: false };
     case "canceled":
       return { ...current, status: "canceled", cancelAtPeriodEnd: false };

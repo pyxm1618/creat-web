@@ -2,7 +2,12 @@ import { and, eq } from "drizzle-orm";
 
 import { subscriptionsConfig } from "@/config/subscriptions.config";
 import type { DatabaseClient } from "@/platform/database/client";
-import { commerceProducts, fulfillmentJobs, orders, payments } from "@/platform/database/commerce-schema";
+import {
+  commerceProducts,
+  fulfillmentJobs,
+  orders,
+  payments,
+} from "@/platform/database/commerce-schema";
 import { subscriptionPeriods, subscriptions } from "@/platform/database/subscription-schema";
 
 import type { NormalizedProviderEvent } from "../domain/events";
@@ -117,10 +122,7 @@ async function lockOrder(tx: CommerceTransaction, event: SubscriptionEvent) {
       .select()
       .from(orders)
       .where(
-        and(
-          eq(orders.id, event.merchantOrderReference),
-          eq(orders.environment, event.environment),
-        ),
+        and(eq(orders.id, event.merchantOrderReference), eq(orders.environment, event.environment)),
       )
       .limit(1)
       .for("update");

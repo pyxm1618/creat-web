@@ -81,7 +81,9 @@ function assertDeploymentEnvironment(parsed: z.infer<typeof baseSchema>): void {
     production: "production",
   };
   if (parsed.APP_ENV !== expected[parsed.VERCEL_ENV]) {
-    throw new Error(`VERCEL_ENV=${parsed.VERCEL_ENV} requires APP_ENV=${expected[parsed.VERCEL_ENV]}`);
+    throw new Error(
+      `VERCEL_ENV=${parsed.VERCEL_ENV} requires APP_ENV=${expected[parsed.VERCEL_ENV]}`,
+    );
   }
   if (parsed.APP_ENV === "test") throw new Error("APP_ENV=test is forbidden on Vercel deployments");
 }
@@ -179,12 +181,16 @@ export function loadRuntimeEnv(
     googleClientSecret = requireSecret(parsed.GOOGLE_CLIENT_SECRET, "Google credentials");
   }
 
-  const emailTransport = resolveEmailTransport(parsed, features.auth.magicLink || features.email.enabled);
+  const emailTransport = resolveEmailTransport(
+    parsed,
+    features.auth.magicLink || features.email.enabled,
+  );
   if (emailTransport === "resend") {
     resendApiKey = requireSecret(parsed.RESEND_API_KEY, "Resend credentials");
     emailFrom = parsed.EMAIL_FROM;
     supportEmail = parsed.SUPPORT_EMAIL;
-    if (!emailFrom || !supportEmail) throw new Error("Email sender and support addresses are required");
+    if (!emailFrom || !supportEmail)
+      throw new Error("Email sender and support addresses are required");
   } else if (emailTransport === "test") {
     emailFrom = parsed.EMAIL_FROM ?? "test@localhost.invalid";
     supportEmail = parsed.SUPPORT_EMAIL ?? "support@localhost.invalid";

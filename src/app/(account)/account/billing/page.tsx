@@ -117,7 +117,8 @@ export default async function BillingPage() {
                 return (
                   <li key={payment.id}>
                     <strong>{payment.status}</strong> ·{" "}
-                    {formatDisplayAmount({ currency, minor: payment.amountMinor })} {payment.currency}
+                    {formatDisplayAmount({ currency, minor: payment.amountMinor })}{" "}
+                    {payment.currency}
                     {payment.refundedMinor > 0n ? (
                       <>
                         {" "}
@@ -144,9 +145,7 @@ export default async function BillingPage() {
                             Refund {refund.status} · requested{" "}
                             {formatDisplayAmount({ currency, minor: refund.requestedMinor })} ·
                             entitlement {refund.reversalStatus}
-                            {refund.operatorReviewReason
-                              ? ` · ${refund.operatorReviewReason}`
-                              : ""}
+                            {refund.operatorReviewReason ? ` · ${refund.operatorReviewReason}` : ""}
                           </li>
                         ))}
                     </ul>

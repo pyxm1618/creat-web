@@ -68,7 +68,10 @@ export function validateProductConfig(input: ProductConfig): ProductConfig {
   if (parsed.features.commerce.credits && !parsed.features.commerce.enabled) {
     throw new Error("credits require commerce");
   }
-  if ((parsed.features.analytics.ga4 || parsed.features.analytics.clarity) && !parsed.features.analytics.enabled) {
+  if (
+    (parsed.features.analytics.ga4 || parsed.features.analytics.clarity) &&
+    !parsed.features.analytics.enabled
+  ) {
     throw new Error("analytics providers require analytics");
   }
 

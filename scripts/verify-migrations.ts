@@ -63,7 +63,13 @@ async function createMainBaselineFolder(): Promise<string> {
   const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
     version: string;
     dialect: string;
-    entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    entries: Array<{
+      idx: number;
+      version: string;
+      when: number;
+      tag: string;
+      breakpoints: boolean;
+    }>;
   };
   const baselineIndex = journal.entries.findIndex((entry) => entry.tag === MAIN_BASELINE_TAG);
   if (baselineIndex < 0) throw new Error(`main migration baseline not found: ${MAIN_BASELINE_TAG}`);

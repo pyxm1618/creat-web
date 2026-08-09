@@ -28,9 +28,7 @@ test("sensitive responses are no-store and noindex even before authentication", 
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.headers()["cache-control"], path).toContain("no-store");
     expect(response.headers()["x-robots-tag"], path).toBe("noindex, nofollow");
-    expect(response.headers()["content-security-policy"], path).toContain(
-      "frame-ancestors 'none'",
-    );
+    expect(response.headers()["content-security-policy"], path).toContain("frame-ancestors 'none'");
   }
 });
 

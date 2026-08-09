@@ -26,7 +26,8 @@ function internalLinks(sections: readonly LandingSection[]) {
         if (section.secondaryCta) links.push(section.secondaryCta);
         break;
       case "use-cases":
-        for (const item of section.items) if (item.href) links.push({ label: item.title, href: item.href });
+        for (const item of section.items)
+          if (item.href) links.push({ label: item.title, href: item.href });
         break;
       case "related-resources":
         links.push(...section.links.map(({ label, href }) => ({ label, href })));
@@ -63,12 +64,14 @@ for (const route of indexable) {
   const sections = contentByRoute.get(route.route);
   if (!sections) throw new Error(`missing landing content for indexable route: ${route.route}`);
   const heroes = sections.filter((section) => section.enabled !== false && section.type === "hero");
-  if (heroes.length !== 1) throw new Error(`indexable route must render exactly one primary hero/H1: ${route.route}`);
+  if (heroes.length !== 1)
+    throw new Error(`indexable route must render exactly one primary hero/H1: ${route.route}`);
   const hero = heroes[0]! as Extract<LandingSection, { type: "hero" }>;
   if (hero.h1.trim() !== route.h1.trim()) throw new Error(`route/H1 content drift: ${route.route}`);
 
   for (const link of internalLinks(sections)) {
-    if (GENERIC_ANCHOR.test(link.label.trim())) throw new Error(`generic internal anchor: ${route.route} -> ${link.href}`);
+    if (GENERIC_ANCHOR.test(link.label.trim()))
+      throw new Error(`generic internal anchor: ${route.route} -> ${link.href}`);
     if (!link.href.startsWith("/") || link.href.startsWith("//")) continue;
     const target = link.href.split(/[?#]/)[0] || "/";
     let targetRoute;
@@ -96,19 +99,22 @@ for (const entry of sitemap) {
 
 const home = routeRegistry.get("/");
 if (home.class !== "public_indexable") throw new Error("homepage must be public indexable");
-if (home.title.length < 20 || home.title.length > 65) throw new Error("homepage title fails strict TDH gate");
+if (home.title.length < 20 || home.title.length > 65)
+  throw new Error("homepage title fails strict TDH gate");
 if (home.description.length < 100 || home.description.length > 180) {
   throw new Error("homepage description fails strict TDH gate");
 }
 if (home.h1.length < 20) throw new Error("homepage H1 is too weak for strict TDH gate");
 
 if (process.env.APP_ENV === "production") {
-  if (seoConfig.releaseStatus !== "reviewed") throw new Error("production SEO config must be reviewed");
+  if (seoConfig.releaseStatus !== "reviewed")
+    throw new Error("production SEO config must be reviewed");
   if (/example\.com/i.test(seoConfig.canonicalOrigin)) {
     throw new Error("production SEO canonical origin is a placeholder");
   }
   for (const route of indexable) {
-    if (route.reviewStatus !== "reviewed") throw new Error(`production SEO route must be reviewed: ${route.route}`);
+    if (route.reviewStatus !== "reviewed")
+      throw new Error(`production SEO route must be reviewed: ${route.route}`);
   }
 }
 

@@ -35,7 +35,10 @@ for (const locale of siteConfig.supportedLocales) {
     }
 
     const alternates = buildLanguageAlternates(siteConfig, siteConfig.canonicalOrigin, route.route);
-    if (alternates["x-default"] !== `${siteConfig.canonicalOrigin}${localePath(siteConfig, siteConfig.defaultLocale, route.route)}`) {
+    if (
+      alternates["x-default"] !==
+      `${siteConfig.canonicalOrigin}${localePath(siteConfig, siteConfig.defaultLocale, route.route)}`
+    ) {
       throw new Error(`invalid x-default: ${route.route}`);
     }
     for (const supported of siteConfig.supportedLocales) {

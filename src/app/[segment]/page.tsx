@@ -11,11 +11,7 @@ import { localizeLandingSections } from "@/platform/i18n/landing-sections";
 import { localePath } from "@/platform/i18n/routing";
 import { currentSeoEnvironment } from "@/platform/seo/environment-policy";
 import { metadataForLocalizedRoute, metadataForRoute } from "@/platform/seo/metadata";
-import {
-  articleJsonLd,
-  webApplicationJsonLd,
-  websiteJsonLd,
-} from "@/platform/seo/structured-data";
+import { articleJsonLd, webApplicationJsonLd, websiteJsonLd } from "@/platform/seo/structured-data";
 
 type SegmentPageProps = {
   readonly params: Promise<{ readonly segment: string }>;
@@ -33,13 +29,7 @@ export async function generateMetadata({ params }: SegmentPageProps): Promise<Me
     const bundle = localeBundle(locale);
     const copy = bundle?.seo["/"];
     if (!bundle || !copy) notFound();
-    return metadataForLocalizedRoute(
-      routeRegistry,
-      "/",
-      locale,
-      copy,
-      currentSeoEnvironment(),
-    );
+    return metadataForLocalizedRoute(routeRegistry, "/", locale, copy, currentSeoEnvironment());
   }
 
   const route = `/${segment}`;

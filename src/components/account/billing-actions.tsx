@@ -31,7 +31,15 @@ export function SubscriptionAction({
         }
       }}
     >
-      {state === "pending" ? "Submitting…" : state === "done" ? "Queued" : state === "error" ? "Retry" : action === "cancel" ? "Cancel at period end" : "Resume subscription"}
+      {state === "pending"
+        ? "Submitting…"
+        : state === "done"
+          ? "Queued"
+          : state === "error"
+            ? "Retry"
+            : action === "cancel"
+              ? "Cancel at period end"
+              : "Resume subscription"}
     </button>
   );
 }
@@ -48,7 +56,11 @@ export function RefundAction({
     <div className="billing-action">
       <label>
         Refund amount ({currency})
-        <input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} />
+        <input
+          value={amount}
+          inputMode="decimal"
+          onChange={(event) => setAmount(event.target.value)}
+        />
       </label>
       <label>
         Reason
@@ -67,7 +79,13 @@ export function RefundAction({
           }
         }}
       >
-        {state === "pending" ? "Submitting…" : state === "done" ? "Refund queued" : state === "error" ? "Retry refund" : "Request refund"}
+        {state === "pending"
+          ? "Submitting…"
+          : state === "done"
+            ? "Refund queued"
+            : state === "error"
+              ? "Retry refund"
+              : "Request refund"}
       </button>
     </div>
   );
