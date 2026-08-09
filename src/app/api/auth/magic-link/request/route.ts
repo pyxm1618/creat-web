@@ -9,6 +9,7 @@ import { normalizeEmail } from "@/platform/auth/email-normalization";
 import { verifyTurnstileToken } from "@/platform/auth/turnstile";
 import { env } from "@/platform/config/env";
 import { db } from "@/platform/database/application-database";
+import { recordOperationalSecurityEvent } from "@/platform/observability/operational-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,10 @@ export async function POST(request: Request): Promise<Response> {
   const email = normalizeEmail(parsed.data.email);
   const clientIp = extractTrustedClientIp(request.headers, env.appEnv);
   const now = new Date();
+  await recordOperationalSecurityEvent(db, {
+    eventType: "magic_link_request",
+    outcome: "accepted",
+  }).catch(() => undefined);
 
   try {
     await limiter.consume({
