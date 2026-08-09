@@ -1,68 +1,8 @@
 import type { NextConfig } from "next";
 
-import { featuresConfig } from "./src/config/features.config";
-
 const isProduction = process.env.APP_ENV === "production";
-const isDevelopment = process.env.NODE_ENV === "development";
-const turnstileEnabled = featuresConfig.auth.enabled && featuresConfig.auth.magicLink;
-
-const analyticsScriptSources = [
-  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.ga4
-    ? ["https://www.googletagmanager.com"]
-    : []),
-  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.clarity
-    ? ["https://www.clarity.ms"]
-    : []),
-];
-const analyticsConnectSources = [
-  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.ga4
-    ? ["https://www.google-analytics.com", "https://region1.google-analytics.com"]
-    : []),
-  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.clarity
-    ? ["https://*.clarity.ms"]
-    : []),
-];
-const analyticsImageSources = [
-  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.ga4
-    ? ["https://www.google-analytics.com"]
-    : []),
-  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.clarity
-    ? ["https://*.clarity.ms"]
-    : []),
-];
-const turnstileSource = "https://challenges.cloudflare.com";
-
-const scriptSources = [
-  "'self'",
-  ...(isDevelopment ? ["'unsafe-eval'"] : []),
-  ...analyticsScriptSources,
-  ...(turnstileEnabled ? [turnstileSource] : []),
-];
-const connectSources = [
-  "'self'",
-  ...analyticsConnectSources,
-  ...(turnstileEnabled ? [turnstileSource] : []),
-];
-const frameSources = ["'self'", ...(turnstileEnabled ? [turnstileSource] : [])];
-
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  `script-src ${scriptSources.join(" ")}`,
-  "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob:${analyticsImageSources.length ? ` ${analyticsImageSources.join(" ")}` : ""}`,
-  "font-src 'self' data:",
-  `connect-src ${connectSources.join(" ")}`,
-  `frame-src ${frameSources.join(" ")}`,
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  "worker-src 'self' blob:",
-  ...(isProduction ? ["upgrade-insecure-requests"] : []),
-].join("; ");
 
 const baselineSecurityHeaders = [
-  { key: "Content-Security-Policy", value: contentSecurityPolicy },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
