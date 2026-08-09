@@ -163,3 +163,26 @@ export function createCreditRefundReversal(
     });
   };
 }
+
+export function createCreditFulfillmentHandlers(
+  database: DatabaseClient,
+  definitions: readonly CreditOrderFulfillmentDefinition[],
+): Readonly<Record<string, FulfillmentHandler>> {
+  const handlers: Record<string, FulfillmentHandler> = {};
+  for (const definition of definitions) {
+    if (!Number.isSafeInteger(definition.quantity) || definition.quantity <= 0) {
+      throw new Error("credit fulfillment quantity must be a positive safe integer");
+    }
+    if (!definition.fulfillmentKey.trim() || !definition.creditType.trim()) {
+      throw new Error("credit fulfillment key and type are required");
+    }
+    const fulfillOperation = `fulfill:${definition.fulfillmentKey}`;
+    const reverseOperation = `reverse:${definition.fulfillmentKey}`;
+    if (handlers[fulfillOperation] || handlers[reverseOperation]) {
+      throw new Error(`duplicate credit fulfillment operation: ${definition.fulfillmentKey}`);
+    }
+    handlers[fulfillOperation] = createCreditOrderFulfillment(database, definition);
+    handlers[reverseOperation] = createCreditRefundReversal(database, definition);
+  }
+  return handlers;
+}

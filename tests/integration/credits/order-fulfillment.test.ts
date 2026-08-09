@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-import { createCreditOrderFulfillment } from "@/platform/commerce/fulfillment/credit-order-fulfillment";
+import { createCreditOrderFulfillment } from "@/platform/credits/integration/commerce/credit-fulfillment";
 import { getCreditBalance } from "@/platform/credits/application/credit-service";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
