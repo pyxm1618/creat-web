@@ -28,14 +28,14 @@ export const seoLandingPages = [
         order: 10,
         eyebrow: "Reusable SEO landing template",
         h1: checklistRoute.h1,
-        body: "Use this page as both a launch checklist and a reference implementation for adding a genuinely distinct search-intent landing page without recreating metadata, structured data, internal-link or performance plumbing.",
+        lead: "Use this page as both a launch checklist and a reference implementation for adding a genuinely distinct search-intent landing page without recreating metadata, structured data, internal-link or performance plumbing.",
         primaryCta: { label: "Start from the homepage", href: "/" },
       },
       {
         type: "use-cases",
         enabled: true,
         order: 20,
-        title: "Before creating a new SEO landing page",
+        heading: "Before creating a new SEO landing page",
         items: [
           {
             title: "Confirm independent intent",
@@ -55,7 +55,7 @@ export const seoLandingPages = [
         type: "how-it-works",
         enabled: true,
         order: 30,
-        title: "SEO launch checklist",
+        heading: "SEO launch checklist",
         steps: [
           {
             title: "Model intent and TDH",
@@ -79,7 +79,7 @@ export const seoLandingPages = [
         type: "features",
         enabled: true,
         order: 40,
-        title: "What the starter validates automatically",
+        heading: "What the starter validates automatically",
         items: [
           {
             title: "Metadata and intent",
@@ -99,7 +99,7 @@ export const seoLandingPages = [
         type: "faq",
         enabled: true,
         order: 50,
-        title: "Landing-page questions",
+        heading: "Landing-page questions",
         items: [
           {
             question: "How many SEO pages should a new site create?",
@@ -118,27 +118,16 @@ export const seoLandingPages = [
         enabled: true,
         order: 60,
         heading: "Why the template separates intent from implementation",
-        body: (
-          <>
-            <p>
-              Route intent belongs in the SEO registry, while the actual tool and supporting content
-              live in landing-page configuration. This keeps canonical, metadata, sitemap and
-              internal-link rules consistent even when different products use very different page
-              structures.
-            </p>
-            <p>
-              A downstream project can add a route and content configuration, then reuse the same
-              server renderer and validation gates. That is deliberately different from generating
-              hundreds of near-duplicate pages from a keyword list.
-            </p>
-          </>
-        ),
+        paragraphs: [
+          "Route intent belongs in the SEO registry, while the actual tool and supporting content live in landing-page configuration. This keeps canonical, metadata, sitemap and internal-link rules consistent even when different products use very different page structures.",
+          "A downstream project can add a route and content configuration, then reuse the same server renderer and validation gates. That is deliberately different from generating hundreds of near-duplicate pages from a keyword list.",
+        ],
       },
       {
         type: "related-resources",
         enabled: true,
         order: 70,
-        title: "Continue the launch flow",
+        heading: "Continue the launch flow",
         links: [
           {
             label: "SEO-first starter homepage",
@@ -176,14 +165,14 @@ export const seoLandingPages = [
         order: 10,
         eyebrow: "Optional monetization surface",
         h1: pricingRoute.h1,
-        body: "Keep commercial facts and price authority on the server. A new SEO-only site can leave commerce disabled; once value is validated, configure real products and enable the payment module without rebuilding the public shell.",
+        lead: "Keep commercial facts and price authority on the server. A new SEO-only site can leave commerce disabled; once value is validated, configure real products and enable the payment module without rebuilding the public shell.",
         primaryCta: { label: "Return to the SEO-first starter", href: "/" },
       },
       {
         type: "features",
         enabled: true,
         order: 20,
-        title: "Server-owned pricing contract",
+        heading: "Server-owned pricing contract",
         items: [
           {
             title: "Immutable product version",
@@ -203,7 +192,7 @@ export const seoLandingPages = [
         type: "related-resources",
         enabled: true,
         order: 30,
-        title: "Related commercial policies",
+        heading: "Related commercial policies",
         links: [
           { label: "Refund and cancellation policy", href: "/refund-policy" },
           { label: "Terms of service", href: "/terms" },
