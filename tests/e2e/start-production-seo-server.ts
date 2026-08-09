@@ -14,17 +14,15 @@ const env = {
   DATABASE_URL: process.env.DATABASE_URL ?? "postgres://test:test@127.0.0.1:5432/test",
 };
 
-let server: ChildProcess | undefined;
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => server?.kill(signal));
-}
-
 const build = spawn("bun", ["run", "build"], { stdio: "inherit", env });
 const buildExitCode = await waitForExit(build);
 if (buildExitCode !== 0) process.exit(buildExitCode);
 
-server = spawn("bun", ["run", "start", "--", "-p", "3100"], {
+const server = spawn("bun", ["run", "start", "--", "-p", "3100"], {
   stdio: "inherit",
   env,
 });
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => server.kill(signal));
+}
 process.exitCode = await waitForExit(server);
