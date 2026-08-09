@@ -24,6 +24,7 @@ export async function ensureCommerceProduct(
       existing.currency === snapshot.expected.currency &&
       existing.expectedMinor === snapshot.expected.minor &&
       existing.model === snapshot.commercialModel &&
+      existing.billingInterval === snapshot.billingInterval &&
       existing.fulfillmentKey === snapshot.fulfillmentKey &&
       existing.refundPolicyKey === snapshot.refundPolicyKey;
     if (!immutableMatches) throw new Error("product version drift detected");
@@ -36,6 +37,7 @@ export async function ensureCommerceProduct(
       key: snapshot.key,
       version: snapshot.version,
       model: snapshot.commercialModel,
+      billingInterval: snapshot.billingInterval,
       environment,
       providerProductId: snapshot.providerProductId,
       currency: snapshot.expected.currency,
