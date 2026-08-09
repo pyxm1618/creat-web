@@ -1,6 +1,7 @@
 import type { FulfillmentHandler } from "@/platform/commerce/application/order-fulfillment";
 import {
   createCreditOrderFulfillment,
+  createCreditRefundReversal,
   type CreditOrderFulfillmentDefinition,
 } from "@/platform/commerce/fulfillment/credit-order-fulfillment";
 import type { DatabaseClient } from "@/platform/database/client";
@@ -17,10 +18,13 @@ export function createCreditFulfillmentHandlers(
     if (!definition.fulfillmentKey.trim() || !definition.creditType.trim()) {
       throw new Error("credit fulfillment key and type are required");
     }
-    const operation = `fulfill:${definition.fulfillmentKey}`;
-    if (handlers[operation])
-      throw new Error(`duplicate credit fulfillment operation: ${operation}`);
-    handlers[operation] = createCreditOrderFulfillment(database, definition);
+    const fulfillOperation = `fulfill:${definition.fulfillmentKey}`;
+    const reverseOperation = `reverse:${definition.fulfillmentKey}`;
+    if (handlers[fulfillOperation] || handlers[reverseOperation]) {
+      throw new Error(`duplicate credit fulfillment operation: ${definition.fulfillmentKey}`);
+    }
+    handlers[fulfillOperation] = createCreditOrderFulfillment(database, definition);
+    handlers[reverseOperation] = createCreditRefundReversal(database, definition);
   }
   return handlers;
 }
