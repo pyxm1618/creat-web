@@ -1,80 +1,164 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { FaqSection, type FaqItem } from "./faq-section";
-import { FeaturesSection, type FeatureItem } from "./features-section";
-import { FinalCtaSection } from "./final-cta-section";
-import { HeroSection } from "./hero-section";
-import { HowItWorksSection, type ProcessStep } from "./how-it-works-section";
-import { PricingSection } from "./pricing-section";
-import { SeoContentSection } from "./seo-content-section";
-import { ToolDemoSection } from "./tool-demo-section";
-import { UseCasesSection, type UseCaseItem } from "./use-cases-section";
-
-type SectionControls = {
-  readonly enabled?: boolean;
-  readonly order?: number;
-};
-
-export type LandingSection = SectionControls &
-  (
-    | {
-        readonly type: "hero";
-        readonly eyebrow?: string;
-        readonly h1: string;
-        readonly body: string;
-        readonly primaryCta: { readonly label: string; readonly href: string };
-        readonly secondaryCta?: { readonly label: string; readonly href: string };
-      }
-    | {
-        readonly type: "tool-demo";
+export type LandingSection =
+  | {
+      readonly type: "hero";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly eyebrow?: string;
+      readonly h1: string;
+      readonly lead: string;
+      readonly primaryCta: { readonly label: string; readonly href: string };
+      readonly secondaryCta?: { readonly label: string; readonly href: string };
+    }
+  | {
+      readonly type: "tool-demo";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly body: string;
+      readonly surface: ReactNode;
+    }
+  | {
+      readonly type: "use-cases";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly intro?: string;
+      readonly items: readonly {
         readonly title: string;
         readonly body: string;
-        readonly render: ReactNode;
-      }
-    | { readonly type: "use-cases"; readonly title: string; readonly items: readonly UseCaseItem[] }
-    | {
-        readonly type: "how-it-works";
-        readonly title: string;
-        readonly steps: readonly ProcessStep[];
-      }
-    | { readonly type: "features"; readonly title: string; readonly items: readonly FeatureItem[] }
-    | { readonly type: "pricing"; readonly title: string }
-    | { readonly type: "faq"; readonly title: string; readonly items: readonly FaqItem[] }
-    | { readonly type: "seo-content"; readonly heading: string; readonly body: ReactNode }
-    | {
-        readonly type: "comparison";
-        readonly title: string;
-        readonly body?: string;
-        readonly items: readonly { readonly title: string; readonly body: string }[];
-      }
-    | {
-        readonly type: "related-resources";
-        readonly title: string;
-        readonly links: readonly {
-          readonly label: string;
-          readonly href: string;
-          readonly description?: string;
-        }[];
-      }
-    | {
-        readonly type: "final-cta";
-        readonly heading: string;
-        readonly body: string;
-        readonly cta: { readonly label: string; readonly href: string };
-      }
-  );
+        readonly href?: string;
+      }[];
+    }
+  | {
+      readonly type: "how-it-works";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly steps: readonly { readonly title: string; readonly body: string }[];
+    }
+  | {
+      readonly type: "features";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly items: readonly { readonly title: string; readonly body: string }[];
+    }
+  | {
+      readonly type: "pricing";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly body: string;
+      readonly cards: readonly ReactNode[];
+    }
+  | {
+      readonly type: "faq";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly items: readonly { readonly question: string; readonly answer: string }[];
+    }
+  | {
+      readonly type: "seo-content";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly paragraphs: readonly string[];
+    }
+  | {
+      readonly type: "related-resources";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly links: readonly {
+        readonly label: string;
+        readonly href: string;
+        readonly description?: string;
+      }[];
+    }
+  | {
+      readonly type: "final-cta";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly body: string;
+      readonly cta: { readonly label: string; readonly href: string };
+    };
 
-function ComparisonSection(props: Readonly<Extract<LandingSection, { type: "comparison" }>>) {
+function HeroSection(props: Extract<LandingSection, { type: "hero" }>) {
   return (
-    <section className="landing-section" aria-labelledby="comparison-heading">
-      <div className="section-heading">
-        <h2 id="comparison-heading">{props.title}</h2>
-        {props.body ? <p>{props.body}</p> : null}
+    <section className="hero" aria-labelledby="page-title">
+      {props.eyebrow ? <p className="eyebrow">{props.eyebrow}</p> : null}
+      <h1 id="page-title">{props.h1}</h1>
+      <p className="hero-copy">{props.lead}</p>
+      <div className="hero-actions">
+        <Link className="button primary" href={props.primaryCta.href}>
+          {props.primaryCta.label}
+        </Link>
+        {props.secondaryCta ? (
+          <Link className="button secondary" href={props.secondaryCta.href}>
+            {props.secondaryCta.label}
+          </Link>
+        ) : null}
       </div>
-      <div className="feature-grid">
+    </section>
+  );
+}
+
+function ToolDemoSection(props: Extract<LandingSection, { type: "tool-demo" }>) {
+  return (
+    <section className="section" aria-labelledby="tool-demo-title">
+      <h2 id="tool-demo-title">{props.heading}</h2>
+      <p>{props.body}</p>
+      {props.surface}
+    </section>
+  );
+}
+
+function UseCasesSection(props: Extract<LandingSection, { type: "use-cases" }>) {
+  return (
+    <section className="section" aria-labelledby="use-cases-title">
+      <h2 id="use-cases-title">{props.heading}</h2>
+      {props.intro ? <p>{props.intro}</p> : null}
+      <div className="grid three">
         {props.items.map((item) => (
-          <article key={item.title} className="feature-card">
+          <article className="card" key={item.title}>
+            <h3>{item.title}</h3>
+            <p>{item.body}</p>
+            {item.href ? <Link href={item.href}>Explore {item.title}</Link> : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function HowItWorksSection(props: Extract<LandingSection, { type: "how-it-works" }>) {
+  return (
+    <section className="section" aria-labelledby="how-title">
+      <h2 id="how-title">{props.heading}</h2>
+      <ol className="steps">
+        {props.steps.map((step) => (
+          <li key={step.title}>
+            <strong>{step.title}</strong>
+            <p>{step.body}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function FeaturesSection(props: Extract<LandingSection, { type: "features" }>) {
+  return (
+    <section className="section" aria-labelledby="features-title">
+      <h2 id="features-title">{props.heading}</h2>
+      <div className="grid three">
+        {props.items.map((item) => (
+          <article className="card" key={item.title}>
             <h3>{item.title}</h3>
             <p>{item.body}</p>
           </article>
@@ -84,14 +168,47 @@ function ComparisonSection(props: Readonly<Extract<LandingSection, { type: "comp
   );
 }
 
-function RelatedResourcesSection(
-  props: Readonly<Extract<LandingSection, { type: "related-resources" }>>,
-) {
+function PricingSection(props: Extract<LandingSection, { type: "pricing" }>) {
   return (
-    <nav className="landing-section" aria-labelledby="related-resources-heading">
-      <div className="section-heading">
-        <h2 id="related-resources-heading">{props.title}</h2>
+    <section className="section" aria-labelledby="pricing-title">
+      <h2 id="pricing-title">{props.heading}</h2>
+      <p>{props.body}</p>
+      <div className="grid three">{props.cards}</div>
+    </section>
+  );
+}
+
+function FaqSection(props: Extract<LandingSection, { type: "faq" }>) {
+  return (
+    <section className="section" aria-labelledby="faq-title">
+      <h2 id="faq-title">{props.heading}</h2>
+      <div className="faq-list">
+        {props.items.map((item) => (
+          <details key={item.question}>
+            <summary>{item.question}</summary>
+            <p>{item.answer}</p>
+          </details>
+        ))}
       </div>
+    </section>
+  );
+}
+
+function SeoContentSection(props: Extract<LandingSection, { type: "seo-content" }>) {
+  return (
+    <section className="section prose" aria-labelledby="seo-content-title">
+      <h2 id="seo-content-title">{props.heading}</h2>
+      {props.paragraphs.map((paragraph) => (
+        <p key={paragraph}>{paragraph}</p>
+      ))}
+    </section>
+  );
+}
+
+function RelatedResourcesSection(props: Extract<LandingSection, { type: "related-resources" }>) {
+  return (
+    <nav className="section" aria-labelledby="related-title">
+      <h2 id="related-title">{props.heading}</h2>
       <ul className="related-links">
         {props.links.map((link) => (
           <li key={link.href}>
@@ -104,10 +221,23 @@ function RelatedResourcesSection(
   );
 }
 
+function FinalCtaSection(props: Extract<LandingSection, { type: "final-cta" }>) {
+  return (
+    <section className="section final-cta" aria-labelledby="final-cta-title">
+      <h2 id="final-cta-title">{props.heading}</h2>
+      <p>{props.body}</p>
+      <Link className="button primary" href={props.cta.href}>
+        {props.cta.label}
+      </Link>
+    </section>
+  );
+}
+
 export function LandingPage({ sections }: Readonly<{ sections: readonly LandingSection[] }>) {
-  const visibleSections = sections
-    .filter((section) => section.enabled !== false)
-    .toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const visibleSections: LandingSection[] = sections.filter(
+    (section) => section.enabled !== false,
+  );
+  visibleSections.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   return (
     <>
@@ -130,8 +260,6 @@ export function LandingPage({ sections }: Readonly<{ sections: readonly LandingS
             return <FaqSection key={key} {...section} />;
           case "seo-content":
             return <SeoContentSection key={key} {...section} />;
-          case "comparison":
-            return <ComparisonSection key={key} {...section} />;
           case "related-resources":
             return <RelatedResourcesSection key={key} {...section} />;
           case "final-cta":
