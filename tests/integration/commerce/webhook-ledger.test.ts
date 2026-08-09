@@ -39,8 +39,21 @@ afterAll(async () => database.close());
 
 function provider(result: NormalizedProviderEvent | Error): PaymentProvider {
   return {
-    name: "waffo",
+    name: "test-provider",
+    capabilities: { oneTime: true, subscriptions: false, partialRefunds: false },
+    async createCheckout() {
+      throw new Error("not used");
+    },
     async createOneTimeCheckout() {
+      throw new Error("not used");
+    },
+    async cancelSubscription() {
+      throw new Error("not used");
+    },
+    async resumeSubscription() {
+      throw new Error("not used");
+    },
+    async requestRefund() {
       throw new Error("not used");
     },
     async getPayment() {
@@ -62,6 +75,7 @@ async function seedOrder() {
       key: `product-${crypto.randomUUID()}`,
       version: 1,
       model: "one_time",
+      billingInterval: null,
       environment: "test",
       providerProductId: `PROD_${crypto.randomUUID()}`,
       currency: "USD",
