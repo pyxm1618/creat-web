@@ -7,7 +7,7 @@ const commerceFeatures = {
   auth: { enabled: false, google: false, magicLink: false, password: false },
   email: { enabled: false },
   commerce: { enabled: true, oneTime: true, subscriptions: false, credits: false },
-  analytics: { ga4: false, clarity: false, consentRequired: true },
+  analytics: { enabled: false, ga4: false, clarity: false, consentRequired: true },
 } as const satisfies ProductConfig["features"];
 
 const retentionKey = Buffer.alloc(32, 7).toString("base64");
