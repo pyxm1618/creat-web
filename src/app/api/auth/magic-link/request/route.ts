@@ -89,6 +89,13 @@ export async function POST(request: Request): Promise<Response> {
       : {}),
   });
   if (!turnstile.ok) {
+    if (turnstile.reason === "unavailable") {
+      await recordOperationalSecurityEvent(db, {
+        eventType: "provider_failure",
+        outcome: "failure",
+        details: { provider: "turnstile" },
+      }).catch(() => undefined);
+    }
     return Response.json(
       { error: turnstile.reason === "unavailable" ? "challenge_unavailable" : "challenge_failed" },
       { status: turnstile.reason === "unavailable" ? 503 : 403 },
@@ -125,6 +132,11 @@ export async function POST(request: Request): Promise<Response> {
       headers: request.headers,
     });
   } catch {
+    await recordOperationalSecurityEvent(db, {
+      eventType: "provider_failure",
+      outcome: "failure",
+      details: { provider: env.emailTransport === "resend" ? "resend" : "email_test_transport" },
+    }).catch(() => undefined);
     return Response.json({ error: "request_unavailable" }, { status: 503 });
   }
 
