@@ -21,12 +21,20 @@ const analyticsConnectSources = [
     ? ["https://*.clarity.ms"]
     : []),
 ];
+const analyticsImageSources = [
+  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.ga4
+    ? ["https://www.google-analytics.com"]
+    : []),
+  ...(featuresConfig.analytics.enabled && featuresConfig.analytics.clarity
+    ? ["https://*.clarity.ms"]
+    : []),
+];
 
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ""}${analyticsScriptSources.length ? ` ${analyticsScriptSources.join(" ")}` : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://www.google-analytics.com https://*.clarity.ms",
+  `img-src 'self' data: blob:${analyticsImageSources.length ? ` ${analyticsImageSources.join(" ")}` : ""}`,
   "font-src 'self' data:",
   `connect-src 'self'${analyticsConnectSources.length ? ` ${analyticsConnectSources.join(" ")}` : ""}`,
   "object-src 'none'",
@@ -88,10 +96,7 @@ const nextConfig: NextConfig = {
       ].map((source) => ({ source, headers: [...sensitiveHeaders] })),
       {
         source: "/auth/magic-link/confirm",
-        headers: [
-          ...sensitiveHeaders,
-          { key: "Referrer-Policy", value: "no-referrer" },
-        ],
+        headers: [...sensitiveHeaders, { key: "Referrer-Policy", value: "no-referrer" }],
       },
     ];
   },
