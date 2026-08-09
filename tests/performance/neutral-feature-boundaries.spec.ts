@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("neutral runtime does not initialize disabled auth or commerce providers", async ({ request }) => {
+test("neutral runtime does not initialize disabled auth or commerce providers", async ({
+  request,
+}) => {
   const account = await request.get("/account", { maxRedirects: 0 });
   expect(account.status()).toBeLessThan(500);
 

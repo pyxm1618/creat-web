@@ -33,7 +33,8 @@ export async function reconcileStaleRefunds(
         .set({
           status: "reconciliation_required",
           reversalStatus: "reconciliation_required",
-          operatorReviewReason: "provider refund settlement webhook did not arrive within threshold",
+          operatorReviewReason:
+            "provider refund settlement webhook did not arrive within threshold",
           updatedAt: now,
         })
         .where(and(eq(refunds.id, refund.id), eq(refunds.status, "processing")))

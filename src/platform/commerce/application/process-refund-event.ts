@@ -93,7 +93,8 @@ async function handleSettledRefundReplay(
   if (refund.status !== "succeeded") return false;
   const sameAmount = refund.succeededMinor === event.amount.minor;
   const sameReference =
-    !event.externalRefundReference || refund.externalRefundReference === event.externalRefundReference;
+    !event.externalRefundReference ||
+    refund.externalRefundReference === event.externalRefundReference;
   if (sameAmount && sameReference) return true;
 
   await recordRefundReconciliation(tx, {

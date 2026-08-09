@@ -4,7 +4,12 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { createDatabaseClient } from "@/platform/database/client";
-import { accountSubjects, commerceProducts, orders, subscriptions } from "@/platform/database/schema";
+import {
+  accountSubjects,
+  commerceProducts,
+  orders,
+  subscriptions,
+} from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");

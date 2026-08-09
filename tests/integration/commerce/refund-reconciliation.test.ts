@@ -99,8 +99,12 @@ it("moves provider-accepted refunds with no settlement webhook into operator rec
   if (!refund) throw new Error("refund insert failed");
 
   const now = new Date("2026-08-10T00:00:00Z");
-  expect(await reconcileStaleRefunds(database.db, { now, staleAfterMs: 24 * 60 * 60 * 1000 })).toBe(1);
-  expect(await reconcileStaleRefunds(database.db, { now, staleAfterMs: 24 * 60 * 60 * 1000 })).toBe(0);
+  expect(await reconcileStaleRefunds(database.db, { now, staleAfterMs: 24 * 60 * 60 * 1000 })).toBe(
+    1,
+  );
+  expect(await reconcileStaleRefunds(database.db, { now, staleAfterMs: 24 * 60 * 60 * 1000 })).toBe(
+    0,
+  );
 
   const persisted = await database.db.query.refunds.findFirst({ where: eq(refunds.id, refund.id) });
   expect(persisted?.status).toBe("reconciliation_required");
