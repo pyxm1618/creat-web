@@ -16,7 +16,9 @@ type SiteverifyResponse = {
 
 function errorCodes(result: SiteverifyResponse): readonly string[] {
   const value = result["error-codes"];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 export async function verifyTurnstileToken({
@@ -69,6 +71,7 @@ export async function verifyTurnstileToken({
     };
   }
   if (expectedAction && result.action !== expectedAction) return { ok: false, reason: "invalid" };
-  if (expectedHostname && result.hostname !== expectedHostname) return { ok: false, reason: "invalid" };
+  if (expectedHostname && result.hostname !== expectedHostname)
+    return { ok: false, reason: "invalid" };
   return { ok: true };
 }
