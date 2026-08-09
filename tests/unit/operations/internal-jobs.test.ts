@@ -53,6 +53,21 @@ describe("internal job security", () => {
     expect(result).toBe("done");
   });
 
+  it("fails closed when the execution exceeds the hard runtime budget", async () => {
+    const startedAt = Date.now();
+    await expect(
+      runBoundedJob({
+        batchLimit: 1,
+        maxRuntimeMs: 1_000,
+        run: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          return "too-late";
+        },
+      }),
+    ).rejects.toThrow(/runtime budget exhausted/i);
+    expect(Date.now() - startedAt).toBeLessThan(1_800);
+  });
+
   it("rejects unbounded batch and runtime configuration", async () => {
     await expect(
       runBoundedJob({ batchLimit: 0, maxRuntimeMs: 5_000, run: async () => undefined }),
