@@ -1,8 +1,8 @@
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { getAccountContext } from "@/platform/auth/account-context";
-import { auth } from "@/platform/auth/auth";
+import { getAuth } from "@/platform/auth/auth";
 
 import {
   revokeAllSessionsAction,
@@ -20,6 +20,8 @@ function formatDate(value: Date | string): string {
 }
 
 export default async function AccountSecurityPage() {
+  const auth = getAuth();
+  if (!auth) notFound();
   const requestHeaders = await headers();
   const context = await getAccountContext(requestHeaders);
   if (!context) redirect("/sign-in");
