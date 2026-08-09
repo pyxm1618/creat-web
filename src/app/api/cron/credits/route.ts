@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { featuresConfig } from "@/config/features.config";
 import { expireGrants, expireReservations } from "@/platform/credits/application/credit-service";
 import { runCreditFinalizationWorker } from "@/platform/credits/application/finalization-worker";
-import { reconcileCreditLedger } from "@/platform/credits/application/reconcile-credit-ledger";
+import { reconcileCreditLedgerBatch } from "@/platform/credits/application/reconcile-credit-ledger";
 import { env } from "@/platform/config/env";
 import { db } from "@/platform/database/application-database";
 import {
@@ -26,25 +26,38 @@ export async function GET(request: Request): Promise<Response> {
     batchLimit: CREDIT_BATCH_LIMIT,
     maxRuntimeMs: CREDIT_RUNTIME_MS,
     run: async (job) => {
-      const expiredReservations = await expireReservations(db, { limit: job.batchLimit });
+      let remaining = job.batchLimit;
+      const expiredReservations = await expireReservations(db, { limit: remaining });
+      remaining = Math.max(0, remaining - expiredReservations);
       job.assertWithinBudget();
-      const finalized = job.canContinue(2_000)
-        ? await runCreditFinalizationWorker(db, {
-            owner: `credits:${randomUUID()}`,
-            limit: job.batchLimit,
-          })
-        : { completed: 0, deferred: 0 };
+      const finalized =
+        remaining > 0 && job.canContinue(2_000)
+          ? await runCreditFinalizationWorker(db, {
+              owner: `credits:${randomUUID()}`,
+              limit: remaining,
+            })
+          : { completed: 0, deferred: 0 };
+      remaining = Math.max(0, remaining - finalized.completed - finalized.deferred);
       job.assertWithinBudget();
-      const expiredGrants = job.canContinue(2_000)
-        ? await expireGrants(db, { limit: job.batchLimit })
-        : 0;
+      const expiredGrants =
+        remaining > 0 && job.canContinue(2_000) ? await expireGrants(db, { limit: remaining }) : 0;
+      remaining = Math.max(0, remaining - expiredGrants);
       job.assertWithinBudget();
-      const issues = job.canContinue(2_000) ? await reconcileCreditLedger(db) : [];
+      const reconciliation =
+        remaining > 0 && job.canContinue(2_000)
+          ? await reconcileCreditLedgerBatch(db, {
+              limit: remaining,
+              signal: job.signal,
+              canContinue: job.canContinue,
+            })
+          : null;
       return {
         expiredReservations,
         finalized,
         expiredGrants,
-        reconciliationIssues: issues.length,
+        reconciliationIssues: reconciliation?.issues.length ?? 0,
+        reconciliationProcessed: reconciliation?.processed ?? 0,
+        reconciliationCycleComplete: reconciliation?.cycleComplete ?? false,
       };
     },
   });

@@ -229,11 +229,13 @@ export function createAccountDeletionService(input: {
       readonly subjectId: string;
       readonly authUserId: string;
     }): Promise<AccountDeletionRequestRow> {
+      const requestedAt = now();
       await input.database
         .insert(accountDeletionRequests)
         .values({
           subjectId: request.subjectId,
           authUserId: request.authUserId,
+          nextAttemptAt: requestedAt,
         })
         .onConflictDoNothing({ target: accountDeletionRequests.subjectId });
 

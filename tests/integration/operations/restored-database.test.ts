@@ -30,3 +30,23 @@ it("validates migration history auth tables constraints idempotency and credit r
   expect(result.checkedConstraints).toBeGreaterThan(5);
   expect(result.checkedIdempotencyTables).toBeGreaterThan(5);
 });
+
+it("reports an idempotency schema rename as a verifier error", async () => {
+  await database.db.execute(
+    sql.raw(
+      'alter table "orders" rename column "checkout_idempotency_key" to "renamed_checkout_idempotency_key"',
+    ),
+  );
+
+  try {
+    await expect(verifyRestoredDatabase(database.db)).rejects.toThrow(
+      "restored database missing idempotency column: orders.checkout_idempotency_key",
+    );
+  } finally {
+    await database.db.execute(
+      sql.raw(
+        'alter table "orders" rename column "renamed_checkout_idempotency_key" to "checkout_idempotency_key"',
+      ),
+    );
+  }
+});

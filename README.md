@@ -354,7 +354,7 @@ Do not add a locale without real translations. The type/i18n gates are designed 
 
 The starter applies a route-aware security baseline including CSP, clickjacking protection, content-type protection, referrer and permissions policies, production HSTS, staging/preview noindex, and no-store/noindex for sensitive paths.
 
-The marketing site favors static/server rendering. The CSP intentionally uses the static-rendering-compatible Next.js strategy rather than forcing nonce-based dynamic rendering across SEO pages. Third-party origins are only admitted when the corresponding feature is enabled.
+The marketing site favors static/server rendering where compatible, while the security baseline uses a per-request nonce CSP and dynamic rendering for nonce-protected route groups. It does not rely on `unsafe-inline`; third-party origins are only admitted when the corresponding feature is enabled.
 
 Performance verification runs against a production build on desktop and mobile and checks the homepage plus an indexable SEO landing page for LCP, lab interaction timing, CLS, JavaScript/image budgets, console errors, accessibility, internal links, TDH, H1, structured data, and image dimensions.
 

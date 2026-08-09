@@ -33,13 +33,37 @@ const REQUIRED_CONSTRAINTS = [
   "credit_ledger_quantity_positive",
 ] as const;
 
-const IDEMPOTENCY_TABLES = [
-  "orders",
-  "fulfillment_jobs",
-  "commerce_command_jobs",
-  "credit_grants",
-  "credit_reservations",
-  "credit_ledger_entries",
+const IDEMPOTENCY_CHECKS = [
+  {
+    table: "orders",
+    column: "checkout_idempotency_key",
+    uniqueIndex: "order_checkout_idempotency_uq",
+  },
+  {
+    table: "fulfillment_jobs",
+    column: "idempotency_key",
+    uniqueIndex: "fulfillment_idempotency_uq",
+  },
+  {
+    table: "commerce_command_jobs",
+    column: "idempotency_key",
+    uniqueIndex: "commerce_command_idempotency_uq",
+  },
+  {
+    table: "credit_grants",
+    column: "idempotency_key",
+    uniqueIndex: "credit_grant_idempotency_uq",
+  },
+  {
+    table: "credit_reservations",
+    column: "idempotency_key",
+    uniqueIndex: "credit_reservation_idempotency_uq",
+  },
+  {
+    table: "credit_ledger_entries",
+    column: "idempotency_key",
+    uniqueIndex: "credit_ledger_idempotency_uq",
+  },
 ] as const;
 
 export type RestoredDatabaseVerification = Readonly<{
@@ -72,18 +96,50 @@ async function verifyConstraints(database: DatabaseClient): Promise<void> {
 }
 
 async function verifyIdempotencyUniqueness(database: DatabaseClient): Promise<void> {
-  for (const table of IDEMPOTENCY_TABLES) {
+  for (const check of IDEMPOTENCY_CHECKS) {
+    const columnRows = await database.execute<{ present: boolean }>(sql`
+      select exists(
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${check.table}
+          and column_name = ${check.column}
+      ) as present
+    `);
+    if (!columnRows[0]?.present) {
+      throw new Error(
+        `restored database missing idempotency column: ${check.table}.${check.column}`,
+      );
+    }
+
+    const indexRows = await database.execute<{ present: boolean }>(sql`
+      select exists(
+        select 1
+        from pg_index
+        inner join pg_class as index_relation on index_relation.oid = pg_index.indexrelid
+        inner join pg_class as table_relation on table_relation.oid = pg_index.indrelid
+        inner join pg_namespace on pg_namespace.oid = table_relation.relnamespace
+        where pg_namespace.nspname = 'public'
+          and table_relation.relname = ${check.table}
+          and index_relation.relname = ${check.uniqueIndex}
+          and pg_index.indisunique
+      ) as present
+    `);
+    if (!indexRows[0]?.present) {
+      throw new Error(`restored database missing idempotency unique index: ${check.uniqueIndex}`);
+    }
+
     const rows = await database.execute<{ duplicates: number }>(
       sql.raw(`
       select count(*)::int as duplicates from (
-        select idempotency_key from ${table}
-        where idempotency_key is not null
-        group by idempotency_key having count(*) > 1
+        select "${check.column}" from "${check.table}"
+        where "${check.column}" is not null
+        group by "${check.column}" having count(*) > 1
       ) duplicate_keys
     `),
     );
     if (Number(rows[0]?.duplicates ?? 0) !== 0) {
-      throw new Error(`restored database contains duplicate idempotency keys in ${table}`);
+      throw new Error(`restored database contains duplicate idempotency keys in ${check.table}`);
     }
   }
 }
@@ -138,6 +194,6 @@ export async function verifyRestoredDatabase(
     migrationCount,
     checkedRelations: REQUIRED_RELATIONS.length,
     checkedConstraints: REQUIRED_CONSTRAINTS.length,
-    checkedIdempotencyTables: IDEMPOTENCY_TABLES.length,
+    checkedIdempotencyTables: IDEMPOTENCY_CHECKS.length,
   };
 }

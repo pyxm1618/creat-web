@@ -190,10 +190,17 @@ describe("account deletion workflow", () => {
     });
     await Promise.all(Array.from({ length: 8 }, () => service.run(request.id)));
 
-    const rows = await database.db
+    let rows = await database.db
       .select()
       .from(accountDeletionRequests)
       .where(eq(accountDeletionRequests.id, request.id));
+    for (let attempt = 0; attempt < 100 && rows[0]?.status !== "completed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      rows = await database.db
+        .select()
+        .from(accountDeletionRequests)
+        .where(eq(accountDeletionRequests.id, request.id));
+    }
     expect(rows[0]?.status).toBe("completed");
     expect(prepareCalls).toBe(1);
     expect(deleteCalls).toBe(1);

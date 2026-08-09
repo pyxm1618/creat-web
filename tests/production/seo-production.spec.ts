@@ -5,7 +5,7 @@ test("production public pages emit canonical metadata", async ({ page }) => {
   expect(response?.status()).toBe(200);
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     "href",
-    "https://example.com/",
+    "https://example.com",
   );
   await expect(page.locator('meta[name="robots"]')).not.toHaveAttribute("content", /noindex/i);
 

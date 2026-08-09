@@ -4,7 +4,7 @@ import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile
 import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
-import { reconcileCreditLedger } from "@/platform/credits/application/reconcile-credit-ledger";
+import { reconcileCreditLedgerBatch } from "@/platform/credits/application/reconcile-credit-ledger";
 import { db } from "@/platform/database/application-database";
 import { emitOperationalAlerts, evaluateOperationalAlerts } from "@/platform/observability/alerts";
 import { emitMetric } from "@/platform/observability/metrics";
@@ -41,10 +41,14 @@ export async function GET(request: Request): Promise<Response> {
       remaining = Math.max(0, remaining - purgedPayloads);
       job.assertWithinBudget();
 
-      const creditIssues =
-        featuresConfig.commerce.credits && job.canContinue(2_000)
-          ? await reconcileCreditLedger(db)
-          : [];
+      const creditReconciliation =
+        featuresConfig.commerce.credits && remaining > 0 && job.canContinue(2_000)
+          ? await reconcileCreditLedgerBatch(db, {
+              limit: remaining,
+              signal: job.signal,
+              canContinue: job.canContinue,
+            })
+          : null;
       job.assertWithinBudget();
 
       const [snapshot, retention] = await Promise.all([
@@ -71,7 +75,9 @@ export async function GET(request: Request): Promise<Response> {
       return {
         staleRefundsReconciled,
         purgedPayloads,
-        creditReconciliationIssues: creditIssues.length,
+        creditReconciliationIssues: creditReconciliation?.issues.length ?? 0,
+        creditReconciliationProcessed: creditReconciliation?.processed ?? 0,
+        creditReconciliationCycleComplete: creditReconciliation?.cycleComplete ?? false,
         alertsEvaluated: true,
       };
     },

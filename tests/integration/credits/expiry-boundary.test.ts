@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeEach, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 
 import {
@@ -19,7 +19,7 @@ import {
 
 const database = createCreditTestDatabase();
 
-beforeAll(async () => resetCreditTestDatabase(database.db));
+beforeEach(async () => resetCreditTestDatabase(database.db));
 afterAll(async () => database.close());
 
 it("commits a reservation after its source grant expires", async () => {
@@ -133,4 +133,25 @@ it("rejects reserving a grant at its exact expiry timestamp", async () => {
     from credit_reservation_allocations
   `);
   expect(Number(totals[0]?.total ?? 0)).toBe(0);
+});
+
+it("rejects reserving a grant after its expiry timestamp", async () => {
+  const subjectId = await createCreditSubject(database.db);
+  await createExpiringGrant(database.db, {
+    subjectId,
+    quantity: 2,
+    expiresAt: new Date("2026-08-09T12:00:00Z"),
+  });
+
+  await expect(
+    reserveCredits(database.db, {
+      subjectId,
+      creditType: "reading",
+      quantity: 1,
+      purpose: { type: "analysis", id: crypto.randomUUID() },
+      idempotencyKey: `reserve-${crypto.randomUUID()}`,
+      expiresAt: new Date("2026-08-09T12:30:00Z"),
+      now: new Date("2026-08-09T12:00:01Z"),
+    }),
+  ).rejects.toThrow();
 });

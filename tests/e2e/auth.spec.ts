@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const TURNSTILE_TEST_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
@@ -6,6 +6,29 @@ function extractConfirmationUrl(html: string): string {
   const match = html.match(/href="([^"]+)"/);
   if (!match?.[1]) throw new Error("confirmation link missing from test email");
   return match[1].replaceAll("&amp;", "&");
+}
+
+async function installBrowserTurnstileMock(page: Page): Promise<void> {
+  await page.addInitScript((token) => {
+    let nextWidgetId = 0;
+    const turnstile = {
+      ready(callback: () => void) {
+        callback();
+      },
+      render(_container: HTMLElement, options: { callback: (value: string) => void }) {
+        const widgetId = `test-widget-${++nextWidgetId}`;
+        queueMicrotask(() => options.callback(token));
+        return widgetId;
+      },
+      reset(widgetId?: string) {
+        void widgetId;
+      },
+      remove(widgetId?: string) {
+        void widgetId;
+      },
+    };
+    (window as unknown as Window & { turnstile?: typeof turnstile }).turnstile = turnstile;
+  }, TURNSTILE_TEST_TOKEN);
 }
 
 test("magic link confirmation is scanner-safe and single-use", async ({ page, request }) => {
@@ -20,6 +43,7 @@ test("magic link confirmation is scanner-safe and single-use", async ({ page, re
     }
   });
 
+  await installBrowserTurnstileMock(page);
   await page.goto("/sign-in");
   await page.getByLabel("Email address").fill(email);
   const sendButton = page.getByRole("button", { name: "Send secure sign-in link" });
