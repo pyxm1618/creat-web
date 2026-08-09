@@ -31,12 +31,7 @@ const SAFE_QUERY_KEYS = new Set([
 ]);
 
 function sanitizeString(key: string, value: string): string | null {
-  if (
-    value.length === 0 ||
-    value.length > MAX_STRING_LENGTH ||
-    EMAIL_LIKE.test(value)
-  )
-    return null;
+  if (value.length === 0 || value.length > MAX_STRING_LENGTH || EMAIL_LIKE.test(value)) return null;
 
   if (key === "path") {
     if (!value.startsWith("/")) return null;
