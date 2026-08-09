@@ -5,11 +5,22 @@ import { featuresConfig } from "@/config/features.config";
 import { legalConfig } from "@/config/legal.config";
 import { seoConfig } from "@/config/seo.config";
 import { siteConfig } from "@/config/site.config";
+import { TEMPLATE_VERSION } from "@/config/template-version";
 import { loadRuntimeEnv } from "@/platform/config/load-runtime-config";
 import { validateProductConfig } from "@/platform/config/validate-config";
 import { validateLegalConfig } from "@/platform/legal/validate-legal-config";
 
+const modeArgument = process.argv.find((argument) => argument.startsWith("--mode="))?.slice(7);
+if (modeArgument && !["test", "staging", "production"].includes(modeArgument)) {
+  throw new Error("--mode must be test, staging, or production");
+}
+const releaseMode = modeArgument ?? process.env.APP_ENV ?? "test";
+const productionRelease = releaseMode === "production";
+
 validateProductConfig({ site: siteConfig, features: featuresConfig });
+if (!/^\d+\.\d+\.\d+$/.test(TEMPLATE_VERSION)) {
+  throw new Error("starter template version must use semantic versioning");
+}
 
 const legalFeatures = {
   google: featuresConfig.auth.google,
@@ -22,11 +33,7 @@ const legalFeatures = {
   credits: featuresConfig.commerce.credits,
 } as const;
 
-validateLegalConfig({
-  legal: legalConfig,
-  features: legalFeatures,
-  releaseMode: process.env.APP_ENV === "production",
-});
+validateLegalConfig({ legal: legalConfig, features: legalFeatures, releaseMode: productionRelease });
 
 const forbidden = [/quick[ -]?i[ -]?ching/i, /ichingcoin/i, /hexagram/i, /casting/i];
 
@@ -50,13 +57,11 @@ for (const file of await collectFiles("src")) {
 if (siteConfig.canonicalOrigin.includes("localhost")) {
   throw new Error("release site origin must not use localhost");
 }
-
-const isReviewed = (status: string): boolean => status === "reviewed";
-if (process.env.APP_ENV === "production") {
-  if (!isReviewed(seoConfig.releaseStatus)) {
-    throw new Error("production SEO config is not reviewed");
-  }
-  if (/example\.com/i.test(siteConfig.canonicalOrigin)) {
+if (productionRelease) {
+  if (seoConfig.releaseStatus !== "reviewed") throw new Error("production SEO config is not reviewed");
+  if (legalConfig.releaseStatus !== "reviewed")
+    throw new Error("production legal config is not reviewed");
+  if (/example\.(?:com|org|net)$/i.test(new URL(siteConfig.canonicalOrigin).hostname)) {
     throw new Error("production site origin is still a placeholder");
   }
 }
@@ -116,20 +121,38 @@ if (legalConfig.releaseStatus === "draft" && !rejectedDraftLegalRelease) {
 const vercelConfig = JSON.parse(await readFile("vercel.json", "utf8")) as {
   crons?: Array<{ path?: string }>;
 };
-if (!vercelConfig.crons?.some((cron) => cron.path === "/api/cron/account-deletions")) {
-  throw new Error("durable account deletion cron is missing from vercel.json");
+const scheduledPaths = new Set(vercelConfig.crons?.map((cron) => cron.path) ?? []);
+for (const required of [
+  "/api/internal/jobs/account-deletion",
+  "/api/internal/jobs/reconcile",
+]) {
+  if (!scheduledPaths.has(required)) throw new Error(`required internal schedule is missing: ${required}`);
 }
-if (
-  featuresConfig.commerce.enabled &&
-  !vercelConfig.crons?.some((cron) => cron.path === "/api/cron/commerce")
-) {
-  throw new Error("durable commerce recovery cron is missing from vercel.json");
+if (featuresConfig.commerce.enabled && !scheduledPaths.has("/api/internal/jobs/commerce")) {
+  throw new Error("durable commerce recovery job is missing from vercel.json");
+}
+if (featuresConfig.commerce.credits && !scheduledPaths.has("/api/internal/jobs/credit-expiry")) {
+  throw new Error("durable credit expiry job is missing from vercel.json");
+}
+
+for (const requiredFile of [
+  "SECURITY.md",
+  "CHANGELOG.md",
+  "docs/runbooks/database-backup-restore.md",
+  "docs/runbooks/key-rotation.md",
+  "docs/runbooks/release-rollback.md",
+  "docs/runbooks/dead-letters.md",
+  "docs/upgrade/owned-project-upgrades.md",
+]) {
+  await readFile(requiredFile, "utf8");
 }
 
 console.log(
   JSON.stringify({
     event: "release_verified",
     site: siteConfig.slug,
+    templateVersion: TEMPLATE_VERSION,
+    mode: releaseMode,
     authEnabled: featuresConfig.auth.enabled,
     magicLinkEnabled: featuresConfig.auth.magicLink,
     commerceEnabled: featuresConfig.commerce.enabled,
