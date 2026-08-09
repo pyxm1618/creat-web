@@ -29,6 +29,7 @@ export const commerceProducts = pgTable(
     key: text("key").notNull(),
     version: integer("version").notNull(),
     model: text("model").notNull(),
+    billingInterval: text("billing_interval"),
     environment: text("environment").notNull(),
     providerProductId: text("provider_product_id").notNull(),
     currency: text("currency").notNull(),
@@ -50,6 +51,10 @@ export const commerceProducts = pgTable(
     check("commerce_product_expected_minor_positive", sql`${table.expectedMinor} > 0`),
     check("commerce_product_environment_valid", sql`${table.environment} in ('test','production')`),
     check("commerce_product_model_valid", sql`${table.model} in ('one_time','subscription')`),
+    check(
+      "commerce_product_billing_interval_valid",
+      sql`(${table.model} = 'one_time' and ${table.billingInterval} is null) or (${table.model} = 'subscription' and ${table.billingInterval} in ('month','year'))`,
+    ),
   ],
 );
 
