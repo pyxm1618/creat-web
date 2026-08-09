@@ -57,6 +57,8 @@ const sensitivePatterns = [
   "/api/commerce/:path*",
   "/api/webhooks/:path*",
   "/api/cron/:path*",
+  "/api/internal/:path*",
+  "/api/health/:path*",
   "/api/test/:path*",
 ];
 for (const source of sensitivePatterns) {
