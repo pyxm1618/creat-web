@@ -25,13 +25,13 @@
     "verify:seo": "bun scripts/verify-seo.ts",
     "verify:i18n": "bun scripts/verify-i18n.ts",
     "verify:performance": "playwright test --config playwright.performance.config.ts",
-    "verify:security": "bun scripts/verify-security.ts",
+    "verify:security": "bun scripts/verify-security.ts && APP_ENV=production bun scripts/verify-security.ts",
     "verify:subscription": "bun scripts/verify-subscription.ts",
     "verify:commerce": "bun scripts/verify-commerce.ts",
     "verify:credits": "bun scripts/verify-credits.ts",
     "verify:supply-chain": "bun install --frozen-lockfile --lockfile-only && bun audit --audit-level=high",
     "verify:release": "bun scripts/verify-release.ts",
-    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run test:contract && bun run db:verify && bun run test:build-matrix && bun run verify:architecture && bun run verify:secrets && bun run verify:seo && bun run verify:i18n && bun run verify:security && bun run verify:subscription && bun run verify:commerce && bun run verify:credits && bun run verify:supply-chain && bun run verify:release"
+    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run test:contract && bun run db:verify && bun run test:build-matrix && bun run verify:architecture && bun run verify:secrets && bun run verify:seo && bun run verify:i18n && bun run verify:security && bun run verify:subscription && bun run verify:commerce && bun run verify:credits && bun run verify:supply-chain && bun run verify:release && bun run verify:performance"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.6.25",
