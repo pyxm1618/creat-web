@@ -112,10 +112,7 @@ export async function submitIndexNowUrls(
   }
 
   if (response.status !== 200 && response.status !== 202) {
-    throw new IndexNowSubmissionError(
-      "IndexNow provider rejected the submission",
-      response.status,
-    );
+    throw new IndexNowSubmissionError("IndexNow provider rejected the submission", response.status);
   }
 
   return {
