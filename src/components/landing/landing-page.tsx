@@ -47,6 +47,14 @@ export type LandingSection =
       readonly items: readonly { readonly title: string; readonly body: string }[];
     }
   | {
+      readonly type: "comparison";
+      readonly enabled?: boolean;
+      readonly order?: number;
+      readonly heading: string;
+      readonly body?: string;
+      readonly items: readonly { readonly title: string; readonly body: string }[];
+    }
+  | {
       readonly type: "pricing";
       readonly enabled?: boolean;
       readonly order?: number;
@@ -168,6 +176,23 @@ function FeaturesSection(props: Extract<LandingSection, { type: "features" }>) {
   );
 }
 
+function ComparisonSection(props: Extract<LandingSection, { type: "comparison" }>) {
+  return (
+    <section className="section" aria-labelledby="comparison-title">
+      <h2 id="comparison-title">{props.heading}</h2>
+      {props.body ? <p>{props.body}</p> : null}
+      <div className="grid three">
+        {props.items.map((item) => (
+          <article className="card" key={item.title}>
+            <h3>{item.title}</h3>
+            <p>{item.body}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function PricingSection(props: Extract<LandingSection, { type: "pricing" }>) {
   return (
     <section className="section" aria-labelledby="pricing-title">
@@ -254,6 +279,8 @@ export function LandingPage({ sections }: Readonly<{ sections: readonly LandingS
             return <HowItWorksSection key={key} {...section} />;
           case "features":
             return <FeaturesSection key={key} {...section} />;
+          case "comparison":
+            return <ComparisonSection key={key} {...section} />;
           case "pricing":
             return <PricingSection key={key} {...section} />;
           case "faq":
