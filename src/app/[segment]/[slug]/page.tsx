@@ -8,7 +8,7 @@ import { routeRegistry } from "@/config/routes.config";
 import { seoLandingPages } from "@/config/seo-landings.config";
 import { siteConfig } from "@/config/site.config";
 import { localizeLandingSections } from "@/platform/i18n/landing-sections";
-import { localePath } from "@/platform/i18n/routing";
+import { isSupportedLocale, localePath } from "@/platform/i18n/routing";
 import { currentSeoEnvironment } from "@/platform/seo/environment-policy";
 import { metadataForLocalizedRoute } from "@/platform/seo/metadata";
 import { articleJsonLd, webApplicationJsonLd } from "@/platform/seo/structured-data";
@@ -18,7 +18,7 @@ type LocalizedLandingProps = {
 };
 
 function localizedRoute(segment: string, slug: string) {
-  if (segment === siteConfig.defaultLocale || !siteConfig.supportedLocales.includes(segment)) {
+  if (segment === siteConfig.defaultLocale || !isSupportedLocale(siteConfig, segment)) {
     return undefined;
   }
   const route = `/${slug}`;
