@@ -8,6 +8,8 @@ import {
   creditReservations,
 } from "@/platform/database/credit-schema";
 
+import { getGrantQuantityProjections } from "./credit-service";
+
 export type CreditReconciliationIssue = {
   readonly code: string;
   readonly entityId: string;
@@ -84,6 +86,39 @@ export async function reconcileCreditLedger(
         code: "EXPIRED_GRANT_WITHOUT_EXPIRY_ENTRY",
         entityId: grant.id,
         detail: `remaining=${grant.quantity - terminal}`,
+      });
+    }
+  }
+
+  const scopes = new Map<string, { subjectId: string; creditType: string }>();
+  for (const grant of grants) {
+    scopes.set(`${grant.subjectId}:${grant.creditType}`, {
+      subjectId: grant.subjectId,
+      creditType: grant.creditType,
+    });
+  }
+  for (const scope of scopes.values()) {
+    try {
+      for (const projection of await getGrantQuantityProjections(database, scope)) {
+        const conserved =
+          projection.consumed +
+          projection.revoked +
+          projection.expired +
+          projection.activeReserved +
+          projection.available;
+        if (conserved !== projection.quantity) {
+          issues.push({
+            code: "GRANT_QUANTITY_INVARIANT",
+            entityId: projection.grantId,
+            detail: `quantity=${projection.quantity} conserved=${conserved}`,
+          });
+        }
+      }
+    } catch (error) {
+      issues.push({
+        code: "GRANT_QUANTITY_INVARIANT",
+        entityId: `${scope.subjectId}:${scope.creditType}`,
+        detail: error instanceof Error ? error.message : "projection failed",
       });
     }
   }
