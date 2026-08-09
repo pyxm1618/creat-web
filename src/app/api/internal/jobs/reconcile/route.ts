@@ -1,6 +1,7 @@
 import { featuresConfig } from "@/config/features.config";
 import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
+import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
 import { reconcileCreditLedger } from "@/platform/credits/application/reconcile-credit-ledger";
@@ -43,12 +44,20 @@ export async function GET(request: Request): Promise<Response> {
           : [];
       job.assertWithinBudget();
 
-      const snapshot = await collectOperationalAlertSnapshot(db);
+      const [snapshot, retention] = await Promise.all([
+        collectOperationalAlertSnapshot(db),
+        getWebhookRetentionMetrics(commerce.database),
+      ]);
       emitMetric({ name: "dead_letter_created", value: snapshot.deadLettersCreated });
       emitMetric({ name: "magic_link_requests", value: snapshot.magicLinkRequests5m });
       emitMetric({
         name: "webhook_invalid_signatures",
         value: snapshot.invalidWebhookSignatures5m,
+      });
+      emitMetric({ name: "webhook_retained_payloads", value: retention.retainedPayloads });
+      emitMetric({
+        name: "oldest_webhook_payload_age_seconds",
+        value: retention.oldestRetainedPayloadAgeSeconds,
       });
       emitMetric({ name: "reconciliation_mismatches", value: snapshot.reconciliationMismatches });
       emitMetric({ name: "job_backlog", value: snapshot.jobBacklog });
