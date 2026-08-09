@@ -19,6 +19,9 @@ const siteSchema = z.object({
   siteName: z.string().trim().min(1),
   canonicalOrigin: z.url(),
   defaultLocale: z.string().trim().min(2),
+  supportedLocales: z.array(z.string().trim().min(2)).min(1),
+  localeLabels: z.record(z.string(), z.string().trim().min(1)),
+  localePrefixStrategy: z.literal("as-needed"),
   defaultTitle: z.string().trim().min(1),
   titleTemplate: z.string().trim().min(1),
   defaultDescription: z.string().trim().min(20),
@@ -129,6 +132,10 @@ export function createRouteRegistry(
   routeInputs: readonly RouteDefinition[],
 ): RouteRegistry {
   const site = siteSchema.parse(siteInput) as SiteSeoConfig;
+  if (!site.supportedLocales.includes(site.defaultLocale)) {
+    throw new Error("default SEO locale must be supported");
+  }
+
   const routes = routeInputs.map((input) => {
     const parsed = routeSchema.parse({ ...input, route: normalizeRoute(input.route) });
     return parsed as RouteDefinition;
