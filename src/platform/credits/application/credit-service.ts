@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { accountSubjects } from "@/platform/database/account-subject-schema";
@@ -22,8 +22,14 @@ import type {
   CreditReservationStatus,
   CreditSource,
 } from "../domain/types";
+import {
+  tryCreditMutationLock,
+  withCreditMutationLock,
+} from "../infrastructure/credit-lock";
 
 type CreditTx = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
+
+type GrantReduction = { consumed: number; expired: number; revoked: number };
 
 export type CreditReservationRecord = {
   readonly id: string;
@@ -37,6 +43,16 @@ export type CreditReservationRecord = {
   readonly allocations: readonly CreditAllocation[];
 };
 
+export type CreditGrantQuantityProjection = {
+  readonly grantId: string;
+  readonly quantity: number;
+  readonly consumed: number;
+  readonly revoked: number;
+  readonly expired: number;
+  readonly activeReserved: number;
+  readonly available: number;
+};
+
 async function ensureActiveSubject(tx: CreditTx, subjectId: string): Promise<void> {
   const subject = await tx.query.accountSubjects.findFirst({
     where: and(eq(accountSubjects.id, subjectId), eq(accountSubjects.status, "active")),
@@ -44,33 +60,21 @@ async function ensureActiveSubject(tx: CreditTx, subjectId: string): Promise<voi
   if (!subject) throw new Error("active account subject is required");
 }
 
-async function lockSubjectCreditType(
-  tx: CreditTx,
-  subjectId: string,
-  creditType: string,
-): Promise<void> {
-  // Hash collisions can only serialize unrelated tuples; every mutation/query remains explicitly scoped
-  // by subjectId + creditType, so a collision cannot mix balances or allocations.
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${`${subjectId}:${creditType}`}, 0))`,
-  );
-}
-
 async function loadAllocations(tx: CreditTx, reservationId: string): Promise<CreditAllocation[]> {
-  const rows = await tx
+  return tx
     .select({
       grantId: creditReservationAllocations.grantId,
       quantity: creditReservationAllocations.quantity,
     })
     .from(creditReservationAllocations)
-    .where(eq(creditReservationAllocations.reservationId, reservationId));
-  return rows;
+    .where(eq(creditReservationAllocations.reservationId, reservationId))
+    .orderBy(asc(creditReservationAllocations.grantId));
 }
 
 async function loadGrantReductions(
   tx: CreditTx,
   grantIds: readonly string[],
-): Promise<Map<string, { consumed: number; expired: number; revoked: number }>> {
+): Promise<Map<string, GrantReduction>> {
   if (grantIds.length === 0) return new Map();
   const rows = await tx
     .select({
@@ -82,12 +86,17 @@ async function loadGrantReductions(
     .where(
       and(
         inArray(creditLedgerEntries.grantId, [...grantIds]),
-        inArray(creditLedgerEntries.entryType, ["consume", "expire", "revoke", "adjust_negative"]),
+        inArray(creditLedgerEntries.entryType, [
+          "consume",
+          "expire",
+          "revoke",
+          "adjust_negative",
+        ]),
       ),
     )
     .groupBy(creditLedgerEntries.grantId, creditLedgerEntries.entryType);
 
-  const result = new Map<string, { consumed: number; expired: number; revoked: number }>();
+  const result = new Map<string, GrantReduction>();
   for (const id of grantIds) result.set(id, { consumed: 0, expired: 0, revoked: 0 });
   for (const row of rows) {
     if (!row.grantId) continue;
@@ -104,7 +113,6 @@ async function loadGrantReductions(
 async function loadActiveReserved(
   tx: CreditTx,
   grantIds: readonly string[],
-  now: Date,
 ): Promise<Map<string, number>> {
   if (grantIds.length === 0) return new Map();
   const rows = await tx
@@ -121,11 +129,82 @@ async function loadActiveReserved(
       and(
         inArray(creditReservationAllocations.grantId, [...grantIds]),
         eq(creditReservations.status, "active"),
-        gt(creditReservations.expiresAt, now),
       ),
     )
     .groupBy(creditReservationAllocations.grantId);
   return new Map(rows.map((row) => [row.grantId, Number(row.total)]));
+}
+
+function projectionForGrant(
+  grant: { id: string; quantity: number },
+  reduction: GrantReduction,
+  activeReserved: number,
+): CreditGrantQuantityProjection {
+  const available =
+    grant.quantity -
+    reduction.consumed -
+    reduction.expired -
+    reduction.revoked -
+    activeReserved;
+  if (available < 0) throw new Error(`credit quantity invariant failed for grant ${grant.id}`);
+  return {
+    grantId: grant.id,
+    quantity: grant.quantity,
+    consumed: reduction.consumed,
+    revoked: reduction.revoked,
+    expired: reduction.expired,
+    activeReserved,
+    available,
+  };
+}
+
+async function loadGrantQuantityProjections(
+  tx: CreditTx,
+  grantIds: readonly string[],
+): Promise<CreditGrantQuantityProjection[]> {
+  if (grantIds.length === 0) return [];
+  const grants = await tx
+    .select({ id: creditGrants.id, quantity: creditGrants.quantity })
+    .from(creditGrants)
+    .where(inArray(creditGrants.id, [...grantIds]))
+    .orderBy(asc(creditGrants.id));
+  const reductions = await loadGrantReductions(tx, grantIds);
+  const reserved = await loadActiveReserved(tx, grantIds);
+  return grants.map((grant) =>
+    projectionForGrant(
+      grant,
+      reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 },
+      reserved.get(grant.id) ?? 0,
+    ),
+  );
+}
+
+async function assertGrantQuantityInvariant(tx: CreditTx, grantIds: readonly string[]): Promise<void> {
+  for (const projection of await loadGrantQuantityProjections(tx, grantIds)) {
+    const total =
+      projection.consumed +
+      projection.revoked +
+      projection.expired +
+      projection.activeReserved +
+      projection.available;
+    if (total !== projection.quantity) {
+      throw new Error(`credit quantity invariant failed for grant ${projection.grantId}`);
+    }
+  }
+}
+
+async function maybeMarkExpiredGrantTerminal(
+  tx: CreditTx,
+  grantId: string,
+  now: Date,
+): Promise<void> {
+  const grant = await tx.query.creditGrants.findFirst({ where: eq(creditGrants.id, grantId) });
+  if (!grant || !grant.expiresAt || grant.expiresAt > now || grant.state === "revoked") return;
+  const [projection] = await loadGrantQuantityProjections(tx, [grant.id]);
+  if (!projection) return;
+  if (projection.activeReserved === 0 && projection.available === 0) {
+    await tx.update(creditGrants).set({ state: "expired" }).where(eq(creditGrants.id, grant.id));
+  }
 }
 
 async function reservationRecord(tx: CreditTx, id: string): Promise<CreditReservationRecord> {
@@ -146,6 +225,28 @@ async function reservationRecord(tx: CreditTx, id: string): Promise<CreditReserv
   };
 }
 
+export async function getGrantQuantityProjections(
+  database: DatabaseClient,
+  input: { readonly subjectId: string; readonly creditType: string },
+): Promise<CreditGrantQuantityProjection[]> {
+  return database.transaction(async (tx) => {
+    const grants = await tx
+      .select({ id: creditGrants.id })
+      .from(creditGrants)
+      .where(
+        and(
+          eq(creditGrants.subjectId, input.subjectId),
+          eq(creditGrants.creditType, input.creditType),
+        ),
+      )
+      .orderBy(asc(creditGrants.id));
+    return loadGrantQuantityProjections(
+      tx,
+      grants.map((grant) => grant.id),
+    );
+  });
+}
+
 export async function grantCredits(
   database: DatabaseClient,
   input: {
@@ -164,69 +265,76 @@ export async function grantCredits(
     throw new Error("credit grant identifiers are required");
   }
 
-  return database.transaction(async (tx) => {
-    await ensureActiveSubject(tx, input.subjectId);
-    await lockSubjectCreditType(tx, input.subjectId, input.creditType);
-
-    const bySource = await tx.query.creditGrants.findFirst({
-      where: and(
-        eq(creditGrants.creditType, input.creditType),
-        eq(creditGrants.sourceType, input.source.type),
-        eq(creditGrants.sourceId, input.source.id),
-      ),
-    });
-    const byIdempotency = await tx.query.creditGrants.findFirst({
-      where: eq(creditGrants.idempotencyKey, input.idempotencyKey),
-    });
-    const existing = bySource ?? byIdempotency;
-    if (bySource && byIdempotency && bySource.id !== byIdempotency.id) {
-      throw new Error("credit grant idempotency collision");
-    }
-    if (existing) {
-      if (
-        existing.subjectId !== input.subjectId ||
-        existing.creditType !== input.creditType ||
-        existing.sourceType !== input.source.type ||
-        existing.sourceId !== input.source.id ||
-        existing.quantity !== input.quantity ||
-        existing.idempotencyKey !== input.idempotencyKey ||
-        existing.expiresAt?.getTime() !== input.expiresAt?.getTime()
-      ) {
-        throw new Error("credit grant conflict");
-      }
-      return existing;
-    }
-
-    const [grant] = await tx
-      .insert(creditGrants)
-      .values({
-        subjectId: input.subjectId,
-        creditType: input.creditType,
-        sourceType: input.source.type,
-        sourceId: input.source.id,
-        quantity: input.quantity,
-        idempotencyKey: input.idempotencyKey,
-        expiresAt: input.expiresAt,
-        metadataJson: input.metadata ?? {},
-      })
-      .returning();
-    if (!grant) throw new Error("credit grant insert failed");
-
-    await tx.insert(creditLedgerEntries).values({
+  return database.transaction((tx) =>
+    withCreditMutationLock({
+      tx,
       subjectId: input.subjectId,
       creditType: input.creditType,
-      grantId: grant.id,
-      entryType: "grant",
-      quantity: input.quantity,
-      sourceType: input.source.type,
-      sourceId: input.source.id,
-      correlationId: input.idempotencyKey,
-      idempotencyKey: `grant:${input.idempotencyKey}`,
-      actorType: input.actor,
-      metadataJson: input.metadata ?? {},
-    });
-    return grant;
-  });
+      run: async () => {
+        await ensureActiveSubject(tx, input.subjectId);
+
+        const bySource = await tx.query.creditGrants.findFirst({
+          where: and(
+            eq(creditGrants.creditType, input.creditType),
+            eq(creditGrants.sourceType, input.source.type),
+            eq(creditGrants.sourceId, input.source.id),
+          ),
+        });
+        const byIdempotency = await tx.query.creditGrants.findFirst({
+          where: eq(creditGrants.idempotencyKey, input.idempotencyKey),
+        });
+        const existing = bySource ?? byIdempotency;
+        if (bySource && byIdempotency && bySource.id !== byIdempotency.id) {
+          throw new Error("credit grant idempotency collision");
+        }
+        if (existing) {
+          if (
+            existing.subjectId !== input.subjectId ||
+            existing.creditType !== input.creditType ||
+            existing.sourceType !== input.source.type ||
+            existing.sourceId !== input.source.id ||
+            existing.quantity !== input.quantity ||
+            existing.idempotencyKey !== input.idempotencyKey ||
+            existing.expiresAt?.getTime() !== input.expiresAt?.getTime()
+          ) {
+            throw new Error("credit grant conflict");
+          }
+          return existing;
+        }
+
+        const [grant] = await tx
+          .insert(creditGrants)
+          .values({
+            subjectId: input.subjectId,
+            creditType: input.creditType,
+            sourceType: input.source.type,
+            sourceId: input.source.id,
+            quantity: input.quantity,
+            idempotencyKey: input.idempotencyKey,
+            expiresAt: input.expiresAt,
+            metadataJson: input.metadata ?? {},
+          })
+          .returning();
+        if (!grant) throw new Error("credit grant insert failed");
+
+        await tx.insert(creditLedgerEntries).values({
+          subjectId: input.subjectId,
+          creditType: input.creditType,
+          grantId: grant.id,
+          entryType: "grant",
+          quantity: input.quantity,
+          sourceType: input.source.type,
+          sourceId: input.source.id,
+          correlationId: input.idempotencyKey,
+          idempotencyKey: `grant:${input.idempotencyKey}`,
+          actorType: input.actor,
+          metadataJson: input.metadata ?? {},
+        });
+        await assertGrantQuantityInvariant(tx, [grant.id]);
+        return grant;
+      },
+    }),
+  );
 }
 
 export async function getCreditBalance(
@@ -246,7 +354,7 @@ export async function getCreditBalance(
       );
     const ids = grants.map((grant) => grant.id);
     const reductions = await loadGrantReductions(tx, ids);
-    const reserved = await loadActiveReserved(tx, ids, now);
+    const reserved = await loadActiveReserved(tx, ids);
 
     let available = 0;
     let reservedTotal = 0;
@@ -257,20 +365,13 @@ export async function getCreditBalance(
     for (const grant of grants) {
       const reduction = reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 };
       const activeReserved = reserved.get(grant.id) ?? 0;
-      consumed += reduction.consumed;
-      revoked += reduction.revoked;
-      const remainingAfterTerminal = Math.max(
-        0,
-        grant.quantity - reduction.consumed - reduction.expired - reduction.revoked,
-      );
+      const projection = projectionForGrant(grant, reduction, activeReserved);
       const timeExpired = Boolean(grant.expiresAt && grant.expiresAt <= now);
-      if (timeExpired) {
-        expired += reduction.expired + remainingAfterTerminal;
-      } else {
-        expired += reduction.expired;
-        reservedTotal += activeReserved;
-        available += Math.max(0, remainingAfterTerminal - activeReserved);
-      }
+      consumed += projection.consumed;
+      revoked += projection.revoked;
+      reservedTotal += projection.activeReserved;
+      expired += projection.expired + (timeExpired ? projection.available : 0);
+      if (!timeExpired) available += projection.available;
     }
     return { available, reserved: reservedTotal, consumed, expired, revoked };
   });
@@ -292,110 +393,118 @@ export async function reserveCredits(
   assertCreditQuantity(input.quantity);
   assertReservationExpiry(input.expiresAt, now);
 
-  return database.transaction(async (tx) => {
-    await ensureActiveSubject(tx, input.subjectId);
-    await lockSubjectCreditType(tx, input.subjectId, input.creditType);
+  return database.transaction((tx) =>
+    withCreditMutationLock({
+      tx,
+      subjectId: input.subjectId,
+      creditType: input.creditType,
+      run: async () => {
+        await ensureActiveSubject(tx, input.subjectId);
 
-    const existing = await tx.query.creditReservations.findFirst({
-      where: or(
-        and(
-          eq(creditReservations.subjectId, input.subjectId),
-          eq(creditReservations.creditType, input.creditType),
-          eq(creditReservations.purposeType, input.purpose.type),
-          eq(creditReservations.purposeId, input.purpose.id),
-        ),
-        eq(creditReservations.idempotencyKey, input.idempotencyKey),
-      ),
-    });
-    if (existing) {
-      if (
-        existing.subjectId !== input.subjectId ||
-        existing.creditType !== input.creditType ||
-        existing.purposeType !== input.purpose.type ||
-        existing.purposeId !== input.purpose.id ||
-        existing.quantity !== input.quantity ||
-        existing.idempotencyKey !== input.idempotencyKey ||
-        existing.expiresAt.getTime() !== input.expiresAt.getTime()
-      ) {
-        throw new Error("credit reservation conflict");
-      }
-      return reservationRecord(tx, existing.id);
-    }
-
-    const grants = await tx
-      .select()
-      .from(creditGrants)
-      .where(
-        and(
-          eq(creditGrants.subjectId, input.subjectId),
-          eq(creditGrants.creditType, input.creditType),
-          eq(creditGrants.state, "active"),
-          or(isNull(creditGrants.expiresAt), gte(creditGrants.expiresAt, input.expiresAt)),
-        ),
-      )
-      .for("update");
-    const ids = grants.map((grant) => grant.id);
-    const reductions = await loadGrantReductions(tx, ids);
-    const reserved = await loadActiveReserved(tx, ids, now);
-    const allocation = allocateCredits(
-      grants.map((grant) => {
-        const reduction = reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 };
-        return {
-          id: grant.id,
-          grantedAt: grant.grantedAt,
-          expiresAt: grant.expiresAt,
-          available: Math.max(
-            0,
-            grant.quantity -
-              reduction.consumed -
-              reduction.expired -
-              reduction.revoked -
-              (reserved.get(grant.id) ?? 0),
+        const existing = await tx.query.creditReservations.findFirst({
+          where: or(
+            and(
+              eq(creditReservations.subjectId, input.subjectId),
+              eq(creditReservations.creditType, input.creditType),
+              eq(creditReservations.purposeType, input.purpose.type),
+              eq(creditReservations.purposeId, input.purpose.id),
+            ),
+            eq(creditReservations.idempotencyKey, input.idempotencyKey),
           ),
-        };
-      }),
-      input.quantity,
-      now,
-    );
+        });
+        if (existing) {
+          if (
+            existing.subjectId !== input.subjectId ||
+            existing.creditType !== input.creditType ||
+            existing.purposeType !== input.purpose.type ||
+            existing.purposeId !== input.purpose.id ||
+            existing.quantity !== input.quantity ||
+            existing.idempotencyKey !== input.idempotencyKey ||
+            existing.expiresAt.getTime() !== input.expiresAt.getTime()
+          ) {
+            throw new Error("credit reservation conflict");
+          }
+          return reservationRecord(tx, existing.id);
+        }
 
-    const [reservation] = await tx
-      .insert(creditReservations)
-      .values({
-        subjectId: input.subjectId,
-        creditType: input.creditType,
-        purposeType: input.purpose.type,
-        purposeId: input.purpose.id,
-        quantity: input.quantity,
-        idempotencyKey: input.idempotencyKey,
-        expiresAt: input.expiresAt,
-      })
-      .returning();
-    if (!reservation) throw new Error("credit reservation insert failed");
+        const grants = await tx
+          .select()
+          .from(creditGrants)
+          .where(
+            and(
+              eq(creditGrants.subjectId, input.subjectId),
+              eq(creditGrants.creditType, input.creditType),
+              eq(creditGrants.state, "active"),
+              or(isNull(creditGrants.expiresAt), gt(creditGrants.expiresAt, now)),
+            ),
+          )
+          .orderBy(asc(creditGrants.id))
+          .for("update");
+        const ids = grants.map((grant) => grant.id);
+        const reductions = await loadGrantReductions(tx, ids);
+        const reserved = await loadActiveReserved(tx, ids);
+        const allocation = allocateCredits(
+          grants.map((grant) => {
+            const reduction = reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 };
+            return {
+              id: grant.id,
+              grantedAt: grant.grantedAt,
+              expiresAt: grant.expiresAt,
+              available: Math.max(
+                0,
+                grant.quantity -
+                  reduction.consumed -
+                  reduction.expired -
+                  reduction.revoked -
+                  (reserved.get(grant.id) ?? 0),
+              ),
+            };
+          }),
+          input.quantity,
+          now,
+        );
 
-    const allocatedTotal = allocation.reduce((sum, item) => sum + item.quantity, 0);
-    if (allocatedTotal !== input.quantity) throw new Error("credit allocation invariant failed");
-    for (const item of allocation) {
-      await tx.insert(creditReservationAllocations).values({
-        reservationId: reservation.id,
-        grantId: item.grantId,
-        quantity: item.quantity,
-      });
-      await tx.insert(creditLedgerEntries).values({
-        subjectId: input.subjectId,
-        creditType: input.creditType,
-        grantId: item.grantId,
-        reservationId: reservation.id,
-        entryType: "reserve",
-        quantity: item.quantity,
-        sourceType: "reservation",
-        sourceId: reservation.id,
-        correlationId: input.idempotencyKey,
-        idempotencyKey: `reserve:${reservation.id}:${item.grantId}`,
-        actorType: "system",
-      });
-    }
-    return reservationRecord(tx, reservation.id);
-  });
+        const [reservation] = await tx
+          .insert(creditReservations)
+          .values({
+            subjectId: input.subjectId,
+            creditType: input.creditType,
+            purposeType: input.purpose.type,
+            purposeId: input.purpose.id,
+            quantity: input.quantity,
+            idempotencyKey: input.idempotencyKey,
+            expiresAt: input.expiresAt,
+          })
+          .returning();
+        if (!reservation) throw new Error("credit reservation insert failed");
+
+        const allocatedTotal = allocation.reduce((sum, item) => sum + item.quantity, 0);
+        if (allocatedTotal !== input.quantity) throw new Error("credit allocation invariant failed");
+        for (const item of allocation) {
+          await tx.insert(creditReservationAllocations).values({
+            reservationId: reservation.id,
+            grantId: item.grantId,
+            quantity: item.quantity,
+          });
+          await tx.insert(creditLedgerEntries).values({
+            subjectId: input.subjectId,
+            creditType: input.creditType,
+            grantId: item.grantId,
+            reservationId: reservation.id,
+            entryType: "reserve",
+            quantity: item.quantity,
+            sourceType: "reservation",
+            sourceId: reservation.id,
+            correlationId: input.idempotencyKey,
+            idempotencyKey: `reserve:${reservation.id}:${item.grantId}`,
+            actorType: "system",
+          });
+        }
+        await assertGrantQuantityInvariant(tx, ids);
+        return reservationRecord(tx, reservation.id);
+      },
+    }),
+  );
 }
 
 async function terminalReservation(
@@ -409,60 +518,109 @@ async function terminalReservation(
   },
 ): Promise<void> {
   const now = input.now ?? new Date();
-  await database.transaction(async (tx) => {
-    const [reservation] = await tx
-      .select()
-      .from(creditReservations)
-      .where(eq(creditReservations.id, input.reservationId))
-      .limit(1)
-      .for("update");
-    if (!reservation) throw new Error("credit reservation not found");
-    await lockSubjectCreditType(tx, reservation.subjectId, reservation.creditType);
-    const current = reservation.status as CreditReservationStatus;
-    if (current === input.target) {
-      if (reservation.terminalCorrelationId !== input.correlationId) {
-        throw new Error("credit reservation terminal correlation conflict");
-      }
-      return;
-    }
-    assertReservationTerminalTransition(current, input.target);
-
-    const allocations = await loadAllocations(tx, reservation.id);
-    if (allocations.reduce((sum, item) => sum + item.quantity, 0) !== reservation.quantity) {
-      throw new Error("credit reservation allocation invariant failed");
-    }
-    const entryType = input.target === "committed" ? "consume" : "release";
-    for (const allocation of allocations) {
-      await tx
-        .insert(creditLedgerEntries)
-        .values({
-          subjectId: reservation.subjectId,
-          creditType: reservation.creditType,
-          grantId: allocation.grantId,
-          reservationId: reservation.id,
-          entryType,
-          quantity: allocation.quantity,
-          sourceType: "reservation",
-          sourceId: reservation.id,
-          correlationId: input.correlationId,
-          idempotencyKey: `${entryType}:${reservation.id}:${allocation.grantId}:${input.correlationId}`,
-          actorType: "system",
-          metadataJson: input.reason ? { reason: input.reason } : {},
-        })
-        .onConflictDoNothing({ target: creditLedgerEntries.idempotencyKey });
-    }
-
-    await tx
-      .update(creditReservations)
-      .set({
-        status: input.target,
-        terminalCorrelationId: input.correlationId,
-        ...(input.target === "committed" ? { committedAt: now } : {}),
-        ...(input.target === "released" ? { releasedAt: now } : {}),
-        ...(input.target === "expired" ? { expiredAt: now } : {}),
-      })
-      .where(eq(creditReservations.id, reservation.id));
+  const scope = await database.query.creditReservations.findFirst({
+    columns: { subjectId: true, creditType: true },
+    where: eq(creditReservations.id, input.reservationId),
   });
+  if (!scope) throw new Error("credit reservation not found");
+
+  await database.transaction((tx) =>
+    withCreditMutationLock({
+      tx,
+      subjectId: scope.subjectId,
+      creditType: scope.creditType,
+      run: async () => {
+        const [reservation] = await tx
+          .select()
+          .from(creditReservations)
+          .where(eq(creditReservations.id, input.reservationId))
+          .limit(1)
+          .for("update");
+        if (!reservation) throw new Error("credit reservation not found");
+        const current = reservation.status as CreditReservationStatus;
+        if (current === input.target) {
+          if (reservation.terminalCorrelationId !== input.correlationId) {
+            throw new Error("credit reservation terminal correlation conflict");
+          }
+          return;
+        }
+        assertReservationTerminalTransition(current, input.target);
+
+        const allocations = await loadAllocations(tx, reservation.id);
+        if (allocations.reduce((sum, item) => sum + item.quantity, 0) !== reservation.quantity) {
+          throw new Error("credit reservation allocation invariant failed");
+        }
+        const grantIds = allocations.map((allocation) => allocation.grantId);
+        const grants = grantIds.length
+          ? await tx
+              .select()
+              .from(creditGrants)
+              .where(inArray(creditGrants.id, grantIds))
+              .orderBy(asc(creditGrants.id))
+              .for("update")
+          : [];
+        const grantById = new Map(grants.map((grant) => [grant.id, grant]));
+        const entryType = input.target === "committed" ? "consume" : "release";
+
+        for (const allocation of allocations) {
+          await tx
+            .insert(creditLedgerEntries)
+            .values({
+              subjectId: reservation.subjectId,
+              creditType: reservation.creditType,
+              grantId: allocation.grantId,
+              reservationId: reservation.id,
+              entryType,
+              quantity: allocation.quantity,
+              sourceType: "reservation",
+              sourceId: reservation.id,
+              correlationId: input.correlationId,
+              idempotencyKey: `${entryType}:${reservation.id}:${allocation.grantId}:${input.correlationId}`,
+              actorType: "system",
+              metadataJson: input.reason ? { reason: input.reason } : {},
+            })
+            .onConflictDoNothing({ target: creditLedgerEntries.idempotencyKey });
+
+          if (entryType === "release") {
+            const grant = grantById.get(allocation.grantId);
+            if (grant?.expiresAt && grant.expiresAt <= now) {
+              await tx
+                .insert(creditLedgerEntries)
+                .values({
+                  subjectId: reservation.subjectId,
+                  creditType: reservation.creditType,
+                  grantId: allocation.grantId,
+                  reservationId: reservation.id,
+                  entryType: "expire",
+                  quantity: allocation.quantity,
+                  sourceType: grant.sourceType,
+                  sourceId: grant.sourceId,
+                  correlationId: `post-expiry-${input.target}:${reservation.id}`,
+                  idempotencyKey: `expire:${input.target}:${reservation.id}:${allocation.grantId}`,
+                  actorType: "system",
+                  metadataJson: { reason: "released_after_source_expiry" },
+                })
+                .onConflictDoNothing({ target: creditLedgerEntries.idempotencyKey });
+            }
+          }
+        }
+
+        await tx
+          .update(creditReservations)
+          .set({
+            status: input.target,
+            terminalCorrelationId: input.correlationId,
+            ...(input.target === "committed" ? { committedAt: now } : {}),
+            ...(input.target === "released" ? { releasedAt: now } : {}),
+            ...(input.target === "expired" ? { expiredAt: now } : {}),
+          })
+          .where(eq(creditReservations.id, reservation.id));
+
+        await assertGrantQuantityInvariant(tx, grantIds);
+        for (const grantId of grantIds) await maybeMarkExpiredGrantTerminal(tx, grantId, now);
+      },
+    }),
+  );
 }
 
 export async function commitReservation(
@@ -493,17 +651,27 @@ export async function expireReservations(
     .select({ id: creditReservations.id })
     .from(creditReservations)
     .where(and(eq(creditReservations.status, "active"), lte(creditReservations.expiresAt, now)))
+    .orderBy(asc(creditReservations.id))
     .limit(Math.min(Math.max(input.limit ?? 100, 1), 500));
   let expired = 0;
   for (const row of rows) {
-    await terminalReservation(database, {
-      reservationId: row.id,
-      correlationId: `reservation-expiry:${row.id}:${now.toISOString()}`,
-      target: "expired",
-      reason: "reservation_expired",
-      now,
-    });
-    expired += 1;
+    try {
+      await terminalReservation(database, {
+        reservationId: row.id,
+        correlationId: `reservation-expiry:${row.id}`,
+        target: "expired",
+        reason: "reservation_expired",
+        now,
+      });
+      expired += 1;
+    } catch (error) {
+      const current = await database.query.creditReservations.findFirst({
+        columns: { status: true },
+        where: eq(creditReservations.id, row.id),
+      });
+      if (current?.status === "committed" || current?.status === "released") continue;
+      throw error;
+    }
   }
   return expired;
 }
@@ -514,7 +682,11 @@ export async function expireGrants(
 ): Promise<number> {
   const now = input.now ?? new Date();
   const candidates = await database
-    .select({ id: creditGrants.id })
+    .select({
+      id: creditGrants.id,
+      subjectId: creditGrants.subjectId,
+      creditType: creditGrants.creditType,
+    })
     .from(creditGrants)
     .where(
       and(
@@ -523,10 +695,19 @@ export async function expireGrants(
         lte(creditGrants.expiresAt, now),
       ),
     )
+    .orderBy(asc(creditGrants.id))
     .limit(Math.min(Math.max(input.limit ?? 100, 1), 500));
+
   let count = 0;
   for (const candidate of candidates) {
     await database.transaction(async (tx) => {
+      const locked = await tryCreditMutationLock({
+        tx,
+        subjectId: candidate.subjectId,
+        creditType: candidate.creditType,
+      });
+      if (!locked) return;
+
       const [grant] = await tx
         .select()
         .from(creditGrants)
@@ -534,32 +715,36 @@ export async function expireGrants(
         .limit(1)
         .for("update");
       if (!grant || grant.state !== "active" || !grant.expiresAt || grant.expiresAt > now) return;
-      await lockSubjectCreditType(tx, grant.subjectId, grant.creditType);
+
       const reductions = await loadGrantReductions(tx, [grant.id]);
-      const activeReserved = await loadActiveReserved(tx, [grant.id], now);
-      if ((activeReserved.get(grant.id) ?? 0) > 0) {
-        throw new Error("expired grant still has active reservation");
-      }
+      const activeReserved = await loadActiveReserved(tx, [grant.id]);
       const reduction = reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 };
-      const unused = Math.max(
+      const reserved = activeReserved.get(grant.id) ?? 0;
+      const expirableNow = Math.max(
         0,
-        grant.quantity - reduction.consumed - reduction.expired - reduction.revoked,
+        grant.quantity - reduction.consumed - reduction.expired - reduction.revoked - reserved,
       );
-      if (unused > 0) {
-        await tx.insert(creditLedgerEntries).values({
-          subjectId: grant.subjectId,
-          creditType: grant.creditType,
-          grantId: grant.id,
-          entryType: "expire",
-          quantity: unused,
-          sourceType: grant.sourceType,
-          sourceId: grant.sourceId,
-          correlationId: `grant-expiry:${grant.id}`,
-          idempotencyKey: `expire:${grant.id}`,
-          actorType: "system",
-        });
+
+      if (expirableNow > 0) {
+        await tx
+          .insert(creditLedgerEntries)
+          .values({
+            subjectId: grant.subjectId,
+            creditType: grant.creditType,
+            grantId: grant.id,
+            entryType: "expire",
+            quantity: expirableNow,
+            sourceType: grant.sourceType,
+            sourceId: grant.sourceId,
+            correlationId: `grant-expiry:${grant.id}`,
+            idempotencyKey: `expire:${grant.id}:available-at-source-expiry`,
+            actorType: "system",
+          })
+          .onConflictDoNothing({ target: creditLedgerEntries.idempotencyKey });
       }
-      await tx.update(creditGrants).set({ state: "expired" }).where(eq(creditGrants.id, grant.id));
+
+      await assertGrantQuantityInvariant(tx, [grant.id]);
+      await maybeMarkExpiredGrantTerminal(tx, grant.id, now);
       count += 1;
     });
   }
@@ -579,19 +764,25 @@ export async function revokeSourceCredits(
 ): Promise<{ readonly revoked: number; readonly blocked: number }> {
   if (input.quantity !== undefined) {
     assertCreditQuantity(input.quantity);
-    if (!input.partialPolicy)
+    if (!input.partialPolicy) {
       throw new Error("partial credit reversal requires operator-reviewed policy");
+    }
   }
   const now = input.now ?? new Date();
   const grants = await database
-    .select({ id: creditGrants.id })
+    .select({
+      id: creditGrants.id,
+      subjectId: creditGrants.subjectId,
+      creditType: creditGrants.creditType,
+    })
     .from(creditGrants)
     .where(
       and(
         eq(creditGrants.sourceType, input.source.type),
         eq(creditGrants.sourceId, input.source.id),
       ),
-    );
+    )
+    .orderBy(asc(creditGrants.id));
   if (grants.length === 0) return { revoked: 0, blocked: input.quantity ?? 0 };
 
   let targetRemaining = input.quantity ?? Number.MAX_SAFE_INTEGER;
@@ -599,53 +790,61 @@ export async function revokeSourceCredits(
   let blocked = 0;
   for (const candidate of grants) {
     if (targetRemaining <= 0) break;
-    await database.transaction(async (tx) => {
-      const [grant] = await tx
-        .select()
-        .from(creditGrants)
-        .where(eq(creditGrants.id, candidate.id))
-        .limit(1)
-        .for("update");
-      if (!grant) return;
-      await lockSubjectCreditType(tx, grant.subjectId, grant.creditType);
-      const reductions = await loadGrantReductions(tx, [grant.id]);
-      const activeReserved = await loadActiveReserved(tx, [grant.id], now);
-      const reduction = reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 };
-      const reserved = activeReserved.get(grant.id) ?? 0;
-      const unused = Math.max(
-        0,
-        grant.quantity - reduction.consumed - reduction.expired - reduction.revoked - reserved,
-      );
-      const desired = Math.min(unused, targetRemaining);
-      if (desired > 0) {
-        await tx
-          .insert(creditLedgerEntries)
-          .values({
-            subjectId: grant.subjectId,
-            creditType: grant.creditType,
-            grantId: grant.id,
-            entryType: "revoke",
-            quantity: desired,
-            sourceType: input.source.type,
-            sourceId: input.source.id,
-            correlationId: input.correlationId,
-            idempotencyKey: `revoke:${input.correlationId}:${grant.id}`,
-            actorType: input.actor ?? "system",
-            metadataJson: input.partialPolicy ? { partialPolicy: input.partialPolicy } : {},
-          })
-          .onConflictDoNothing({ target: creditLedgerEntries.idempotencyKey });
-        revoked += desired;
-        targetRemaining -= desired;
-      }
-      const irrecoverable = reduction.consumed + reserved;
-      blocked += Math.min(irrecoverable, Math.max(0, targetRemaining));
-      if (desired === unused && unused > 0 && reduction.consumed + reserved === 0) {
-        await tx
-          .update(creditGrants)
-          .set({ state: "revoked" })
-          .where(eq(creditGrants.id, grant.id));
-      }
-    });
+    await database.transaction((tx) =>
+      withCreditMutationLock({
+        tx,
+        subjectId: candidate.subjectId,
+        creditType: candidate.creditType,
+        run: async () => {
+          const [grant] = await tx
+            .select()
+            .from(creditGrants)
+            .where(eq(creditGrants.id, candidate.id))
+            .limit(1)
+            .for("update");
+          if (!grant) return;
+          const reductions = await loadGrantReductions(tx, [grant.id]);
+          const activeReserved = await loadActiveReserved(tx, [grant.id]);
+          const reduction = reductions.get(grant.id) ?? { consumed: 0, expired: 0, revoked: 0 };
+          const reserved = activeReserved.get(grant.id) ?? 0;
+          const unused = Math.max(
+            0,
+            grant.quantity - reduction.consumed - reduction.expired - reduction.revoked - reserved,
+          );
+          const desired = Math.min(unused, targetRemaining);
+          if (desired > 0) {
+            await tx
+              .insert(creditLedgerEntries)
+              .values({
+                subjectId: grant.subjectId,
+                creditType: grant.creditType,
+                grantId: grant.id,
+                entryType: "revoke",
+                quantity: desired,
+                sourceType: input.source.type,
+                sourceId: input.source.id,
+                correlationId: input.correlationId,
+                idempotencyKey: `revoke:${input.correlationId}:${grant.id}`,
+                actorType: input.actor ?? "system",
+                metadataJson: input.partialPolicy ? { partialPolicy: input.partialPolicy } : {},
+              })
+              .onConflictDoNothing({ target: creditLedgerEntries.idempotencyKey });
+            revoked += desired;
+            targetRemaining -= desired;
+          }
+          const irrecoverable = reduction.consumed + reserved;
+          blocked += Math.min(irrecoverable, Math.max(0, targetRemaining));
+          if (desired === unused && unused > 0 && reduction.consumed + reserved === 0) {
+            await tx
+              .update(creditGrants)
+              .set({ state: "revoked" })
+              .where(eq(creditGrants.id, grant.id));
+          }
+          await assertGrantQuantityInvariant(tx, [grant.id]);
+          await maybeMarkExpiredGrantTerminal(tx, grant.id, now);
+        },
+      }),
+    );
   }
   if (input.quantity !== undefined && revoked < input.quantity) blocked = input.quantity - revoked;
   return { revoked, blocked };
