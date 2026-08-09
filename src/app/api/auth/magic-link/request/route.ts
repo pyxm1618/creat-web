@@ -6,6 +6,7 @@ import { getAuth } from "@/platform/auth/auth";
 import { assertAllowedRelativeCallback } from "@/platform/auth/callback-url";
 import { extractTrustedClientIp } from "@/platform/auth/client-ip";
 import { normalizeEmail } from "@/platform/auth/email-normalization";
+import { verifyTurnstileToken } from "@/platform/auth/turnstile";
 import { env } from "@/platform/config/env";
 import { db } from "@/platform/database/application-database";
 
@@ -15,6 +16,7 @@ export const dynamic = "force-dynamic";
 const requestSchema = z.object({
   email: z.email().max(320),
   returnTo: z.string().min(1).max(512),
+  turnstileToken: z.string().min(1).max(2048),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -22,8 +24,8 @@ export async function POST(request: Request): Promise<Response> {
     return new Response("Not Found", { status: 404 });
   }
   const auth = getAuth();
-  if (!auth || !env.betterAuthSecret) {
-    throw new Error("Better Auth secret is required for enabled magic-link requests");
+  if (!auth || !env.betterAuthSecret || !env.turnstileSecretKey) {
+    throw new Error("Authentication security configuration is incomplete");
   }
   const limiter = createAuthAttemptLimiter(db, env.betterAuthSecret);
 
@@ -52,20 +54,6 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     await limiter.consume({
-      scope: "magic-link-send-email-burst",
-      identifiers: [`email:${email}`],
-      windowMs: 10 * 60 * 1000,
-      max: 3,
-      now,
-    });
-    await limiter.consume({
-      scope: "magic-link-send-email-daily",
-      identifiers: [`email:${email}`],
-      windowMs: 24 * 60 * 60 * 1000,
-      max: 10,
-      now,
-    });
-    await limiter.consume({
       scope: "magic-link-send-ip-burst",
       identifiers: [`ip:${clientIp}`],
       windowMs: 60 * 1000,
@@ -77,6 +65,44 @@ export async function POST(request: Request): Promise<Response> {
       identifiers: [`ip:${clientIp}`],
       windowMs: 24 * 60 * 60 * 1000,
       max: 50,
+      now,
+    });
+  } catch {
+    return Response.json({ error: "rate_limited" }, { status: 429 });
+  }
+
+  const deployed = env.appEnv === "staging" || env.appEnv === "production";
+  const turnstile = await verifyTurnstileToken({
+    token: parsed.data.turnstileToken,
+    secretKey: env.turnstileSecretKey,
+    remoteIp: clientIp,
+    ...(deployed
+      ? {
+          expectedAction: "magic-link",
+          expectedHostname: new URL(env.appOrigin).hostname,
+        }
+      : {}),
+  });
+  if (!turnstile.ok) {
+    return Response.json(
+      { error: turnstile.reason === "unavailable" ? "challenge_unavailable" : "challenge_failed" },
+      { status: turnstile.reason === "unavailable" ? 503 : 403 },
+    );
+  }
+
+  try {
+    await limiter.consume({
+      scope: "magic-link-send-email-burst",
+      identifiers: [`email:${email}`],
+      windowMs: 10 * 60 * 1000,
+      max: 3,
+      now,
+    });
+    await limiter.consume({
+      scope: "magic-link-send-email-daily",
+      identifiers: [`email:${email}`],
+      windowMs: 24 * 60 * 60 * 1000,
+      max: 10,
       now,
     });
   } catch {
