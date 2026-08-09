@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
-import { accountDeletionService } from "@/platform/accounts/account-deletion-runtime";
+import { getAccountDeletionService } from "@/platform/accounts/account-deletion-runtime";
 import { env } from "@/platform/config/env";
 
 export const runtime = "nodejs";
@@ -14,6 +14,8 @@ function authorized(request: Request): boolean {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  const accountDeletionService = getAccountDeletionService();
+  if (!accountDeletionService) return new Response("Not Found", { status: 404 });
   if (!authorized(request)) {
     return new Response("Unauthorized", {
       status: 401,
