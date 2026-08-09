@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/seo-performance-i18n-platform-completion]
   pull_request:
 
 concurrency:
