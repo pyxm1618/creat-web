@@ -259,9 +259,7 @@ function FinalCtaSection(props: Extract<LandingSection, { type: "final-cta" }>) 
 }
 
 export function LandingPage({ sections }: Readonly<{ sections: readonly LandingSection[] }>) {
-  const visibleSections: LandingSection[] = sections.filter(
-    (section) => section.enabled !== false,
-  );
+  const visibleSections: LandingSection[] = sections.filter((section) => section.enabled !== false);
   visibleSections.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   return (
