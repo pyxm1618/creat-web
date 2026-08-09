@@ -4,6 +4,7 @@ import { featuresConfig } from "./src/config/features.config";
 
 const isProduction = process.env.APP_ENV === "production";
 const isDevelopment = process.env.NODE_ENV === "development";
+const turnstileEnabled = featuresConfig.auth.enabled && featuresConfig.auth.magicLink;
 
 const analyticsScriptSources = [
   ...(featuresConfig.analytics.enabled && featuresConfig.analytics.ga4
@@ -29,14 +30,29 @@ const analyticsImageSources = [
     ? ["https://*.clarity.ms"]
     : []),
 ];
+const turnstileSource = "https://challenges.cloudflare.com";
+
+const scriptSources = [
+  "'self'",
+  ...(isDevelopment ? ["'unsafe-eval'"] : []),
+  ...analyticsScriptSources,
+  ...(turnstileEnabled ? [turnstileSource] : []),
+];
+const connectSources = [
+  "'self'",
+  ...analyticsConnectSources,
+  ...(turnstileEnabled ? [turnstileSource] : []),
+];
+const frameSources = ["'self'", ...(turnstileEnabled ? [turnstileSource] : [])];
 
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ""}${analyticsScriptSources.length ? ` ${analyticsScriptSources.join(" ")}` : ""}`,
+  `script-src ${scriptSources.join(" ")}`,
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob:${analyticsImageSources.length ? ` ${analyticsImageSources.join(" ")}` : ""}`,
   "font-src 'self' data:",
-  `connect-src 'self'${analyticsConnectSources.length ? ` ${analyticsConnectSources.join(" ")}` : ""}`,
+  `connect-src ${connectSources.join(" ")}`,
+  `frame-src ${frameSources.join(" ")}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -50,11 +66,20 @@ const baselineSecurityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-site" },
   {
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()",
   },
-  ...(isProduction ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] : []),
+  ...(isProduction
+    ? [
+        {
+          key: "Strict-Transport-Security",
+          value: "max-age=31536000; includeSubDomains",
+        },
+      ]
+    : []),
 ] as const;
 
 const sensitiveHeaders = [
@@ -68,6 +93,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   trailingSlash: false,
   allowedDevOrigins: ["127.0.0.1", "localhost"],
+  experimental: {
+    sri: {
+      algorithm: "sha256",
+    },
+  },
   images: {
     formats: ["image/avif", "image/webp"],
   },
