@@ -24,10 +24,19 @@ export async function runCommerceCommandWorker(input: {
   readonly provider: PaymentProvider;
   readonly owner: string;
   readonly now?: Date;
+  readonly limit?: number;
+  readonly onClaimed?: (count: number) => void;
 }): Promise<number> {
   const now = input.now ?? new Date();
   let processed = 0;
-  for (const job of await claimCommerceCommandJobs(input.database, { owner: input.owner, now })) {
+  const jobs = await claimCommerceCommandJobs(input.database, {
+    owner: input.owner,
+    now,
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  });
+  input.onClaimed?.(jobs.length);
+
+  for (const job of jobs) {
     try {
       if (job.commandType === "subscription_cancel" || job.commandType === "subscription_resume") {
         const subscription = await input.database.query.subscriptions.findFirst({
