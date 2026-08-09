@@ -65,8 +65,7 @@ if (siteConfig.canonicalOrigin.includes("localhost")) {
 }
 if (productionRelease) {
   if (seoReleaseStatus !== "reviewed") throw new Error("production SEO config is not reviewed");
-  if (legalReleaseStatus !== "reviewed")
-    throw new Error("production legal config is not reviewed");
+  if (legalReleaseStatus !== "reviewed") throw new Error("production legal config is not reviewed");
   if (/example\.(?:com|org|net)$/i.test(new URL(siteConfig.canonicalOrigin).hostname)) {
     throw new Error("production site origin is still a placeholder");
   }
