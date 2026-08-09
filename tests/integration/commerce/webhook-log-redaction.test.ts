@@ -27,6 +27,8 @@ it("redacts webhook secrets and private buyer data from structured logs", () => 
   expect(serialized).not.toContain("super-secret-signature");
   expect(serialized).not.toContain("Bearer secret-token");
   expect(serialized).not.toContain("person@example.com");
+  expect(serialized).not.toContain("Private Buyer");
+  expect(serialized).not.toContain("203.0.113.5");
   expect(serialized).not.toContain("4242424242424242");
   expect(serialized).not.toContain("payment-secret-token");
   expect(serialized).toContain("evt_safe");
