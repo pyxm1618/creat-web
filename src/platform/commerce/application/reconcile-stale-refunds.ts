@@ -8,10 +8,11 @@ const DEFAULT_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export async function reconcileStaleRefunds(
   database: DatabaseClient,
-  input: { readonly now?: Date; readonly staleAfterMs?: number } = {},
+  input: { readonly now?: Date; readonly staleAfterMs?: number; readonly limit?: number } = {},
 ): Promise<number> {
   const now = input.now ?? new Date();
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
   if (!Number.isFinite(staleAfterMs) || staleAfterMs <= 0) {
     throw new Error("stale refund threshold must be positive");
   }
@@ -23,7 +24,7 @@ export async function reconcileStaleRefunds(
       .from(refunds)
       .where(and(eq(refunds.status, "processing"), lte(refunds.updatedAt, cutoff)))
       .orderBy(refunds.updatedAt)
-      .limit(100)
+      .limit(limit)
       .for("update", { skipLocked: true });
 
     let reconciled = 0;
