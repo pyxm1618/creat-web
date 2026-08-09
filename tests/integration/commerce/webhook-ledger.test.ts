@@ -5,6 +5,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { InvalidWebhookSignatureError } from "@/platform/commerce/application/errors";
 import { ingestProviderWebhook } from "@/platform/commerce/application/ingest-provider-webhook";
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
+import { processOneTimePaymentEvent } from "@/platform/commerce/application/process-one-time-payment-event";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
 import { payloadHash } from "@/platform/commerce/application/webhook-retention";
@@ -155,6 +156,25 @@ it("binds provider order to merchant reference and creates one payment and fulfi
     .where(eq(fulfillmentJobs.sourceId, event.externalPaymentId));
   expect(jobs).toHaveLength(1);
   expect(jobs[0]?.operation).toBe("fulfill:test-delivery");
+});
+
+it("keeps one-time payment application available as an explicit transaction handler", async () => {
+  const { order } = await seedOrder();
+  const event: NormalizedProviderEvent = {
+    type: "one_time_payment_succeeded",
+    eventId: `handler-${crypto.randomUUID()}`,
+    environment: "test",
+    externalOrderId: `ORD_${crypto.randomUUID()}`,
+    merchantOrderReference: order.id,
+    externalPaymentId: `PAY_${crypto.randomUUID()}`,
+    amount: { currency: "USD", minor: 2900n },
+    occurredAt: new Date("2026-08-08T04:00:00Z"),
+  };
+
+  await database.db.transaction((tx) => processOneTimePaymentEvent(tx, event, "a".repeat(64)));
+
+  const storedOrder = await database.db.query.orders.findFirst({ where: eq(orders.id, order.id) });
+  expect(storedOrder).toMatchObject({ status: "paid", externalOrderId: event.externalOrderId });
 });
 
 it("prevents cumulative refunds from exceeding the captured payment", async () => {
