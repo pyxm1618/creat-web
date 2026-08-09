@@ -8,6 +8,8 @@ export type PageType =
   | "Pricing"
   | "Legal";
 
+export type SeoReviewStatus = "draft" | "reviewed";
+
 export type SiteSeoConfig = {
   readonly siteName: string;
   readonly canonicalOrigin: string;
@@ -16,7 +18,7 @@ export type SiteSeoConfig = {
   readonly titleTemplate: string;
   readonly defaultDescription: string;
   readonly defaultOgImage: string;
-  readonly releaseStatus: "draft" | "reviewed";
+  readonly releaseStatus: SeoReviewStatus;
 };
 
 export type IndexablePage = {
@@ -33,6 +35,7 @@ export type IndexablePage = {
   readonly pageType: Exclude<PageType, "Legal">;
   readonly relatedRoutes: readonly string[];
   readonly lastModified: string;
+  readonly reviewStatus?: SeoReviewStatus;
 };
 
 export type NonIndexablePage = {
