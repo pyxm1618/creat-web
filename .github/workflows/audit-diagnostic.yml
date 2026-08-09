@@ -1,0 +1,32 @@
+name: Supply-chain diagnostic
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/seo-performance-i18n-platform-completion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Capture audit JSON
+        shell: bash
+        run: |
+          bun audit --json > audit-diagnostic.json || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add audit-diagnostic.json
+          git commit -m "chore: capture temporary supply-chain audit diagnostic"
+          git push origin HEAD:${{ github.head_ref }}
