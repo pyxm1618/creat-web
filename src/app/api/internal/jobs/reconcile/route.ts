@@ -27,14 +27,20 @@ export async function GET(request: Request): Promise<Response> {
     batchLimit: 50,
     maxRuntimeMs: 45_000,
     run: async (job) => {
+      let remaining = job.batchLimit;
       const staleRefundsReconciled = await reconcileStaleRefunds(commerce.database, {
-        limit: job.batchLimit,
+        limit: remaining,
       });
+      remaining = Math.max(0, remaining - staleRefundsReconciled);
       job.assertWithinBudget();
-      const purgedPayloads = job.canContinue(2_000)
-        ? await purgeExpiredWebhookPayloads(commerce.database, { limit: job.batchLimit })
-        : 0;
+
+      const purgedPayloads =
+        remaining > 0 && job.canContinue(2_000)
+          ? await purgeExpiredWebhookPayloads(commerce.database, { limit: remaining })
+          : 0;
+      remaining = Math.max(0, remaining - purgedPayloads);
       job.assertWithinBudget();
+
       const creditIssues =
         featuresConfig.commerce.credits && job.canContinue(2_000)
           ? await reconcileCreditLedger(db)
