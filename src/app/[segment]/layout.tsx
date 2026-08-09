@@ -6,6 +6,7 @@ import { SiteFooter } from "@/components/navigation/site-footer";
 import { SiteHeader } from "@/components/navigation/site-header";
 import { seoLandingPages } from "@/config/seo-landings.config";
 import { siteConfig } from "@/config/site.config";
+import { isSupportedLocale } from "@/platform/i18n/routing";
 import { rootMetadata } from "@/platform/seo/root-metadata";
 
 import "../globals.css";
@@ -28,7 +29,7 @@ export function generateStaticParams() {
 export default async function SegmentRootLayout({ children, params }: SegmentLayoutProps) {
   const { segment } = await params;
   const locale =
-    segment !== siteConfig.defaultLocale && siteConfig.supportedLocales.includes(segment)
+    segment !== siteConfig.defaultLocale && isSupportedLocale(siteConfig, segment)
       ? segment
       : siteConfig.defaultLocale;
 
