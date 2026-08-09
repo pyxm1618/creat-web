@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import type { ReactNode } from "react";
 
 import { AnalyticsBoundary } from "@/components/analytics/analytics-boundary";
@@ -27,6 +28,7 @@ export function generateStaticParams() {
 }
 
 export default async function SegmentRootLayout({ children, params }: SegmentLayoutProps) {
+  await connection();
   const { segment } = await params;
   const locale =
     segment !== siteConfig.defaultLocale && isSupportedLocale(siteConfig, segment)
