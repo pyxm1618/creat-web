@@ -18,10 +18,7 @@ export function rootMetadata(): Metadata {
       template: seoConfig.titleTemplate,
     },
     description: seoConfig.defaultDescription,
-    icons: {
-      icon: "/favicon.ico",
-      apple: "/apple-touch-icon.png",
-    },
+    icons: { icon: "/icon.svg" },
     manifest: "/manifest.webmanifest",
   };
 }
