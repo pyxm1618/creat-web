@@ -95,7 +95,7 @@ jobs:
       - name: Production application build
         run: bun run build
       - name: Release verification
-        run: bun run verify:release
+        run: bun run verify:release --mode=test
 
   performance:
     runs-on: ubuntu-latest
@@ -117,7 +117,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     services:
       postgres:
         image: postgres:16-alpine
@@ -153,3 +153,34 @@ jobs:
           bun run db:migrate
       - name: Browser end-to-end tests
         run: bun run test:e2e
+      - name: Production-mode canonical and security output
+        run: bun run verify:seo:production
+
+  clean-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: creat_web_clean
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d creat_web_clean"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CLEAN_SETUP_DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_clean
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.3.14 }
+      - name: Install harness dependencies
+        run: bun install --frozen-lockfile
+      - name: Install Chromium prerequisite
+        run: bunx playwright install --with-deps chromium
+      - name: Verify independent clean setup
+        run: bun scripts/verify-clean-setup.ts
