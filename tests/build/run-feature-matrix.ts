@@ -7,7 +7,7 @@ const disabled = {
   auth: { enabled: false, google: false, magicLink: false, password: false },
   email: { enabled: false },
   commerce: { enabled: false, oneTime: false, subscriptions: false, credits: false },
-  analytics: { ga4: false, clarity: false, consentRequired: true },
+  analytics: { enabled: false, ga4: false, clarity: false, consentRequired: true },
 } as const satisfies ProductConfig["features"];
 
 const build = spawnSync("bun", ["run", "build:test"], {
@@ -30,6 +30,7 @@ const build = spawnSync("bun", ["run", "build:test"], {
     COMMERCE_RETENTION_KEY: undefined,
     COMMERCE_RETENTION_KEY_ID: undefined,
     GA4_MEASUREMENT_ID: undefined,
+    CLARITY_PROJECT_ID: undefined,
   },
 });
 if (build.status !== 0) throw new Error("disabled-provider build failed");
