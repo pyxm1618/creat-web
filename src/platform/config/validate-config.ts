@@ -2,12 +2,17 @@ import { z } from "zod";
 
 import type { ProductConfig } from "./types";
 
+const localeSchema = z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/);
+
 const productConfigSchema = z.object({
   site: z.object({
     slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     name: z.string().min(2),
     canonicalOrigin: z.url(),
-    defaultLocale: z.string().min(2),
+    defaultLocale: localeSchema,
+    supportedLocales: z.array(localeSchema).min(1),
+    localeLabels: z.record(z.string(), z.string().trim().min(1)),
+    localePrefixStrategy: z.literal("as-needed"),
   }),
   features: z.object({
     auth: z.object({
@@ -24,6 +29,7 @@ const productConfigSchema = z.object({
       credits: z.boolean(),
     }),
     analytics: z.object({
+      enabled: z.boolean(),
       ga4: z.boolean(),
       clarity: z.boolean(),
       consentRequired: z.boolean(),
@@ -33,6 +39,16 @@ const productConfigSchema = z.object({
 
 export function validateProductConfig(input: ProductConfig): ProductConfig {
   const parsed = productConfigSchema.parse(input);
+
+  if (!parsed.site.supportedLocales.includes(parsed.site.defaultLocale)) {
+    throw new Error("default locale must be supported");
+  }
+  if (new Set(parsed.site.supportedLocales).size !== parsed.site.supportedLocales.length) {
+    throw new Error("supported locales must be unique");
+  }
+  for (const locale of parsed.site.supportedLocales) {
+    if (!parsed.site.localeLabels[locale]) throw new Error(`missing locale label: ${locale}`);
+  }
 
   if (parsed.features.auth.google && !parsed.features.auth.enabled) {
     throw new Error("Google sign-in requires auth");
@@ -51,6 +67,9 @@ export function validateProductConfig(input: ProductConfig): ProductConfig {
   }
   if (parsed.features.commerce.credits && !parsed.features.commerce.enabled) {
     throw new Error("credits require commerce");
+  }
+  if ((parsed.features.analytics.ga4 || parsed.features.analytics.clarity) && !parsed.features.analytics.enabled) {
+    throw new Error("analytics providers require analytics");
   }
 
   const origin = new URL(parsed.site.canonicalOrigin);
