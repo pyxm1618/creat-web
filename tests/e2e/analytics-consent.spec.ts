@@ -28,10 +28,13 @@ test("analytics makes zero third-party requests before consent", async ({ page }
     }
     await route.continue();
   });
-  await page.goto("/test/analytics-consent");
+  await page.goto("/");
   await page.waitForTimeout(300);
   expect(requests).toEqual([]);
-  await page.getByRole("button", { name: "Allow analytics" }).click();
+
+  const consent = page.getByRole("complementary", { name: "Analytics consent" });
+  await expect(consent).toBeVisible();
+  await consent.getByRole("button", { name: "Allow analytics" }).click();
   await expect.poll(() => requests.length).toBeGreaterThan(0);
 });
 
