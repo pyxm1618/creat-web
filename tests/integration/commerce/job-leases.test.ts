@@ -167,3 +167,36 @@ it("reclaims expired subscription/refund command leases but not active leases", 
   });
   expect(recovered?.leaseOwner).toBe("recovery-worker");
 });
+
+it("two workers claim disjoint webhook batches without duplicate ownership", async () => {
+  const now = new Date("2026-08-09T06:00:00Z");
+  const prefix = `concurrent-${crypto.randomUUID()}`;
+  await database.db.insert(paymentWebhookInbox).values(
+    Array.from({ length: 12 }, (_, index) => ({
+      environment: "test",
+      providerEventId: `${prefix}-${index}`,
+      dedupHash: crypto.randomUUID().replaceAll("-", ""),
+      eventType: "one_time_payment_succeeded",
+      signatureValid: true,
+      normalizedPayloadJson: {},
+      payloadHash: crypto.randomUUID().replaceAll("-", "").padEnd(64, "0"),
+      payloadSizeBytes: 1,
+      retentionClass: "normalized_only",
+      state: "pending" as const,
+      nextAttemptAt: new Date(now.getTime() - 1),
+      receivedAt: now,
+    })),
+  );
+
+  const [workerA, workerB] = await Promise.all([
+    claimWebhookInbox(database.db, { owner: "worker-a", now, limit: 6 }),
+    claimWebhookInbox(database.db, { owner: "worker-b", now, limit: 6 }),
+  ]);
+
+  const idsA = new Set(workerA.filter((row) => row.providerEventId.startsWith(prefix)).map((row) => row.id));
+  const idsB = new Set(workerB.filter((row) => row.providerEventId.startsWith(prefix)).map((row) => row.id));
+  expect(idsA.size).toBe(6);
+  expect(idsB.size).toBe(6);
+  expect([...idsA].filter((id) => idsB.has(id))).toEqual([]);
+  expect(new Set([...idsA, ...idsB]).size).toBe(12);
+});
