@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
-import { creditFinalizationJobs } from "@/platform/database/credit-schema";
+import { authSecurityEvents, creditFinalizationJobs } from "@/platform/database/schema";
 
 import { commitReservation } from "./credit-service";
 
@@ -81,22 +81,32 @@ export async function runCreditFinalizationWorker(
       completed += 1;
     } catch (error) {
       const attempts = job.attempts + 1;
-      await database
-        .update(creditFinalizationJobs)
-        .set({
-          state: attempts >= MAX_ATTEMPTS ? "dead_letter" : "pending",
-          attempts,
-          nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: errorCode(error),
-        })
-        .where(
-          and(
-            eq(creditFinalizationJobs.id, job.id),
-            eq(creditFinalizationJobs.leaseOwner, input.owner),
-          ),
-        );
+      const dead = attempts >= MAX_ATTEMPTS;
+      await database.transaction(async (tx) => {
+        await tx
+          .update(creditFinalizationJobs)
+          .set({
+            state: dead ? "dead_letter" : "pending",
+            attempts,
+            nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastErrorCode: errorCode(error),
+          })
+          .where(
+            and(
+              eq(creditFinalizationJobs.id, job.id),
+              eq(creditFinalizationJobs.leaseOwner, input.owner),
+            ),
+          );
+        if (dead) {
+          await tx.insert(authSecurityEvents).values({
+            eventType: "dead_letter_created",
+            outcome: "failure",
+            details: { queue: "credit_finalization" },
+          });
+        }
+      });
       deferred += 1;
     }
   }
