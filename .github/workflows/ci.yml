@@ -15,7 +15,7 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 55
     services:
       postgres:
         image: postgres:16-alpine
@@ -57,12 +57,17 @@ jobs:
         run: bun run test:unit
       - name: PostgreSQL integration tests
         run: bun run test:integration
+      - name: Credit expiry race verification (30 runs)
+        run: bun run verify:credit-races
       - name: Isolated database restore drill
         run: |
           set -euo pipefail
           POSTGRES_CONTAINER="$(docker ps --filter ancestor=postgres:16-alpine --format '{{.ID}}' | head -n 1)"
           test -n "$POSTGRES_CONTAINER"
-          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d creat_web_test -Fc > /tmp/creat-web.dump
+          docker exec "$POSTGRES_CONTAINER" dropdb -U postgres --if-exists creat_web_restore_source
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres creat_web_restore_source
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/creat_web_restore_source bun run db:migrate
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d creat_web_restore_source -Fc > /tmp/creat-web.dump
           docker exec "$POSTGRES_CONTAINER" dropdb -U postgres --if-exists creat_web_restore
           docker exec "$POSTGRES_CONTAINER" createdb -U postgres creat_web_restore
           cat /tmp/creat-web.dump | docker exec -i "$POSTGRES_CONTAINER" pg_restore -U postgres -d creat_web_restore --no-owner --no-acl
