@@ -2,7 +2,11 @@ import { eq } from "drizzle-orm";
 
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
-import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/commerce-schema";
+import {
+  authSecurityEvents,
+  fulfillmentJobs,
+  paymentWebhookInbox,
+} from "@/platform/database/schema";
 
 import { parseNormalizedProviderEvent } from "./event-json";
 import { claimFulfillmentJobs, claimWebhookInbox, retryDelay } from "./job-leases";
@@ -50,17 +54,26 @@ export async function runCommerceWorker(input: {
     } catch (error) {
       const attempts = row.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
-      await input.database
-        .update(paymentWebhookInbox)
-        .set({
-          state: dead ? "dead_letter" : "retry",
-          attempts,
-          nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: errorCode(error),
-        })
-        .where(eq(paymentWebhookInbox.id, row.id));
+      await input.database.transaction(async (tx) => {
+        await tx
+          .update(paymentWebhookInbox)
+          .set({
+            state: dead ? "dead_letter" : "retry",
+            attempts,
+            nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastErrorCode: errorCode(error),
+          })
+          .where(eq(paymentWebhookInbox.id, row.id));
+        if (dead) {
+          await tx.insert(authSecurityEvents).values({
+            eventType: "dead_letter_created",
+            outcome: "failure",
+            details: { queue: "webhook" },
+          });
+        }
+      });
     }
   }
 
@@ -93,17 +106,26 @@ export async function runCommerceWorker(input: {
     } catch (error) {
       const attempts = job.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
-      await input.database
-        .update(fulfillmentJobs)
-        .set({
-          state: dead ? "dead_letter" : "pending",
-          attempts,
-          nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: errorCode(error),
-        })
-        .where(eq(fulfillmentJobs.id, job.id));
+      await input.database.transaction(async (tx) => {
+        await tx
+          .update(fulfillmentJobs)
+          .set({
+            state: dead ? "dead_letter" : "pending",
+            attempts,
+            nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            lastErrorCode: errorCode(error),
+          })
+          .where(eq(fulfillmentJobs.id, job.id));
+        if (dead) {
+          await tx.insert(authSecurityEvents).values({
+            eventType: "dead_letter_created",
+            outcome: "failure",
+            details: { queue: "fulfillment" },
+          });
+        }
+      });
     }
   }
 
