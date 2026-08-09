@@ -7,8 +7,9 @@ function normalizePath(pathname: string): string {
 export function canonicalUrl(
   originInput: string,
   routeInput: string,
-  _query?: URLSearchParams,
+  query?: URLSearchParams,
 ): string {
+  void query;
   const origin = new URL(originInput);
   const candidate = new URL(routeInput, origin);
 
