@@ -10,9 +10,9 @@ import type {
 } from "./types";
 
 const PLACEHOLDER_PATTERN = /\b(todo|tbd|placeholder|replace[ -]?me|lorem ipsum)\b/i;
-const MIN_TITLE_LENGTH = 20;
+const MIN_TITLE_LENGTH = 12;
 const MAX_TITLE_LENGTH = 65;
-const MIN_DESCRIPTION_LENGTH = 70;
+const MIN_DESCRIPTION_LENGTH = 50;
 const MAX_DESCRIPTION_LENGTH = 180;
 
 const siteSchema = z.object({
