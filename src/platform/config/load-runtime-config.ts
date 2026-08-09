@@ -21,6 +21,8 @@ export type RuntimeEnv = {
   readonly googleClientId: string | undefined;
   readonly googleClientSecret: string | undefined;
   readonly resendApiKey: string | undefined;
+  readonly turnstileSiteKey: string | undefined;
+  readonly turnstileSecretKey: string | undefined;
   readonly waffoMerchantId: string | undefined;
   readonly waffoPrivateKey: string | undefined;
   readonly waffoStoreId: string | undefined;
@@ -47,6 +49,8 @@ const baseSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
+  TURNSTILE_SITE_KEY: z.string().optional(),
+  TURNSTILE_SECRET_KEY: z.string().optional(),
   WAFFO_MERCHANT_ID: z.string().optional(),
   WAFFO_PRIVATE_KEY: z.string().optional(),
   WAFFO_STORE_ID: z.string().optional(),
@@ -61,6 +65,8 @@ const baseSchema = z.object({
 
 const TEST_ONLY_AUTH_SECRET = "test-only-better-auth-secret-never-use-in-production";
 const TEST_ONLY_CRON_SECRET = "test-only-cron-secret-never-use-in-production";
+const TEST_ONLY_TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
+const TEST_ONLY_TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA";
 
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return false;
@@ -71,6 +77,10 @@ function requireSecret(value: string | undefined, label: string): string {
   if (!value) throw new Error(`${label} are required`);
   if (isPlaceholder(value)) throw new Error("placeholder secret");
   return value;
+}
+
+function isTurnstileTestKey(value: string): boolean {
+  return /^[123]x0{8,}/.test(value);
 }
 
 function assertDeploymentEnvironment(parsed: z.infer<typeof baseSchema>): void {
@@ -127,6 +137,28 @@ function resolveEmailTransport(
     throw new Error("staging and production email transport must use Resend");
   }
   return transport;
+}
+
+function resolveTurnstile(
+  parsed: z.infer<typeof baseSchema>,
+  magicLinkEnabled: boolean,
+): { siteKey: string | undefined; secretKey: string | undefined } {
+  if (!magicLinkEnabled) return { siteKey: undefined, secretKey: undefined };
+
+  const isNonProduction = parsed.APP_ENV === "local" || parsed.APP_ENV === "test";
+  if (isNonProduction) {
+    return {
+      siteKey: parsed.TURNSTILE_SITE_KEY ?? TEST_ONLY_TURNSTILE_SITE_KEY,
+      secretKey: parsed.TURNSTILE_SECRET_KEY ?? TEST_ONLY_TURNSTILE_SECRET_KEY,
+    };
+  }
+
+  const siteKey = requireSecret(parsed.TURNSTILE_SITE_KEY, "Turnstile site key");
+  const secretKey = requireSecret(parsed.TURNSTILE_SECRET_KEY, "Turnstile secret key");
+  if (isTurnstileTestKey(siteKey) || isTurnstileTestKey(secretKey)) {
+    throw new Error("Turnstile test keys are forbidden in staging and production");
+  }
+  return { siteKey, secretKey };
 }
 
 function validateRetentionKey(value: string): string {
@@ -197,6 +229,8 @@ export function loadRuntimeEnv(
     testEmailDirectory = parsed.TEST_EMAIL_DIR ?? "/tmp/creat-web-test-emails";
   }
 
+  const turnstile = resolveTurnstile(parsed, features.auth.magicLink);
+
   if (features.commerce.enabled) {
     waffoMerchantId = requireSecret(parsed.WAFFO_MERCHANT_ID, "Waffo merchant configuration");
     waffoPrivateKey = requireSecret(parsed.WAFFO_PRIVATE_KEY, "Waffo credentials");
@@ -249,6 +283,8 @@ export function loadRuntimeEnv(
     googleClientId,
     googleClientSecret,
     resendApiKey,
+    turnstileSiteKey: turnstile.siteKey,
+    turnstileSecretKey: turnstile.secretKey,
     waffoMerchantId,
     waffoPrivateKey,
     waffoStoreId,
