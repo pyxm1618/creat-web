@@ -1,3 +1,5 @@
+import type { LocalePrefixStrategy } from "@/platform/config/types";
+
 export type RouteClass = "public_indexable" | "public_noindex" | "private" | "system";
 
 export type PageType =
@@ -14,6 +16,9 @@ export type SiteSeoConfig = {
   readonly siteName: string;
   readonly canonicalOrigin: string;
   readonly defaultLocale: string;
+  readonly supportedLocales: readonly string[];
+  readonly localeLabels: Readonly<Record<string, string>>;
+  readonly localePrefixStrategy: LocalePrefixStrategy;
   readonly defaultTitle: string;
   readonly titleTemplate: string;
   readonly defaultDescription: string;
