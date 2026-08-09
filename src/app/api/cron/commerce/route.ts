@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 
 import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
+import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
 import { runCommerceWorker } from "@/platform/commerce/application/run-commerce-worker";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
@@ -28,6 +29,10 @@ export async function GET(request: Request): Promise<Response> {
     fulfillment: commerce.fulfillment,
     owner: `cron:${randomUUID()}`,
   });
+  const staleRefundsReconciled = await reconcileStaleRefunds(commerce.database);
   const purgedPayloads = await purgeExpiredWebhookPayloads(commerce.database);
-  return Response.json({ ...worker, purgedPayloads }, { headers: { "cache-control": "no-store" } });
+  return Response.json(
+    { ...worker, staleRefundsReconciled, purgedPayloads },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
