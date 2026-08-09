@@ -17,21 +17,17 @@ function authorized(request: Request): boolean {
 
 export async function GET(request: Request): Promise<Response> {
   if (!authorized(request)) {
-    return new Response("Unauthorized", {
-      status: 401,
-      headers: { "cache-control": "no-store" },
-    });
+    return new Response("Unauthorized", { status: 401, headers: { "cache-control": "no-store" } });
   }
-
   const commerce = await getCommerceRuntime();
   if (!commerce) return new Response("Not Found", { status: 404 });
 
   const worker = await runCommerceWorker({
     database: commerce.database,
+    provider: commerce.provider,
     fulfillment: commerce.fulfillment,
     owner: `cron:${randomUUID()}`,
   });
   const purgedPayloads = await purgeExpiredWebhookPayloads(commerce.database);
-
   return Response.json({ ...worker, purgedPayloads }, { headers: { "cache-control": "no-store" } });
 }
