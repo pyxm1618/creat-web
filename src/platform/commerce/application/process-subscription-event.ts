@@ -184,31 +184,36 @@ export async function processSubscriptionEvent(
   }
   if (!subscription) throw new Error("subscription projection insert failed");
 
-  const transition = transitionFor(event);
-  let projection = persistedProjection(subscription);
-  if (transition) projection = applySubscriptionTransition(projection, transition);
-  if (event.type === "subscription_updated") {
-    projection = {
-      ...projection,
-      currentPeriodStart: event.currentPeriodStart ?? projection.currentPeriodStart,
-      currentPeriodEnd: event.currentPeriodEnd ?? projection.currentPeriodEnd,
-    };
-  }
+  const staleProjectionEvent = Boolean(
+    subscription.providerUpdatedAt && event.occurredAt < subscription.providerUpdatedAt,
+  );
+  if (!staleProjectionEvent) {
+    const transition = transitionFor(event);
+    let projection = persistedProjection(subscription);
+    if (transition) projection = applySubscriptionTransition(projection, transition);
+    if (event.type === "subscription_updated") {
+      projection = {
+        ...projection,
+        currentPeriodStart: event.currentPeriodStart ?? projection.currentPeriodStart,
+        currentPeriodEnd: event.currentPeriodEnd ?? projection.currentPeriodEnd,
+      };
+    }
 
-  await tx
-    .update(subscriptions)
-    .set({
-      status: projection.status,
-      cancelAtPeriodEnd: projection.cancelAtPeriodEnd,
-      currentPeriodStart: projection.currentPeriodStart,
-      currentPeriodEnd: projection.currentPeriodEnd,
-      pastDueStartedAt: projection.pastDueStartedAt,
-      pastDueGraceEndsAt: projection.pastDueGraceEndsAt,
-      gracePolicyVersion: projection.gracePolicyVersion,
-      providerUpdatedAt: event.occurredAt,
-      updatedAt: new Date(),
-    })
-    .where(eq(subscriptions.id, subscription.id));
+    await tx
+      .update(subscriptions)
+      .set({
+        status: projection.status,
+        cancelAtPeriodEnd: projection.cancelAtPeriodEnd,
+        currentPeriodStart: projection.currentPeriodStart,
+        currentPeriodEnd: projection.currentPeriodEnd,
+        pastDueStartedAt: projection.pastDueStartedAt,
+        pastDueGraceEndsAt: projection.pastDueGraceEndsAt,
+        gracePolicyVersion: projection.gracePolicyVersion,
+        providerUpdatedAt: event.occurredAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(subscriptions.id, subscription.id));
+  }
 
   if (event.type === "subscription_activated" || event.type === "subscription_payment_succeeded") {
     await tx
