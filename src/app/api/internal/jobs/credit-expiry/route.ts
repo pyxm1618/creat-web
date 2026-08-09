@@ -22,18 +22,23 @@ export async function GET(request: Request): Promise<Response> {
     batchLimit: 50,
     maxRuntimeMs: 45_000,
     run: async (job) => {
-      const expiredReservations = await expireReservations(db, { limit: job.batchLimit });
+      let remaining = job.batchLimit;
+      const expiredReservations = await expireReservations(db, { limit: remaining });
+      remaining = Math.max(0, remaining - expiredReservations);
       job.assertWithinBudget();
-      const finalized = job.canContinue(2_000)
-        ? await runCreditFinalizationWorker(db, {
-            owner: `internal-credits:${randomUUID()}`,
-            limit: job.batchLimit,
-          })
-        : { completed: 0, deferred: 0 };
+
+      const finalized =
+        remaining > 0 && job.canContinue(2_000)
+          ? await runCreditFinalizationWorker(db, {
+              owner: `internal-credits:${randomUUID()}`,
+              limit: remaining,
+            })
+          : { completed: 0, deferred: 0 };
+      remaining = Math.max(0, remaining - finalized.completed - finalized.deferred);
       job.assertWithinBudget();
-      const expiredGrants = job.canContinue(2_000)
-        ? await expireGrants(db, { limit: job.batchLimit })
-        : 0;
+
+      const expiredGrants =
+        remaining > 0 && job.canContinue(2_000) ? await expireGrants(db, { limit: remaining }) : 0;
       return { expiredReservations, finalized, expiredGrants };
     },
   });
