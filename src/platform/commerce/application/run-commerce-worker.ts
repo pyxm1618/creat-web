@@ -28,8 +28,8 @@ export async function runCommerceWorker(input: {
   readonly owner: string;
   readonly now?: Date;
   readonly limit?: number;
+  readonly onClaimed?: (count: number) => void;
 }): Promise<{
-  readonly attempted: number;
   readonly inboxProcessed: number;
   readonly commandProcessed: number;
   readonly fulfillmentProcessed: number;
@@ -157,10 +157,6 @@ export async function runCommerceWorker(input: {
     }
   }
 
-  return {
-    attempted: batchLimit - remaining,
-    inboxProcessed,
-    commandProcessed,
-    fulfillmentProcessed,
-  };
+  input.onClaimed?.(batchLimit - remaining);
+  return { inboxProcessed, commandProcessed, fulfillmentProcessed };
 }
