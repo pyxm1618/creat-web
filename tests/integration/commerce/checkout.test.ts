@@ -50,7 +50,8 @@ function provider(create: PaymentProvider["createOneTimeCheckout"]): PaymentProv
     name: "test-provider",
     capabilities: { oneTime: true, subscriptions: false, partialRefunds: false },
     async createCheckout(input) {
-      const { model: _model, ...oneTimeInput } = input;
+      const { model, ...oneTimeInput } = input;
+      void model;
       return create(oneTimeInput);
     },
     createOneTimeCheckout: create,
