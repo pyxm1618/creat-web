@@ -45,12 +45,13 @@ it("requires an explicit monthly or yearly interval for subscription products", 
     billingInterval: "month",
   });
 
+  const { billingInterval: _billingInterval, ...withoutInterval } = monthly;
+  void _billingInterval;
   expect(() =>
     createProductCatalog([
       {
-        ...monthly,
+        ...withoutInterval,
         key: "invalid-subscription",
-        billingInterval: undefined,
       },
     ]).getEnabled("invalid-subscription", "test"),
   ).toThrow("subscription billing interval is required");
