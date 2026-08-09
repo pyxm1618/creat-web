@@ -68,8 +68,11 @@ export function TurnstileWidget({
   const widgetIdRef = useRef<string | null>(null);
   const onTokenRef = useRef(onToken);
   const onUnavailableRef = useRef(onUnavailable);
-  onTokenRef.current = onToken;
-  onUnavailableRef.current = onUnavailable;
+
+  useEffect(() => {
+    onTokenRef.current = onToken;
+    onUnavailableRef.current = onUnavailable;
+  }, [onToken, onUnavailable]);
 
   useEffect(() => {
     let disposed = false;
