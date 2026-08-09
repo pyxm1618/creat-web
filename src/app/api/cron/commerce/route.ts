@@ -1,38 +1,48 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
 import { runCommerceWorker } from "@/platform/commerce/application/run-commerce-worker";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
+import {
+  authenticateInternalRequest,
+  unauthorizedInternalResponse,
+} from "@/platform/operations/authenticate-internal-request";
+import { runBoundedJob } from "@/platform/operations/run-bounded-job";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function authorized(request: Request): boolean {
-  if (!env.cronSecret) return false;
-  const expected = Buffer.from(`Bearer ${env.cronSecret}`);
-  const actual = Buffer.from(request.headers.get("authorization") ?? "");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
+const COMMERCE_BATCH_LIMIT = 20;
+const COMMERCE_RUNTIME_MS = 45_000;
 
 export async function GET(request: Request): Promise<Response> {
-  if (!authorized(request)) {
-    return new Response("Unauthorized", { status: 401, headers: { "cache-control": "no-store" } });
-  }
+  if (!authenticateInternalRequest(request, env.cronSecret)) return unauthorizedInternalResponse();
   const commerce = await getCommerceRuntime();
   if (!commerce) return new Response("Not Found", { status: 404 });
 
-  const worker = await runCommerceWorker({
-    database: commerce.database,
-    provider: commerce.provider,
-    fulfillment: commerce.fulfillment,
-    owner: `cron:${randomUUID()}`,
+  const result = await runBoundedJob({
+    batchLimit: COMMERCE_BATCH_LIMIT,
+    maxRuntimeMs: COMMERCE_RUNTIME_MS,
+    run: async (job) => {
+      const worker = await runCommerceWorker({
+        database: commerce.database,
+        provider: commerce.provider,
+        fulfillment: commerce.fulfillment,
+        owner: `cron:${randomUUID()}`,
+      });
+      job.assertWithinBudget();
+      const staleRefundsReconciled = job.canContinue(2_000)
+        ? await reconcileStaleRefunds(commerce.database, { limit: job.batchLimit })
+        : 0;
+      job.assertWithinBudget();
+      const purgedPayloads = job.canContinue(2_000)
+        ? await purgeExpiredWebhookPayloads(commerce.database, { limit: job.batchLimit })
+        : 0;
+      return { ...worker, staleRefundsReconciled, purgedPayloads };
+    },
   });
-  const staleRefundsReconciled = await reconcileStaleRefunds(commerce.database);
-  const purgedPayloads = await purgeExpiredWebhookPayloads(commerce.database);
-  return Response.json(
-    { ...worker, staleRefundsReconciled, purgedPayloads },
-    { headers: { "cache-control": "no-store" } },
-  );
+
+  return Response.json(result, { headers: { "cache-control": "no-store" } });
 }
