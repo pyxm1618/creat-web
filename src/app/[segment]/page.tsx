@@ -8,7 +8,7 @@ import { routeRegistry } from "@/config/routes.config";
 import { seoLandingForRoute } from "@/config/seo-landings.config";
 import { siteConfig } from "@/config/site.config";
 import { localizeLandingSections } from "@/platform/i18n/landing-sections";
-import { localePath } from "@/platform/i18n/routing";
+import { isSupportedLocale, localePath } from "@/platform/i18n/routing";
 import { currentSeoEnvironment } from "@/platform/seo/environment-policy";
 import { metadataForLocalizedRoute, metadataForRoute } from "@/platform/seo/metadata";
 import { articleJsonLd, webApplicationJsonLd, websiteJsonLd } from "@/platform/seo/structured-data";
@@ -19,7 +19,7 @@ type SegmentPageProps = {
 
 function nonDefaultLocale(segment: string): string | undefined {
   if (segment === siteConfig.defaultLocale) return undefined;
-  return siteConfig.supportedLocales.includes(segment) ? segment : undefined;
+  return isSupportedLocale(siteConfig, segment) ? segment : undefined;
 }
 
 export async function generateMetadata({ params }: SegmentPageProps): Promise<Metadata> {
