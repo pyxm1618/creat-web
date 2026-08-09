@@ -15,6 +15,7 @@ import type {
 import type {
   NormalizedPaymentSnapshot,
   NormalizedProviderEvent,
+  NormalizedSubscriptionEvent,
 } from "@/platform/commerce/domain/events";
 import { formatDisplayAmount, parseDisplayAmount } from "@/platform/commerce/domain/money";
 import type { CommerceEnvironment } from "@/platform/commerce/domain/product";
@@ -147,7 +148,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         },
         refundTicketMerchantExternalId: input.idempotencyKey,
       });
-      const ticket = result.refundTicket;
+      const ticket = result.ticket;
       const status = String(ticket.status);
       if (status === "succeeded") {
         return { externalRefundReference: ticket.id, status: "succeeded" as const };
@@ -263,39 +264,29 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         "subscription.updated": "subscription_updated",
         "subscription.canceled": "subscription_canceled",
         "subscription.past_due": "subscription_past_due",
-      }[event.eventType as string] as
-        | "subscription_activated"
-        | "subscription_payment_succeeded"
-        | "subscription_canceling"
-        | "subscription_uncanceled"
-        | "subscription_updated"
-        | "subscription_canceled"
-        | "subscription_past_due"
-        | undefined;
+      }[event.eventType as string] as NormalizedSubscriptionEvent["type"] | undefined;
       if (subscriptionType) {
         const currency = optionalString(event.data.currency);
         const displayAmount = optionalString(event.data.amount);
-        return {
+        const externalPaymentId = optionalString(event.data.paymentId);
+        const currentPeriodStart = optionalDate(event.data.currentPeriodStart);
+        const currentPeriodEnd = optionalDate(event.data.currentPeriodEnd);
+        const normalized: NormalizedSubscriptionEvent = {
           type: subscriptionType,
           eventId,
           environment,
           externalOrderId: requireString(event.data.orderId, "data.orderId"),
           ...(merchantOrderReference ? { merchantOrderReference } : {}),
-          ...(optionalString(event.data.paymentId)
-            ? { externalPaymentId: optionalString(event.data.paymentId) }
-            : {}),
+          ...(externalPaymentId ? { externalPaymentId } : {}),
           ...(currency && displayAmount
             ? { amount: parseDisplayAmount(displayAmount, currency) }
             : {}),
-          ...(optionalDate(event.data.currentPeriodStart)
-            ? { currentPeriodStart: optionalDate(event.data.currentPeriodStart) }
-            : {}),
-          ...(optionalDate(event.data.currentPeriodEnd)
-            ? { currentPeriodEnd: optionalDate(event.data.currentPeriodEnd) }
-            : {}),
+          ...(currentPeriodStart ? { currentPeriodStart } : {}),
+          ...(currentPeriodEnd ? { currentPeriodEnd } : {}),
           occurredAt,
           storeId: event.storeId,
         };
+        return normalized;
       }
 
       if (event.eventType === "refund.succeeded") {
@@ -305,28 +296,26 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
           requireString(event.data.amount, "data.amount"),
           currency,
         );
+        const externalRefundReference = optionalString(event.data.refundId);
         return {
           type: "refund_succeeded",
           eventId,
           environment,
           externalPaymentId,
-          ...(optionalString(event.data.refundId)
-            ? { externalRefundReference: optionalString(event.data.refundId) }
-            : {}),
+          ...(externalRefundReference ? { externalRefundReference } : {}),
           ...(merchantOrderReference ? { merchantOrderReference } : {}),
           amount,
           occurredAt,
         };
       }
       if (event.eventType === "refund.failed") {
+        const externalRefundReference = optionalString(event.data.refundId);
         return {
           type: "refund_failed",
           eventId,
           environment,
           externalPaymentId: requireString(event.data.paymentId, "data.paymentId"),
-          ...(optionalString(event.data.refundId)
-            ? { externalRefundReference: optionalString(event.data.refundId) }
-            : {}),
+          ...(externalRefundReference ? { externalRefundReference } : {}),
           ...(merchantOrderReference ? { merchantOrderReference } : {}),
           occurredAt,
         };
