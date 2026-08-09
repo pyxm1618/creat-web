@@ -20,12 +20,13 @@ export async function GET(request: Request): Promise<Response> {
   const result = await runBoundedJob({
     batchLimit: 20,
     maxRuntimeMs: 45_000,
-    run: async () =>
+    run: async (job) =>
       runCommerceWorker({
         database: commerce.database,
         provider: commerce.provider,
         fulfillment: commerce.fulfillment,
         owner: `internal-commerce:${randomUUID()}`,
+        limit: job.batchLimit,
       }),
   });
 
