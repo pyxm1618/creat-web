@@ -1,17 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
-
-const featureConfigPath = "src/config/features.config.ts";
-const original = await readFile(featureConfigPath, "utf8");
-const enabledProfile = `import type { ProductConfig } from "@/platform/config/types";
-
-export const featuresConfig = {
-  auth: { enabled: true, google: false, magicLink: true, password: false },
-  email: { enabled: true },
-  commerce: { enabled: false, oneTime: false, subscriptions: false, credits: false },
-  analytics: { enabled: true, ga4: true, clarity: true, consentRequired: true },
-} as const satisfies ProductConfig["features"];
-`;
 
 function waitForExit(child: ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -20,36 +7,31 @@ function waitForExit(child: ChildProcess): Promise<number> {
   });
 }
 
-let restored = false;
-let server: ChildProcess | undefined;
-async function restore(): Promise<void> {
-  if (restored) return;
-  restored = true;
-  await writeFile(featureConfigPath, original, "utf8");
-}
+let activeChild: ChildProcess | undefined;
+const testEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  APP_ENV: "test",
+  CREAT_WEB_E2E_ENABLED_FEATURES: "1",
+};
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    server?.kill(signal);
-    void restore().finally(() => process.exit(0));
+    activeChild?.kill(signal);
   });
 }
 
-try {
-  await writeFile(featureConfigPath, enabledProfile, "utf8");
-  const build = spawn("bun", ["run", "build:test"], {
+const build = spawn("bun", ["run", "build:test"], {
+  stdio: "inherit",
+  env: testEnv,
+});
+activeChild = build;
+const buildExitCode = await waitForExit(build);
+if (buildExitCode !== 0) process.exitCode = buildExitCode;
+else {
+  const server = spawn("bun", ["run", "start"], {
     stdio: "inherit",
-    env: process.env,
+    env: testEnv,
   });
-  const buildExitCode = await waitForExit(build);
-  if (buildExitCode !== 0) process.exitCode = buildExitCode;
-  else {
-    server = spawn("bun", ["run", "start"], {
-      stdio: "inherit",
-      env: process.env,
-    });
-    process.exitCode = await waitForExit(server);
-  }
-} finally {
-  await restore();
+  activeChild = server;
+  process.exitCode = await waitForExit(server);
 }

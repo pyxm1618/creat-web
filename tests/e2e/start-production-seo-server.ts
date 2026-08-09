@@ -9,6 +9,7 @@ function waitForExit(child: ChildProcess): Promise<number> {
 
 const inheritedEnv: NodeJS.ProcessEnv = { ...process.env };
 delete inheritedEnv.TEST_EMAIL_DIR;
+delete inheritedEnv.CREAT_WEB_E2E_ENABLED_FEATURES;
 
 const env: NodeJS.ProcessEnv = {
   ...inheritedEnv,
