@@ -2,6 +2,8 @@ export type OperationalMetricName =
   | "dead_letter_created"
   | "magic_link_requests"
   | "webhook_invalid_signatures"
+  | "webhook_retained_payloads"
+  | "oldest_webhook_payload_age_seconds"
   | "reconciliation_mismatches"
   | "job_backlog"
   | "oldest_job_age_seconds"
