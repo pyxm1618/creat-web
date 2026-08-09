@@ -3,11 +3,17 @@ import { eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import {
+  claimCommerceCommandJobs,
   claimFulfillmentJobs,
   claimWebhookInbox,
 } from "@/platform/commerce/application/job-leases";
 import { createDatabaseClient } from "@/platform/database/client";
-import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/schema";
+import {
+  accountSubjects,
+  commerceCommandJobs,
+  fulfillmentJobs,
+  paymentWebhookInbox,
+} from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
@@ -112,6 +118,52 @@ it("reclaims expired processing fulfillment leases but not active leases", async
 
   const recovered = await database.db.query.fulfillmentJobs.findFirst({
     where: eq(fulfillmentJobs.id, expired.id),
+  });
+  expect(recovered?.leaseOwner).toBe("recovery-worker");
+});
+
+it("reclaims expired subscription/refund command leases but not active leases", async () => {
+  const now = new Date("2026-08-09T05:00:00Z");
+  const [subject] = await database.db.insert(accountSubjects).values({}).returning();
+  if (!subject) throw new Error("subject insert failed");
+
+  const [expired] = await database.db
+    .insert(commerceCommandJobs)
+    .values({
+      subjectId: subject.id,
+      commandType: "subscription_cancel",
+      targetId: crypto.randomUUID(),
+      idempotencyKey: `expired:${crypto.randomUUID()}`,
+      state: "processing",
+      leaseOwner: "crashed-worker",
+      leaseExpiresAt: new Date(now.getTime() - 1),
+      nextAttemptAt: new Date(now.getTime() - 1),
+    })
+    .returning();
+  const [active] = await database.db
+    .insert(commerceCommandJobs)
+    .values({
+      subjectId: subject.id,
+      commandType: "refund_request",
+      targetId: crypto.randomUUID(),
+      idempotencyKey: `active:${crypto.randomUUID()}`,
+      state: "processing",
+      leaseOwner: "live-worker",
+      leaseExpiresAt: new Date(now.getTime() + 60_000),
+      nextAttemptAt: new Date(now.getTime() - 1),
+    })
+    .returning();
+  if (!expired || !active) throw new Error("command fixture insert failed");
+
+  const claimed = await claimCommerceCommandJobs(database.db, {
+    owner: "recovery-worker",
+    now,
+  });
+  expect(claimed.map((row) => row.id)).toContain(expired.id);
+  expect(claimed.map((row) => row.id)).not.toContain(active.id);
+
+  const recovered = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, expired.id),
   });
   expect(recovered?.leaseOwner).toBe("recovery-worker");
 });
