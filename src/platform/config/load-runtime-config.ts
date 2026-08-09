@@ -30,6 +30,7 @@ export type RuntimeEnv = {
   readonly commerceRetentionKey: string | undefined;
   readonly commerceRetentionKeyId: string | undefined;
   readonly ga4MeasurementId: string | undefined;
+  readonly clarityProjectId: string | undefined;
 };
 
 const baseSchema = z.object({
@@ -55,6 +56,7 @@ const baseSchema = z.object({
   COMMERCE_RETENTION_KEY: z.string().optional(),
   COMMERCE_RETENTION_KEY_ID: z.string().optional(),
   GA4_MEASUREMENT_ID: z.string().optional(),
+  CLARITY_PROJECT_ID: z.string().optional(),
 });
 
 const TEST_ONLY_AUTH_SECRET = "test-only-better-auth-secret-never-use-in-production";
@@ -73,20 +75,15 @@ function requireSecret(value: string | undefined, label: string): string {
 
 function assertDeploymentEnvironment(parsed: z.infer<typeof baseSchema>): void {
   if (!parsed.VERCEL_ENV) return;
-
   const expected: Record<VercelEnvironment, AppEnvironment> = {
     development: "local",
     preview: "staging",
     production: "production",
   };
   if (parsed.APP_ENV !== expected[parsed.VERCEL_ENV]) {
-    throw new Error(
-      `VERCEL_ENV=${parsed.VERCEL_ENV} requires APP_ENV=${expected[parsed.VERCEL_ENV]}`,
-    );
+    throw new Error(`VERCEL_ENV=${parsed.VERCEL_ENV} requires APP_ENV=${expected[parsed.VERCEL_ENV]}`);
   }
-  if (parsed.APP_ENV === "test") {
-    throw new Error("APP_ENV=test is forbidden on Vercel deployments");
-  }
+  if (parsed.APP_ENV === "test") throw new Error("APP_ENV=test is forbidden on Vercel deployments");
 }
 
 function resolveAuthSecret(
@@ -94,7 +91,6 @@ function resolveAuthSecret(
   authEnabled: boolean,
 ): string | undefined {
   if (!authEnabled) return undefined;
-
   const isNonProduction = parsed.APP_ENV === "local" || parsed.APP_ENV === "test";
   if (isNonProduction && !parsed.BETTER_AUTH_SECRET) return TEST_ONLY_AUTH_SECRET;
   if (!parsed.BETTER_AUTH_SECRET) throw new Error("Better Auth secret is required");
@@ -123,14 +119,11 @@ function resolveEmailTransport(
   emailEnabled: boolean,
 ): EmailTransport {
   if (!emailEnabled) return "disabled";
-
   const isNonProduction = parsed.APP_ENV === "local" || parsed.APP_ENV === "test";
   const transport = parsed.EMAIL_TRANSPORT ?? (isNonProduction ? "test" : "resend");
-
   if (!isNonProduction && transport !== "resend") {
     throw new Error("staging and production email transport must use Resend");
   }
-
   return transport;
 }
 
@@ -179,23 +172,19 @@ export function loadRuntimeEnv(
   let commerceRetentionKey: string | undefined;
   let commerceRetentionKeyId: string | undefined;
   let ga4MeasurementId: string | undefined;
+  let clarityProjectId: string | undefined;
 
   if (features.auth.google) {
     googleClientId = requireSecret(parsed.GOOGLE_CLIENT_ID, "Google credentials");
     googleClientSecret = requireSecret(parsed.GOOGLE_CLIENT_SECRET, "Google credentials");
   }
 
-  const emailTransport = resolveEmailTransport(
-    parsed,
-    features.auth.magicLink || features.email.enabled,
-  );
+  const emailTransport = resolveEmailTransport(parsed, features.auth.magicLink || features.email.enabled);
   if (emailTransport === "resend") {
     resendApiKey = requireSecret(parsed.RESEND_API_KEY, "Resend credentials");
     emailFrom = parsed.EMAIL_FROM;
     supportEmail = parsed.SUPPORT_EMAIL;
-    if (!emailFrom || !supportEmail) {
-      throw new Error("Email sender and support addresses are required");
-    }
+    if (!emailFrom || !supportEmail) throw new Error("Email sender and support addresses are required");
   } else if (emailTransport === "test") {
     emailFrom = parsed.EMAIL_FROM ?? "test@localhost.invalid";
     supportEmail = parsed.SUPPORT_EMAIL ?? "support@localhost.invalid";
@@ -233,8 +222,11 @@ export function loadRuntimeEnv(
     }
   }
 
-  if (features.analytics.ga4) {
+  if (features.analytics.enabled && features.analytics.ga4) {
     ga4MeasurementId = requireSecret(parsed.GA4_MEASUREMENT_ID, "GA4 configuration");
+  }
+  if (features.analytics.enabled && features.analytics.clarity) {
+    clarityProjectId = requireSecret(parsed.CLARITY_PROJECT_ID, "Clarity configuration");
   }
 
   return {
@@ -260,5 +252,6 @@ export function loadRuntimeEnv(
     commerceRetentionKey,
     commerceRetentionKeyId,
     ga4MeasurementId,
+    clarityProjectId,
   };
 }
