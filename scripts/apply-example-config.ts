@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(import.meta.dir, "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = join(ROOT, "examples", "neutral-product");
 const TARGET = join(ROOT, "src", "config");
 const FILES = [
