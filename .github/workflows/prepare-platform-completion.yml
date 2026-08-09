@@ -2,7 +2,7 @@ name: Prepare platform completion branch
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
 
 permissions:
   contents: write
@@ -12,6 +12,8 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/seo-performance-i18n-platform-completion'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/creat_web_generate
     steps:
       - uses: actions/checkout@v4
         with:
