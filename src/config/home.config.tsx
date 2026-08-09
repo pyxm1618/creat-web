@@ -13,7 +13,7 @@ export const homeConfig = {
       order: 10,
       eyebrow: "SEO-first neutral starter",
       h1: homeRoute.h1,
-      body: "Launch a useful public web product before committing to authentication, email or payments. The starter keeps SEO-critical copy server-rendered and lets product modules stay completely off until validation justifies them.",
+      lead: "Launch a useful public web product before committing to authentication, email or payments. The starter keeps SEO-critical copy server-rendered and lets product modules stay completely off until validation justifies them.",
       primaryCta: { label: "Explore the launch checklist", href: "/seo-starter-checklist" },
       secondaryCta: { label: "Review pricing structure", href: "/pricing" },
     },
@@ -21,9 +21,9 @@ export const homeConfig = {
       type: "tool-demo",
       enabled: true,
       order: 20,
-      title: "Put the product surface before supporting copy",
+      heading: "Put the product surface before supporting copy",
       body: "For tools, calculators and generators, replace this neutral surface with the real server-rendered or progressively enhanced product experience. Authentication and commerce are not prerequisites for the first launch.",
-      render: (
+      surface: (
         <div>
           <p className="section-kicker">Product-first boundary</p>
           <strong>Useful surface → supporting explanation → optional platform modules</strong>
@@ -35,7 +35,7 @@ export const homeConfig = {
       type: "use-cases",
       enabled: true,
       order: 30,
-      title: "Start with one clear search intent",
+      heading: "Start with one clear search intent",
       items: [
         {
           title: "SEO-first tools",
@@ -56,7 +56,7 @@ export const homeConfig = {
       type: "how-it-works",
       enabled: true,
       order: 40,
-      title: "A repeatable SEO launch sequence",
+      heading: "A repeatable SEO launch sequence",
       steps: [
         {
           title: "Configure",
@@ -76,7 +76,7 @@ export const homeConfig = {
       type: "features",
       enabled: true,
       order: 50,
-      title: "Platform features stay optional",
+      heading: "Platform features stay optional",
       items: [
         {
           title: "Intent-aware SEO registry",
@@ -96,7 +96,7 @@ export const homeConfig = {
       type: "comparison",
       enabled: false,
       order: 60,
-      title: "Evidence or comparison",
+      heading: "Evidence or comparison",
       body: "Enable this section only when the downstream product has truthful, visible evidence worth comparing.",
       items: [
         {
@@ -109,7 +109,7 @@ export const homeConfig = {
       type: "faq",
       enabled: true,
       order: 70,
-      title: "SEO-first starter questions",
+      heading: "SEO-first starter questions",
       items: [
         {
           question: "Do I need authentication for the first launch?",
@@ -133,27 +133,16 @@ export const homeConfig = {
       enabled: true,
       order: 80,
       heading: "What the SEO-first starter standardizes",
-      body: (
-        <>
-          <p>
-            The starter centralizes route intent, canonical policy, title and description
-            generation, one primary H1, structured data, internal-link relationships, locale
-            alternates and production review gates. Those controls make obvious launch mistakes
-            mechanically detectable instead of relying on a final manual sweep.
-          </p>
-          <p>
-            Product positioning and copy remain downstream responsibilities. The starter provides a
-            reliable delivery surface without creating doorway pages, hidden keyword blocks, fake
-            review markup or client-only content that crawlers and users cannot depend on.
-          </p>
-        </>
-      ),
+      paragraphs: [
+        "The starter centralizes route intent, canonical policy, title and description generation, one primary H1, structured data, internal-link relationships, locale alternates and production review gates. Those controls make obvious launch mistakes mechanically detectable instead of relying on a final manual sweep.",
+        "Product positioning and copy remain downstream responsibilities. The starter provides a reliable delivery surface without creating doorway pages, hidden keyword blocks, fake review markup or client-only content that crawlers and users cannot depend on.",
+      ],
     },
     {
       type: "related-resources",
       enabled: true,
       order: 90,
-      title: "Related launch resources",
+      heading: "Related launch resources",
       links: [
         {
           label: "SEO starter launch checklist",
