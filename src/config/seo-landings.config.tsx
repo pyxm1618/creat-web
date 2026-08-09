@@ -7,10 +7,16 @@ export type SeoLandingConfig = {
   readonly sections: readonly LandingSection[];
 };
 
-const checklistRoute = routeRegistry.get("/seo-starter-checklist");
-if (checklistRoute.class !== "public_indexable") {
-  throw new Error("SEO starter checklist route must be indexable");
+function indexableRoute(route: string) {
+  const definition = routeRegistry.get(route);
+  if (definition.class !== "public_indexable") {
+    throw new Error(`${route} must be indexable`);
+  }
+  return definition;
 }
+
+const checklistRoute = indexableRoute("/seo-starter-checklist");
+const pricingRoute = indexableRoute("/pricing");
 
 export const seoLandingPages = [
   {
@@ -158,6 +164,51 @@ export const seoLandingPages = [
         heading: "Add pages only when the intent deserves one",
         body: "For the next landing page, add its intent model and content configuration, link it from a relevant page, and let the shared SEO gates catch mechanical mistakes.",
         cta: { label: "Return to the starter", href: "/" },
+      },
+    ],
+  },
+  {
+    route: "/pricing",
+    sections: [
+      {
+        type: "hero",
+        enabled: true,
+        order: 10,
+        eyebrow: "Optional monetization surface",
+        h1: pricingRoute.h1,
+        body: "Keep commercial facts and price authority on the server. A new SEO-only site can leave commerce disabled; once value is validated, configure real products and enable the payment module without rebuilding the public shell.",
+        primaryCta: { label: "Return to the SEO-first starter", href: "/" },
+      },
+      {
+        type: "features",
+        enabled: true,
+        order: 20,
+        title: "Server-owned pricing contract",
+        items: [
+          {
+            title: "Immutable product version",
+            body: "A local product key and version bind the expected currency, amount, provider product ID, fulfillment and refund policy.",
+          },
+          {
+            title: "Provider isolation",
+            body: "The browser never becomes price or entitlement authority, and Waffo-specific details stay behind the payment-provider adapter.",
+          },
+          {
+            title: "Commerce can remain off",
+            body: "When the feature flag is disabled, the public marketing site does not require payment secrets, SDK initialization or payment database workflows.",
+          },
+        ],
+      },
+      {
+        type: "related-resources",
+        enabled: true,
+        order: 30,
+        title: "Related commercial policies",
+        links: [
+          { label: "Refund and cancellation policy", href: "/refund-policy" },
+          { label: "Terms of service", href: "/terms" },
+          { label: "SEO starter launch checklist", href: "/seo-starter-checklist" },
+        ],
       },
     ],
   },
