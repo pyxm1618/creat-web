@@ -54,9 +54,7 @@ const baselineSecurityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()",
   },
-  ...(isProduction
-    ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }]
-    : []),
+  ...(isProduction ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] : []),
 ] as const;
 
 const sensitiveHeaders = [

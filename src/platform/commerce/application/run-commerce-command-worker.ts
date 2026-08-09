@@ -2,10 +2,7 @@ import { eq } from "drizzle-orm";
 
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
-import {
-  commerceReconciliationRuns,
-  payments,
-} from "@/platform/database/commerce-schema";
+import { commerceReconciliationRuns, payments } from "@/platform/database/commerce-schema";
 import {
   commerceCommandJobs,
   refunds,
