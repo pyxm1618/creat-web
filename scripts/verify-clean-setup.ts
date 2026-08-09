@@ -25,7 +25,7 @@ function gitStatus(cwd: string): string[] {
   const output = execFileSync("git", ["status", "--porcelain"], {
     cwd,
     encoding: "utf8",
-  }).trim();
+  }).trimEnd();
   if (!output) return [];
   return output
     .split("\n")
