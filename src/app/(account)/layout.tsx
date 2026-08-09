@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import type { ReactNode } from "react";
 
 import { featuresConfig } from "@/config/features.config";
@@ -13,7 +14,10 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function AccountRootLayout({ children }: Readonly<{ children: ReactNode }>) {
+export default async function AccountRootLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
+  await connection();
   if (!featuresConfig.auth.enabled) notFound();
   return (
     <html lang={siteConfig.defaultLocale}>
