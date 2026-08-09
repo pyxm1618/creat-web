@@ -63,11 +63,13 @@ function normalizeUrl(base: URL, input: string): string {
   return url.toString();
 }
 
-export function buildIndexNowPayload(input: Readonly<{
-  canonicalOrigin: string;
-  key: string;
-  urls: readonly string[];
-}>): IndexNowPayload {
+export function buildIndexNowPayload(
+  input: Readonly<{
+    canonicalOrigin: string;
+    key: string;
+    urls: readonly string[];
+  }>,
+): IndexNowPayload {
   if (input.urls.length === 0) throw new Error("IndexNow requires at least one URL");
   if (input.urls.length > INDEXNOW_MAX_URLS) {
     throw new Error("IndexNow accepts at most 10,000 URLs per request");
@@ -85,12 +87,14 @@ export function buildIndexNowPayload(input: Readonly<{
   };
 }
 
-export async function submitIndexNowUrls(input: Readonly<{
-  canonicalOrigin: string;
-  key: string;
-  urls: readonly string[];
-  fetchImpl?: typeof fetch;
-}>): Promise<IndexNowSubmissionResult> {
+export async function submitIndexNowUrls(
+  input: Readonly<{
+    canonicalOrigin: string;
+    key: string;
+    urls: readonly string[];
+    fetchImpl?: typeof fetch;
+  }>,
+): Promise<IndexNowSubmissionResult> {
   const payload = buildIndexNowPayload(input);
   const fetchImpl = input.fetchImpl ?? fetch;
 
@@ -108,7 +112,10 @@ export async function submitIndexNowUrls(input: Readonly<{
   }
 
   if (response.status !== 200 && response.status !== 202) {
-    throw new IndexNowSubmissionError("IndexNow provider rejected the submission", response.status);
+    throw new IndexNowSubmissionError(
+      "IndexNow provider rejected the submission",
+      response.status,
+    );
   }
 
   return {
