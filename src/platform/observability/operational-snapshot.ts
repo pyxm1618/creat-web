@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
@@ -70,6 +70,17 @@ async function queueSnapshot(
   return { count: Number(row?.count ?? 0), oldestAt: row?.oldestAt ?? null };
 }
 
+async function retainedWebhookSnapshot(database: DatabaseClient): Promise<QueueSnapshot> {
+  const [row] = await database
+    .select({
+      count: sql<number>`count(*)::int`,
+      oldestAt: sql<Date | null>`min(${paymentWebhookInbox.receivedAt})`,
+    })
+    .from(paymentWebhookInbox)
+    .where(isNotNull(paymentWebhookInbox.rawPayloadCiphertext));
+  return { count: Number(row?.count ?? 0), oldestAt: row?.oldestAt ?? null };
+}
+
 async function scalarCount<T>(query: Promise<T[]>): Promise<number> {
   const rows = (await query) as Array<{ count?: number }>;
   return Number(rows[0]?.count ?? 0);
@@ -87,6 +98,7 @@ export async function collectOperationalAlertSnapshot(
     reconciliationMismatches,
     providerFailures5m,
     deadLettersCreated,
+    webhookRetention,
     ...queues
   ] = await Promise.all([
     scalarCount(
@@ -105,7 +117,10 @@ export async function collectOperationalAlertSnapshot(
         .select({ count: sql<number>`count(*)::int` })
         .from(paymentWebhookInbox)
         .where(
-          and(eq(paymentWebhookInbox.signatureValid, false), gte(paymentWebhookInbox.receivedAt, cutoff)),
+          and(
+            eq(paymentWebhookInbox.signatureValid, false),
+            gte(paymentWebhookInbox.receivedAt, cutoff),
+          ),
         ),
     ),
     scalarCount(
@@ -141,6 +156,7 @@ export async function collectOperationalAlertSnapshot(
           ),
         ),
     ),
+    retainedWebhookSnapshot(database),
     queueSnapshot(database, "webhook"),
     queueSnapshot(database, "fulfillment"),
     queueSnapshot(database, "commerce_command"),
@@ -157,6 +173,9 @@ export async function collectOperationalAlertSnapshot(
   const oldestJobAgeSeconds = oldestAt
     ? Math.max(0, Math.floor((now.getTime() - oldestAt.getTime()) / 1000))
     : 0;
+  const oldestRetainedWebhookAgeSeconds = webhookRetention.oldestAt
+    ? Math.max(0, Math.floor((now.getTime() - webhookRetention.oldestAt.getTime()) / 1000))
+    : 0;
 
   return {
     deadLettersCreated,
@@ -166,5 +185,7 @@ export async function collectOperationalAlertSnapshot(
     jobBacklog,
     oldestJobAgeSeconds,
     providerFailures5m,
+    webhookRetentionBacklog: webhookRetention.count,
+    oldestRetainedWebhookAgeSeconds,
   };
 }
