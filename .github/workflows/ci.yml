@@ -55,6 +55,14 @@ jobs:
         run: bun run typecheck
       - name: Unit tests
         run: bun run test:unit
+      - name: Webhook purge concurrency
+        run: bun run test:integration -- tests/integration/commerce/webhook-purge-concurrency.test.ts
+      - name: Webhook log redaction
+        run: bun run test:integration -- tests/integration/commerce/webhook-log-redaction.test.ts
+      - name: Job lease concurrency
+        run: bun run test:integration -- tests/integration/commerce/job-leases.test.ts
+      - name: Operational health and retention alerts
+        run: bun run test:integration -- tests/integration/operations/health-alerts.test.ts
       - name: PostgreSQL integration tests
         run: bun run test:integration
       - name: Credit expiry race verification (30 runs)
