@@ -19,7 +19,7 @@ const defaultSeo = Object.fromEntries(
     {
       searchIntent: route.searchIntent,
       primaryKeyword: route.primaryKeyword,
-      secondaryKeywords: route.secondaryKeywords,
+      secondaryKeywords: route.secondaryKeywords ?? [],
       title: route.title,
       description: route.description,
       h1: route.h1,
