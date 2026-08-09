@@ -10,9 +10,15 @@ for (const required of [
   "x-content-type-options",
   "referrer-policy",
   "x-frame-options",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
   "permissions-policy",
 ]) {
   if (!headers.has(required)) throw new Error(`missing security header: ${required}`);
+}
+
+if (headers.get("cross-origin-opener-policy") !== "same-origin-allow-popups") {
+  throw new Error("COOP must preserve OAuth popups without disabling opener isolation");
 }
 
 const csp = headers.get("content-security-policy") ?? "";
@@ -25,11 +31,20 @@ for (const directive of [
 ]) {
   if (!csp.includes(directive)) throw new Error(`CSP missing directive: ${directive}`);
 }
+const scriptDirective = csp.match(/(?:^|; )script-src ([^;]+)/)?.[1] ?? "";
+if (!scriptDirective) throw new Error("CSP script-src is required");
+if (scriptDirective.includes("'unsafe-inline'")) {
+  throw new Error("script-src must not depend on unsafe-inline");
+}
 if (/script-src[^;]*\s\*/.test(csp) || /connect-src[^;]*\s\*/.test(csp)) {
   throw new Error("CSP must not use wildcard script/connect sources");
 }
-if (process.env.APP_ENV === "production" && !headers.has("strict-transport-security")) {
-  throw new Error("production HSTS is required");
+
+if (process.env.APP_ENV === "production") {
+  const hsts = headers.get("strict-transport-security");
+  if (hsts !== "max-age=31536000; includeSubDomains") {
+    throw new Error("production HSTS must cover one year and include subdomains");
+  }
 }
 
 const sensitivePatterns = [
@@ -41,6 +56,8 @@ const sensitivePatterns = [
   "/api/auth/:path*",
   "/api/commerce/:path*",
   "/api/webhooks/:path*",
+  "/api/cron/:path*",
+  "/api/test/:path*",
 ];
 for (const source of sensitivePatterns) {
   const rule = headerRules.find((candidate) => candidate.source === source);
