@@ -57,6 +57,17 @@ jobs:
         run: bun run test:unit
       - name: PostgreSQL integration tests
         run: bun run test:integration
+      - name: Isolated database restore drill
+        run: |
+          set -euo pipefail
+          POSTGRES_CONTAINER="$(docker ps --filter ancestor=postgres:16-alpine --format '{{.ID}}' | head -n 1)"
+          test -n "$POSTGRES_CONTAINER"
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d creat_web_test -Fc > /tmp/creat-web.dump
+          docker exec "$POSTGRES_CONTAINER" dropdb -U postgres --if-exists creat_web_restore
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres creat_web_restore
+          cat /tmp/creat-web.dump | docker exec -i "$POSTGRES_CONTAINER" pg_restore -U postgres -d creat_web_restore --no-owner --no-acl
+          RESTORED_DATABASE_URL=postgres://postgres:postgres@localhost:5432/creat_web_restore bun scripts/verify-restored-database.ts
+          rm -f /tmp/creat-web.dump
       - name: Provider contract tests
         run: bun run test:contract
       - name: Migration verification
