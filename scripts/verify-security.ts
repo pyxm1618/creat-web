@@ -1,4 +1,6 @@
 import nextConfig from "../next.config";
+import { featuresConfig } from "../src/config/features.config";
+import { buildContentSecurityPolicy } from "../src/platform/security/content-security-policy";
 
 const headerRules = (await nextConfig.headers?.()) ?? [];
 const global = headerRules.find((rule) => rule.source === "/:path*");
@@ -6,7 +8,6 @@ if (!global) throw new Error("global security headers are missing");
 
 const headers = new Map(global.headers.map((header) => [header.key.toLowerCase(), header.value]));
 for (const required of [
-  "content-security-policy",
   "x-content-type-options",
   "referrer-policy",
   "x-frame-options",
@@ -21,7 +22,16 @@ if (headers.get("cross-origin-opener-policy") !== "same-origin-allow-popups") {
   throw new Error("COOP must preserve OAuth popups without disabling opener isolation");
 }
 
-const csp = headers.get("content-security-policy") ?? "";
+const csp = buildContentSecurityPolicy({
+  nonce: "verification-nonce",
+  development: process.env.NODE_ENV === "development",
+  production: process.env.APP_ENV === "production",
+  analytics: {
+    ga4: featuresConfig.analytics.enabled && featuresConfig.analytics.ga4,
+    clarity: featuresConfig.analytics.enabled && featuresConfig.analytics.clarity,
+  },
+  turnstile: featuresConfig.auth.enabled && featuresConfig.auth.magicLink,
+});
 for (const directive of [
   "default-src 'self'",
   "object-src 'none'",
@@ -33,6 +43,9 @@ for (const directive of [
 }
 const scriptDirective = csp.match(/(?:^|; )script-src ([^;]+)/)?.[1] ?? "";
 if (!scriptDirective) throw new Error("CSP script-src is required");
+if (!scriptDirective.includes("'nonce-verification-nonce'")) {
+  throw new Error("script-src must authorize a per-request nonce");
+}
 if (scriptDirective.includes("'unsafe-inline'")) {
   throw new Error("script-src must not depend on unsafe-inline");
 }
@@ -75,4 +88,10 @@ for (const source of sensitivePatterns) {
   }
 }
 
-console.log(JSON.stringify({ event: "security_verified", headerRules: headerRules.length }));
+console.log(
+  JSON.stringify({
+    event: "security_verified",
+    headerRules: headerRules.length,
+    nonceCsp: true,
+  }),
+);
