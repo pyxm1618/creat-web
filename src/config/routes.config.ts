@@ -113,6 +113,12 @@ export const routeDefinitions = [
   { route: "/api/cron/account-deletions", class: "system" },
   { route: "/api/cron/commerce", class: "system" },
   { route: "/api/cron/credits", class: "system" },
+  { route: "/api/internal/jobs/account-deletion", class: "system" },
+  { route: "/api/internal/jobs/commerce", class: "system" },
+  { route: "/api/internal/jobs/credit-expiry", class: "system" },
+  { route: "/api/internal/jobs/reconcile", class: "system" },
+  { route: "/api/health/live", class: "system" },
+  { route: "/api/health/ready", class: "system" },
   { route: "/api/test/emails/latest", class: "system" },
 ] as const satisfies readonly RouteDefinition[];
 
