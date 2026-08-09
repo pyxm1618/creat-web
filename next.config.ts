@@ -120,6 +120,8 @@ const nextConfig: NextConfig = {
         "/api/commerce/:path*",
         "/api/webhooks/:path*",
         "/api/cron/:path*",
+        "/api/internal/:path*",
+        "/api/health/:path*",
         "/api/test/:path*",
       ].map((source) => ({ source, headers: [...sensitiveHeaders] })),
       {
