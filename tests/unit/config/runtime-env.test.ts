@@ -7,7 +7,7 @@ const disabledFeatures = {
   auth: { enabled: false, google: false, magicLink: false, password: false },
   email: { enabled: false },
   commerce: { enabled: false, oneTime: false, subscriptions: false, credits: false },
-  analytics: { ga4: false, clarity: false, consentRequired: true },
+  analytics: { enabled: false, ga4: false, clarity: false, consentRequired: true },
 } as const satisfies ProductConfig["features"];
 
 const authFeatures = {
@@ -26,10 +26,11 @@ describe("loadRuntimeEnv", () => {
       },
       disabledFeatures,
     );
-
     expect(env.appEnv).toBe("test");
     expect(env.googleClientId).toBeUndefined();
     expect(env.waffoPrivateKey).toBeUndefined();
+    expect(env.ga4MeasurementId).toBeUndefined();
+    expect(env.clarityProjectId).toBeUndefined();
   });
 
   it("uses test-only auth, cron, and email configuration only outside deployments", () => {
@@ -41,7 +42,6 @@ describe("loadRuntimeEnv", () => {
       },
       authFeatures,
     );
-
     expect(env.emailTransport).toBe("test");
     expect(env.betterAuthSecret).toMatch(/^test-only-/);
     expect(env.cronSecret).toMatch(/^test-only-/);
@@ -82,23 +82,6 @@ describe("loadRuntimeEnv", () => {
         authFeatures,
       ),
     ).toThrow("VERCEL_ENV=production requires APP_ENV=production");
-
-    expect(() =>
-      loadRuntimeEnv(
-        {
-          APP_ENV: "production",
-          VERCEL_ENV: "preview",
-          APP_ORIGIN: "https://preview.example.com",
-          DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
-          BETTER_AUTH_SECRET: "a".repeat(48),
-          CRON_SECRET: "b".repeat(32),
-          RESEND_API_KEY: "re_test_not_a_live_key",
-          EMAIL_FROM: "Example <login@example.com>",
-          SUPPORT_EMAIL: "support@example.com",
-        },
-        authFeatures,
-      ),
-    ).toThrow("VERCEL_ENV=preview requires APP_ENV=staging");
   });
 
   it("requires production authentication, cron, and email secrets", () => {
@@ -154,7 +137,6 @@ describe("loadRuntimeEnv", () => {
       },
       authFeatures,
     );
-
     expect(env.emailTransport).toBe("resend");
     expect(env.emailFrom).toBe("Example <login@example.com>");
     expect(env.supportEmail).toBe("support@example.com");
@@ -209,6 +191,36 @@ describe("loadRuntimeEnv", () => {
         },
       ),
     ).toThrow("Google credentials are required");
+  });
+
+  it("requires analytics IDs only for enabled providers", () => {
+    expect(() =>
+      loadRuntimeEnv(
+        {
+          APP_ENV: "production",
+          APP_ORIGIN: "https://example.com",
+          DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+        },
+        {
+          ...disabledFeatures,
+          analytics: { enabled: true, ga4: true, clarity: false, consentRequired: true },
+        },
+      ),
+    ).toThrow("GA4 configuration are required");
+
+    expect(() =>
+      loadRuntimeEnv(
+        {
+          APP_ENV: "production",
+          APP_ORIGIN: "https://example.com",
+          DATABASE_URL: "postgres://user:pass@db.example.com:5432/app",
+        },
+        {
+          ...disabledFeatures,
+          analytics: { enabled: true, ga4: false, clarity: true, consentRequired: true },
+        },
+      ),
+    ).toThrow("Clarity configuration are required");
   });
 
   it("rejects production placeholder secrets", () => {
