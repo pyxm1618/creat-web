@@ -1,5 +1,5 @@
 const SENSITIVE_KEY =
-  /(?:authorization|cookie|email|password|secret|token|api[_-]?key|session|checkouturl|signature|private[_-]?key)/i;
+  /(?:authorization|cookie|email|password|secret|token|api[_-]?key|session|checkouturl|signature|private[_-]?key|buyer|customer|payment[_-]?card|card[_-]?(?:number|details)|ip(?:address)?)/i;
 
 function redactValue(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null || value === undefined) return value;
