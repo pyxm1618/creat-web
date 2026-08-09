@@ -1,30 +1,27 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { getAccountDeletionService } from "@/platform/accounts/account-deletion-runtime";
 import { env } from "@/platform/config/env";
+import {
+  authenticateInternalRequest,
+  unauthorizedInternalResponse,
+} from "@/platform/operations/authenticate-internal-request";
+import { runBoundedJob } from "@/platform/operations/run-bounded-job";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function authorized(request: Request): boolean {
-  if (!env.cronSecret) return false;
-  const expected = Buffer.from(`Bearer ${env.cronSecret}`);
-  const actual = Buffer.from(request.headers.get("authorization") ?? "");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
+const ACCOUNT_DELETION_BATCH_LIMIT = 10;
+const ACCOUNT_DELETION_RUNTIME_MS = 45_000;
 
 export async function GET(request: Request): Promise<Response> {
   const accountDeletionService = getAccountDeletionService();
   if (!accountDeletionService) return new Response("Not Found", { status: 404 });
-  if (!authorized(request)) {
-    return new Response("Unauthorized", {
-      status: 401,
-      headers: { "cache-control": "no-store" },
-    });
-  }
+  if (!authenticateInternalRequest(request, env.cronSecret)) return unauthorizedInternalResponse();
 
-  const result = await accountDeletionService.runDueBatch(10);
-  return Response.json(result, {
-    headers: { "cache-control": "no-store" },
+  const result = await runBoundedJob({
+    batchLimit: ACCOUNT_DELETION_BATCH_LIMIT,
+    maxRuntimeMs: ACCOUNT_DELETION_RUNTIME_MS,
+    run: async (job) => accountDeletionService.runDueBatch(job.batchLimit),
   });
+
+  return Response.json(result, { headers: { "cache-control": "no-store" } });
 }
