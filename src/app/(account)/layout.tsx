@@ -14,9 +14,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function AccountRootLayout({
-  children,
-}: Readonly<{ children: ReactNode }>) {
+export default async function AccountRootLayout({ children }: Readonly<{ children: ReactNode }>) {
   await connection();
   if (!featuresConfig.auth.enabled) notFound();
   return (
