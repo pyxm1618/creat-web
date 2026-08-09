@@ -2,11 +2,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 import {
   commitReservation,
-  expireGrants,
-  getGrantQuantityProjections,
   releaseReservation,
   reserveCredits,
-} from "@/platform/credits/application/credit-service";
+} from "@/platform/credits/application/reservation-service";
+import { expireGrants } from "@/platform/credits/application/grant-lifecycle";
+import { getGrantQuantityProjections } from "@/platform/credits/application/balance-query";
 
 import {
   createCreditSubject,
