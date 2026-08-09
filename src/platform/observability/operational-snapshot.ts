@@ -1,5 +1,6 @@
-import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 
+import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import type { DatabaseClient } from "@/platform/database/client";
 import {
   accountDeletionRequests,
@@ -67,17 +68,6 @@ async function queueSnapshot(
     })
     .from(accountDeletionRequests)
     .where(inArray(accountDeletionRequests.status, ["pending", "processing", "failed"]));
-  return { count: Number(row?.count ?? 0), oldestAt: row?.oldestAt ?? null };
-}
-
-async function retainedWebhookSnapshot(database: DatabaseClient): Promise<QueueSnapshot> {
-  const [row] = await database
-    .select({
-      count: sql<number>`count(*)::int`,
-      oldestAt: sql<Date | null>`min(${paymentWebhookInbox.receivedAt})`,
-    })
-    .from(paymentWebhookInbox)
-    .where(isNotNull(paymentWebhookInbox.rawPayloadCiphertext));
   return { count: Number(row?.count ?? 0), oldestAt: row?.oldestAt ?? null };
 }
 
@@ -156,7 +146,7 @@ export async function collectOperationalAlertSnapshot(
           ),
         ),
     ),
-    retainedWebhookSnapshot(database),
+    getWebhookRetentionMetrics(database, now),
     queueSnapshot(database, "webhook"),
     queueSnapshot(database, "fulfillment"),
     queueSnapshot(database, "commerce_command"),
@@ -173,9 +163,6 @@ export async function collectOperationalAlertSnapshot(
   const oldestJobAgeSeconds = oldestAt
     ? Math.max(0, Math.floor((now.getTime() - oldestAt.getTime()) / 1000))
     : 0;
-  const oldestRetainedWebhookAgeSeconds = webhookRetention.oldestAt
-    ? Math.max(0, Math.floor((now.getTime() - webhookRetention.oldestAt.getTime()) / 1000))
-    : 0;
 
   return {
     deadLettersCreated,
@@ -185,7 +172,7 @@ export async function collectOperationalAlertSnapshot(
     jobBacklog,
     oldestJobAgeSeconds,
     providerFailures5m,
-    webhookRetentionBacklog: webhookRetention.count,
-    oldestRetainedWebhookAgeSeconds,
+    webhookRetentionBacklog: webhookRetention.retainedPayloads,
+    oldestRetainedWebhookAgeSeconds: webhookRetention.oldestRetainedPayloadAgeSeconds,
   };
 }
