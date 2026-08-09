@@ -21,7 +21,7 @@ test("test environment is layered noindex with no production canonical or sitema
   expect(sitemap.status()).toBe(404);
 });
 
-test("structured data parses and mirrors visible homepage facts", async ({ page }) => {
+test("structured data parses and matches registered homepage SEO facts", async ({ page }) => {
   const home = routeRegistry.get("/");
   if (home.class !== "public_indexable") throw new Error("homepage must be indexable");
 
@@ -33,6 +33,9 @@ test("structured data parses and mirrors visible homepage facts", async ({ page 
     const parsed = JSON.parse(text) as unknown;
     structuredData.push(parsed);
   }
+
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(home.h1);
-  expect(JSON.stringify(structuredData)).toContain(home.h1);
+  const serialized = JSON.stringify(structuredData);
+  expect(serialized).toContain(home.title);
+  expect(serialized).toContain(home.description);
 });
