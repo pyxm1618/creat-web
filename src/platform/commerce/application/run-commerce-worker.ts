@@ -27,16 +27,26 @@ export async function runCommerceWorker(input: {
   readonly fulfillment: OrderFulfillment;
   readonly owner: string;
   readonly now?: Date;
+  readonly limit?: number;
 }): Promise<{
+  readonly attempted: number;
   readonly inboxProcessed: number;
   readonly commandProcessed: number;
   readonly fulfillmentProcessed: number;
 }> {
   const now = input.now ?? new Date();
+  const batchLimit = Math.min(Math.max(input.limit ?? 60, 1), 100);
+  let remaining = batchLimit;
   let inboxProcessed = 0;
   let fulfillmentProcessed = 0;
 
-  for (const row of await claimWebhookInbox(input.database, { owner: input.owner, now })) {
+  const inbox = await claimWebhookInbox(input.database, {
+    owner: input.owner,
+    now,
+    limit: remaining,
+  });
+  remaining -= inbox.length;
+  for (const row of inbox) {
     try {
       const event = parseNormalizedProviderEvent(row.normalizedPayloadJson);
       await processProviderEvent(input.database, event, row.payloadHash);
@@ -77,14 +87,32 @@ export async function runCommerceWorker(input: {
     }
   }
 
-  const commandProcessed = await runCommerceCommandWorker({
-    database: input.database,
-    provider: input.provider,
-    owner: input.owner,
-    now,
-  });
+  let commandClaimed = 0;
+  const commandProcessed =
+    remaining > 0
+      ? await runCommerceCommandWorker({
+          database: input.database,
+          provider: input.provider,
+          owner: input.owner,
+          now,
+          limit: remaining,
+          onClaimed: (count) => {
+            commandClaimed = count;
+          },
+        })
+      : 0;
+  remaining -= commandClaimed;
 
-  for (const job of await claimFulfillmentJobs(input.database, { owner: input.owner, now })) {
+  const fulfillment =
+    remaining > 0
+      ? await claimFulfillmentJobs(input.database, {
+          owner: input.owner,
+          now,
+          limit: remaining,
+        })
+      : [];
+  remaining -= fulfillment.length;
+  for (const job of fulfillment) {
     try {
       await input.fulfillment.fulfill({
         sourceType: job.sourceType,
@@ -129,5 +157,10 @@ export async function runCommerceWorker(input: {
     }
   }
 
-  return { inboxProcessed, commandProcessed, fulfillmentProcessed };
+  return {
+    attempted: batchLimit - remaining,
+    inboxProcessed,
+    commandProcessed,
+    fulfillmentProcessed,
+  };
 }
