@@ -85,8 +85,14 @@ function startClarity(projectId: string): void {
     clarity.q.push(args);
   }) as NonNullable<Window["clarity"]>;
   window.clarity = window.clarity ?? clarity;
-  window.clarity("consentv2", { ad_Storage: "denied", analytics_Storage: "granted" });
-  loadScript("creat-web-clarity", `https://www.clarity.ms/tag/${encodeURIComponent(projectId)}`);
+  window.clarity("consentv2", {
+    ad_Storage: "denied",
+    analytics_Storage: "granted",
+  });
+  loadScript(
+    "creat-web-clarity",
+    `https://www.clarity.ms/tag/${encodeURIComponent(projectId)}`,
+  );
 }
 
 function clearAnalyticsCookies(): void {
@@ -99,7 +105,10 @@ function clearAnalyticsCookies(): void {
 
 function stopAnalytics(): void {
   window.gtag?.("consent", "update", { analytics_storage: "denied" });
-  window.clarity?.("consentv2", { ad_Storage: "denied", analytics_Storage: "denied" });
+  window.clarity?.("consentv2", {
+    ad_Storage: "denied",
+    analytics_Storage: "denied",
+  });
   for (const scriptId of SCRIPT_IDS) document.getElementById(scriptId)?.remove();
   clearAnalyticsCookies();
   window.dataLayer = [];
@@ -123,7 +132,9 @@ function ConsentPanel({
       className="analytics-consent"
       aria-label={settings ? "Analytics settings panel" : "Analytics consent"}
     >
-      <p>Optional analytics help improve this site. They are never required for core product use.</p>
+      <p>
+        Optional analytics help improve this site. They are never required for core product use.
+      </p>
       <div>
         {currentConsent !== "granted" ? (
           <button type="button" onClick={() => onChoose("granted")}>
@@ -159,7 +170,11 @@ export function AnalyticsClient({
   clarityProjectId?: string;
   consentRequired: boolean;
 }>) {
-  const storedConsent = useSyncExternalStore<Consent>(subscribeConsent, readConsent, serverConsent);
+  const storedConsent = useSyncExternalStore<Consent>(
+    subscribeConsent,
+    readConsent,
+    serverConsent,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const consent: Consent = consentRequired ? storedConsent : "granted";
 
@@ -204,12 +219,18 @@ export function AnalyticsClient({
   if (!consentRequired) return null;
 
   if (consent === "unknown") {
-    return <ConsentPanel currentConsent={consent} onChoose={chooseConsent} settings={false} />;
+    return (
+      <ConsentPanel currentConsent={consent} onChoose={chooseConsent} settings={false} />
+    );
   }
 
   return (
     <>
-      <button type="button" aria-label="Analytics settings" onClick={() => setSettingsOpen(true)}>
+      <button
+        type="button"
+        aria-label="Analytics settings"
+        onClick={() => setSettingsOpen(true)}
+      >
         Privacy settings
       </button>
       {settingsOpen ? (
