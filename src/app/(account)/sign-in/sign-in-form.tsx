@@ -6,7 +6,9 @@ import { TurnstileWidget } from "@/components/security/turnstile-widget";
 
 type Status = "idle" | "sending" | "sent" | "limited" | "challenge" | "error";
 
-export function SignInForm({ turnstileSiteKey }: Readonly<{ turnstileSiteKey?: string }>) {
+export function SignInForm({
+  turnstileSiteKey,
+}: Readonly<{ turnstileSiteKey: string | undefined }>) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
