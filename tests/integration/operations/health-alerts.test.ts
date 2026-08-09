@@ -4,12 +4,17 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { GET as live } from "@/app/api/health/live/route";
 import { createDatabaseClient } from "@/platform/database/client";
-import { authSecurityEvents, fulfillmentJobs } from "@/platform/database/schema";
+import {
+  authSecurityEvents,
+  fulfillmentJobs,
+  paymentWebhookInbox,
+} from "@/platform/database/schema";
 import {
   DEFAULT_OPERATIONAL_ALERT_THRESHOLDS,
   evaluateOperationalAlerts,
 } from "@/platform/observability/alerts";
 import { checkReadiness } from "@/platform/observability/health";
+import { collectOperationalAlertSnapshot } from "@/platform/observability/operational-snapshot";
 import { inspectDeadLetters, retryDeadLetter } from "@/platform/operations/dead-letters";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -57,6 +62,8 @@ it("covers every required operational alert class with bounded payloads", () => 
     jobBacklog: thresholds.jobBacklog,
     oldestJobAgeSeconds: thresholds.oldestJobAgeSeconds,
     providerFailures5m: thresholds.providerFailures5m,
+    webhookRetentionBacklog: thresholds.webhookRetentionBacklog,
+    oldestRetainedWebhookAgeSeconds: thresholds.oldestRetainedWebhookAgeSeconds,
   });
 
   expect(new Set(alerts.map((item) => item.code))).toEqual(
@@ -67,9 +74,55 @@ it("covers every required operational alert class with bounded payloads", () => 
       "reconciliation_mismatch",
       "job_backlog_stale",
       "provider_outage_repeated",
+      "webhook_retention_backlog_stale",
     ]),
   );
   expect(JSON.stringify(alerts)).not.toMatch(/email|userId|orderId|paymentId|sessionId/i);
+});
+
+it("measures retained webhook backlog and oldest retained payload age", async () => {
+  const now = new Date("2026-08-09T12:00:00Z");
+  const oldest = new Date("2026-08-07T12:00:00Z");
+  await database.db.insert(paymentWebhookInbox).values([
+    {
+      environment: "test",
+      providerEventId: "retention-observability-oldest",
+      dedupHash: "retention-observability-oldest-dedup",
+      eventType: "unsupported_signed_event",
+      signatureValid: true,
+      normalizedPayloadJson: { eventId: "retention-observability-oldest" },
+      payloadHash: "retention-observability-oldest-hash",
+      payloadSizeBytes: 64,
+      rawPayloadCiphertext: new Uint8Array([1, 2, 3]),
+      rawPayloadKeyId: "test-key",
+      rawPayloadExpiresAt: new Date("2026-08-08T12:00:00Z"),
+      retentionClass: "unresolved_encrypted",
+      state: "processed",
+      receivedAt: oldest,
+      processedAt: oldest,
+    },
+    {
+      environment: "test",
+      providerEventId: "retention-observability-newer",
+      dedupHash: "retention-observability-newer-dedup",
+      eventType: "unsupported_signed_event",
+      signatureValid: true,
+      normalizedPayloadJson: { eventId: "retention-observability-newer" },
+      payloadHash: "retention-observability-newer-hash",
+      payloadSizeBytes: 64,
+      rawPayloadCiphertext: new Uint8Array([4, 5, 6]),
+      rawPayloadKeyId: "test-key",
+      rawPayloadExpiresAt: new Date("2026-08-10T12:00:00Z"),
+      retentionClass: "unresolved_encrypted",
+      state: "processed",
+      receivedAt: new Date("2026-08-08T12:00:00Z"),
+      processedAt: new Date("2026-08-08T12:00:00Z"),
+    },
+  ]);
+
+  const snapshot = await collectOperationalAlertSnapshot(database.db, now);
+  expect(snapshot.webhookRetentionBacklog).toBe(2);
+  expect(snapshot.oldestRetainedWebhookAgeSeconds).toBe(2 * 24 * 60 * 60);
 });
 
 it("inspects dead letters without business payloads and requeues with immutable audit", async () => {
