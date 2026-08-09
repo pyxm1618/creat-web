@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 
+import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
 import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/commerce-schema";
 
@@ -7,6 +8,7 @@ import { parseNormalizedProviderEvent } from "./event-json";
 import { claimFulfillmentJobs, claimWebhookInbox, retryDelay } from "./job-leases";
 import type { OrderFulfillment } from "./order-fulfillment";
 import { processProviderEvent } from "./process-provider-event";
+import { runCommerceCommandWorker } from "./run-commerce-command-worker";
 
 const MAX_ATTEMPTS = 12;
 
@@ -17,10 +19,15 @@ function errorCode(error: unknown): string {
 
 export async function runCommerceWorker(input: {
   readonly database: DatabaseClient;
+  readonly provider: PaymentProvider;
   readonly fulfillment: OrderFulfillment;
   readonly owner: string;
   readonly now?: Date;
-}): Promise<{ readonly inboxProcessed: number; readonly fulfillmentProcessed: number }> {
+}): Promise<{
+  readonly inboxProcessed: number;
+  readonly commandProcessed: number;
+  readonly fulfillmentProcessed: number;
+}> {
   const now = input.now ?? new Date();
   let inboxProcessed = 0;
   let fulfillmentProcessed = 0;
@@ -31,13 +38,7 @@ export async function runCommerceWorker(input: {
       await processProviderEvent(input.database, event, row.payloadHash);
       await input.database
         .update(paymentWebhookInbox)
-        .set({
-          state: "completed",
-          processedAt: now,
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: null,
-        })
+        .set({ state: "completed", processedAt: now, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null })
         .where(eq(paymentWebhookInbox.id, row.id));
       inboxProcessed += 1;
     } catch (error) {
@@ -57,6 +58,13 @@ export async function runCommerceWorker(input: {
     }
   }
 
+  const commandProcessed = await runCommerceCommandWorker({
+    database: input.database,
+    provider: input.provider,
+    owner: input.owner,
+    now,
+  });
+
   for (const job of await claimFulfillmentJobs(input.database, { owner: input.owner, now })) {
     try {
       await input.fulfillment.fulfill({
@@ -67,13 +75,7 @@ export async function runCommerceWorker(input: {
       });
       await input.database
         .update(fulfillmentJobs)
-        .set({
-          state: "completed",
-          completedAt: now,
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: null,
-        })
+        .set({ state: "completed", completedAt: now, leaseOwner: null, leaseExpiresAt: null, lastErrorCode: null })
         .where(eq(fulfillmentJobs.id, job.id));
       fulfillmentProcessed += 1;
     } catch (error) {
@@ -93,5 +95,5 @@ export async function runCommerceWorker(input: {
     }
   }
 
-  return { inboxProcessed, fulfillmentProcessed };
+  return { inboxProcessed, commandProcessed, fulfillmentProcessed };
 }
