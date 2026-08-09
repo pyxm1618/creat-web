@@ -2,12 +2,15 @@ import { eq } from "drizzle-orm";
 
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
-import { commerceReconciliationRuns, payments } from "@/platform/database/commerce-schema";
 import {
+  authSecurityEvents,
   commerceCommandJobs,
+  commerceReconciliationRuns,
+  payments,
   refunds,
   subscriptions,
-} from "@/platform/database/subscription-schema";
+} from "@/platform/database/schema";
+
 import { claimCommerceCommandJobs, retryDelay } from "./job-leases";
 
 const MAX_ATTEMPTS = 12;
@@ -128,6 +131,18 @@ export async function runCommerceCommandWorker(input: {
             lastErrorCode: errorCode(error),
           })
           .where(eq(commerceCommandJobs.id, job.id));
+        await tx.insert(authSecurityEvents).values({
+          eventType: "provider_failure",
+          outcome: "failure",
+          details: { provider: "waffo", queue: "commerce_command", command: job.commandType },
+        });
+        if (dead) {
+          await tx.insert(authSecurityEvents).values({
+            eventType: "dead_letter_created",
+            outcome: "failure",
+            details: { queue: "commerce_command" },
+          });
+        }
         if (dead && job.commandType === "refund_request") {
           const [refund] = await tx
             .update(refunds)
