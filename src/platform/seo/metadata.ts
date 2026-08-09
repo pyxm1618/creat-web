@@ -35,7 +35,6 @@ export function metadataForRoute(
   return {
     title: definition.title,
     description: definition.description,
-    keywords: [definition.primaryKeyword, ...(definition.secondaryKeywords ?? [])],
     alternates: policy.emitCanonical ? { canonical } : undefined,
     robots: {
       index: policy.index,
