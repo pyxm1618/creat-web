@@ -14,6 +14,7 @@ export type RuntimeEnv = {
   readonly databaseUrl: string;
   readonly betterAuthSecret: string | undefined;
   readonly cronSecret: string | undefined;
+  readonly indexNowKey: string | undefined;
   readonly emailTransport: EmailTransport;
   readonly emailFrom: string | undefined;
   readonly supportEmail: string | undefined;
@@ -42,6 +43,7 @@ const baseSchema = z.object({
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().optional(),
   CRON_SECRET: z.string().optional(),
+  INDEXNOW_KEY: z.string().optional(),
   EMAIL_TRANSPORT: z.enum(["test", "resend"]).optional(),
   EMAIL_FROM: z.string().optional(),
   SUPPORT_EMAIL: z.email().optional(),
@@ -67,6 +69,7 @@ const TEST_ONLY_AUTH_SECRET = "test-only-better-auth-secret-never-use-in-product
 const TEST_ONLY_CRON_SECRET = "test-only-cron-secret-never-use-in-production";
 const TEST_ONLY_TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
 const TEST_ONLY_TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA";
+const INDEXNOW_KEY_PATTERN = /^[A-Za-z0-9-]{8,128}$/;
 
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return false;
@@ -76,6 +79,15 @@ function isPlaceholder(value: string | undefined): boolean {
 function requireSecret(value: string | undefined, label: string): string {
   if (!value) throw new Error(`${label} are required`);
   if (isPlaceholder(value)) throw new Error("placeholder secret");
+  return value;
+}
+
+function resolveIndexNowKey(parsed: z.infer<typeof baseSchema>): string | undefined {
+  const value = parsed.INDEXNOW_KEY?.trim();
+  if (!value) return undefined;
+  if (isPlaceholder(value) || !INDEXNOW_KEY_PATTERN.test(value)) {
+    throw new Error("IndexNow key must contain 8-128 ASCII letters, digits, or dashes");
+  }
   return value;
 }
 
@@ -191,7 +203,11 @@ export function loadRuntimeEnv(
   }
 
   const betterAuthSecret = resolveAuthSecret(parsed, features.auth.enabled);
-  const cronSecret = resolveCronSecret(parsed, features.auth.enabled || features.commerce.enabled);
+  const indexNowKey = resolveIndexNowKey(parsed);
+  const cronSecret = resolveCronSecret(
+    parsed,
+    features.auth.enabled || features.commerce.enabled || Boolean(indexNowKey),
+  );
   let googleClientId: string | undefined;
   let googleClientSecret: string | undefined;
   let resendApiKey: string | undefined;
@@ -276,6 +292,7 @@ export function loadRuntimeEnv(
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret,
     cronSecret,
+    indexNowKey,
     emailTransport,
     emailFrom,
     supportEmail,
