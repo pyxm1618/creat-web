@@ -103,10 +103,7 @@ it("immediately expires released allocation after source expiry", async () => {
     .select({ quantity: creditLedgerEntries.quantity })
     .from(creditLedgerEntries)
     .where(
-      and(
-        eq(creditLedgerEntries.grantId, grant.id),
-        eq(creditLedgerEntries.entryType, "expire"),
-      ),
+      and(eq(creditLedgerEntries.grantId, grant.id), eq(creditLedgerEntries.entryType, "expire")),
     );
   expect(expiries.reduce((sum, entry) => sum + entry.quantity, 0)).toBe(5);
 });

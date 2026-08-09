@@ -11,7 +11,12 @@ export type OperationalMetricName =
 
 export type OperationalMetricLabels = Readonly<{
   environment?: "local" | "test" | "staging" | "production";
-  queue?: "webhook" | "fulfillment" | "commerce_command" | "credit_finalization" | "account_deletion";
+  queue?:
+    | "webhook"
+    | "fulfillment"
+    | "commerce_command"
+    | "credit_finalization"
+    | "account_deletion";
   provider?: "waffo" | "resend" | "google" | "turnstile" | "database";
   outcome?: "success" | "failure" | "degraded";
 }>;

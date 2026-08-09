@@ -55,7 +55,8 @@ async function verifyRelations(database: DatabaseClient): Promise<void> {
     const rows = await database.execute<{ relation: string | null }>(
       sql`select to_regclass(${`public.${relation}`})::text as relation`,
     );
-    if (!rows[0]?.relation) throw new Error(`restored database missing required relation: ${relation}`);
+    if (!rows[0]?.relation)
+      throw new Error(`restored database missing required relation: ${relation}`);
   }
 }
 
@@ -72,13 +73,15 @@ async function verifyConstraints(database: DatabaseClient): Promise<void> {
 
 async function verifyIdempotencyUniqueness(database: DatabaseClient): Promise<void> {
   for (const table of IDEMPOTENCY_TABLES) {
-    const rows = await database.execute<{ duplicates: number }>(sql.raw(`
+    const rows = await database.execute<{ duplicates: number }>(
+      sql.raw(`
       select count(*)::int as duplicates from (
         select idempotency_key from ${table}
         where idempotency_key is not null
         group by idempotency_key having count(*) > 1
       ) duplicate_keys
-    `));
+    `),
+    );
     if (Number(rows[0]?.duplicates ?? 0) !== 0) {
       throw new Error(`restored database contains duplicate idempotency keys in ${table}`);
     }
@@ -87,7 +90,10 @@ async function verifyIdempotencyUniqueness(database: DatabaseClient): Promise<vo
 
 async function verifyOwnerScopedReads(database: DatabaseClient): Promise<void> {
   await database.transaction(async (tx) => {
-    const subjects = await tx.insert(accountSubjects).values([{}, {}]).returning({ id: accountSubjects.id });
+    const subjects = await tx
+      .insert(accountSubjects)
+      .values([{}, {}])
+      .returning({ id: accountSubjects.id });
     if (subjects.length !== 2 || !subjects[0] || !subjects[1]) {
       throw new Error("synthetic owner-scope setup failed");
     }
@@ -97,8 +103,14 @@ async function verifyOwnerScopedReads(database: DatabaseClient): Promise<void> {
     const other = await tx.query.accountSubjects.findFirst({
       where: and(eq(accountSubjects.id, subjects[1].id), eq(accountSubjects.status, "active")),
     });
-    if (!own || !other || own.id === other.id) throw new Error("synthetic owner-scoped read failed");
-    await tx.delete(accountSubjects).where(inArray(accountSubjects.id, subjects.map((row) => row.id)));
+    if (!own || !other || own.id === other.id)
+      throw new Error("synthetic owner-scoped read failed");
+    await tx.delete(accountSubjects).where(
+      inArray(
+        accountSubjects.id,
+        subjects.map((row) => row.id),
+      ),
+    );
   });
 }
 

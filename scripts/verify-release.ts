@@ -33,7 +33,11 @@ const legalFeatures = {
   credits: featuresConfig.commerce.credits,
 } as const;
 
-validateLegalConfig({ legal: legalConfig, features: legalFeatures, releaseMode: productionRelease });
+validateLegalConfig({
+  legal: legalConfig,
+  features: legalFeatures,
+  releaseMode: productionRelease,
+});
 
 const forbidden = [/quick[ -]?i[ -]?ching/i, /ichingcoin/i, /hexagram/i, /casting/i];
 
@@ -58,7 +62,8 @@ if (siteConfig.canonicalOrigin.includes("localhost")) {
   throw new Error("release site origin must not use localhost");
 }
 if (productionRelease) {
-  if (seoConfig.releaseStatus !== "reviewed") throw new Error("production SEO config is not reviewed");
+  if (seoConfig.releaseStatus !== "reviewed")
+    throw new Error("production SEO config is not reviewed");
   if (legalConfig.releaseStatus !== "reviewed")
     throw new Error("production legal config is not reviewed");
   if (/example\.(?:com|org|net)$/i.test(new URL(siteConfig.canonicalOrigin).hostname)) {
@@ -122,11 +127,9 @@ const vercelConfig = JSON.parse(await readFile("vercel.json", "utf8")) as {
   crons?: Array<{ path?: string }>;
 };
 const scheduledPaths = new Set(vercelConfig.crons?.map((cron) => cron.path) ?? []);
-for (const required of [
-  "/api/internal/jobs/account-deletion",
-  "/api/internal/jobs/reconcile",
-]) {
-  if (!scheduledPaths.has(required)) throw new Error(`required internal schedule is missing: ${required}`);
+for (const required of ["/api/internal/jobs/account-deletion", "/api/internal/jobs/reconcile"]) {
+  if (!scheduledPaths.has(required))
+    throw new Error(`required internal schedule is missing: ${required}`);
 }
 if (featuresConfig.commerce.enabled && !scheduledPaths.has("/api/internal/jobs/commerce")) {
   throw new Error("durable commerce recovery job is missing from vercel.json");

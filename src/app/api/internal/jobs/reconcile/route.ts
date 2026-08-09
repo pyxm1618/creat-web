@@ -6,10 +6,7 @@ import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
 import { reconcileCreditLedger } from "@/platform/credits/application/reconcile-credit-ledger";
 import { db } from "@/platform/database/application-database";
-import {
-  emitOperationalAlerts,
-  evaluateOperationalAlerts,
-} from "@/platform/observability/alerts";
+import { emitOperationalAlerts, evaluateOperationalAlerts } from "@/platform/observability/alerts";
 import { emitMetric } from "@/platform/observability/metrics";
 import { collectOperationalAlertSnapshot } from "@/platform/observability/operational-snapshot";
 import {

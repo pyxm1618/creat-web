@@ -22,10 +22,7 @@ import type {
   CreditReservationStatus,
   CreditSource,
 } from "../domain/types";
-import {
-  tryCreditMutationLock,
-  withCreditMutationLock,
-} from "../infrastructure/credit-lock";
+import { tryCreditMutationLock, withCreditMutationLock } from "../infrastructure/credit-lock";
 
 type CreditTx = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 
@@ -86,12 +83,7 @@ async function loadGrantReductions(
     .where(
       and(
         inArray(creditLedgerEntries.grantId, [...grantIds]),
-        inArray(creditLedgerEntries.entryType, [
-          "consume",
-          "expire",
-          "revoke",
-          "adjust_negative",
-        ]),
+        inArray(creditLedgerEntries.entryType, ["consume", "expire", "revoke", "adjust_negative"]),
       ),
     )
     .groupBy(creditLedgerEntries.grantId, creditLedgerEntries.entryType);
@@ -141,11 +133,7 @@ function projectionForGrant(
   activeReserved: number,
 ): CreditGrantQuantityProjection {
   const available =
-    grant.quantity -
-    reduction.consumed -
-    reduction.expired -
-    reduction.revoked -
-    activeReserved;
+    grant.quantity - reduction.consumed - reduction.expired - reduction.revoked - activeReserved;
   if (available < 0) throw new Error(`credit quantity invariant failed for grant ${grant.id}`);
   return {
     grantId: grant.id,
@@ -179,7 +167,10 @@ async function loadGrantQuantityProjections(
   );
 }
 
-async function assertGrantQuantityInvariant(tx: CreditTx, grantIds: readonly string[]): Promise<void> {
+async function assertGrantQuantityInvariant(
+  tx: CreditTx,
+  grantIds: readonly string[],
+): Promise<void> {
   for (const projection of await loadGrantQuantityProjections(tx, grantIds)) {
     const total =
       projection.consumed +
@@ -479,7 +470,8 @@ export async function reserveCredits(
         if (!reservation) throw new Error("credit reservation insert failed");
 
         const allocatedTotal = allocation.reduce((sum, item) => sum + item.quantity, 0);
-        if (allocatedTotal !== input.quantity) throw new Error("credit allocation invariant failed");
+        if (allocatedTotal !== input.quantity)
+          throw new Error("credit allocation invariant failed");
         for (const item of allocation) {
           await tx.insert(creditReservationAllocations).values({
             reservationId: reservation.id,

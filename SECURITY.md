@@ -2,9 +2,9 @@
 
 ## Supported versions
 
-| Starter version | Security fixes |
-| --- | --- |
-| 0.1.x | Supported |
+| Starter version            | Security fixes             |
+| -------------------------- | -------------------------- |
+| 0.1.x                      | Supported                  |
 | Earlier/unversioned copies | Manual assessment required |
 
 Owned products are independent codebases. A fix in this starter does not automatically patch an already-created product; maintainers must follow `docs/upgrade/owned-project-upgrades.md`.

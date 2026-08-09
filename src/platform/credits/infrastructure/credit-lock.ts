@@ -5,7 +5,8 @@ import type { DatabaseClient } from "@/platform/database/client";
 type CreditTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 
 function lockKey(subjectId: string, creditType: string): string {
-  if (!subjectId.trim() || !creditType.trim()) throw new Error("credit mutation lock scope is required");
+  if (!subjectId.trim() || !creditType.trim())
+    throw new Error("credit mutation lock scope is required");
   return `${subjectId}:${creditType}`;
 }
 
@@ -20,7 +21,9 @@ export async function withCreditMutationLock<T>({
   creditType: string;
   run: () => Promise<T>;
 }>): Promise<T> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey(subjectId, creditType)}, 0))`);
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${lockKey(subjectId, creditType)}, 0))`,
+  );
   return run();
 }
 

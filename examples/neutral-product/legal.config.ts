@@ -32,7 +32,8 @@ export const legalConfig = {
   subscriptions: true,
   credits: true,
   refundPolicy: {
-    summary: "Synthetic test-only refund language. Replace with reviewed product terms before launch.",
+    summary:
+      "Synthetic test-only refund language. Replace with reviewed product terms before launch.",
     cancellationSummary:
       "Synthetic test-only subscription cancellation language. Replace before launch.",
   },
@@ -54,7 +55,8 @@ export const legalConfig = {
     enabled: true,
     summary: "Test-only account deletion workflow used to validate the starter lifecycle.",
   },
-  internationalTransfers: "Test-only placeholder. Replace with reviewed deployment facts before launch.",
+  internationalTransfers:
+    "Test-only placeholder. Replace with reviewed deployment facts before launch.",
   documents: {
     privacy: draftDocument,
     terms: draftDocument,
@@ -66,7 +68,9 @@ export const legalConfig = {
     privacy: [
       {
         heading: "Test-only privacy notice",
-        paragraphs: ["Synthetic content for starter verification. Replace and review before launch."],
+        paragraphs: [
+          "Synthetic content for starter verification. Replace and review before launch.",
+        ],
       },
     ],
     terms: [

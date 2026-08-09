@@ -3,7 +3,10 @@ import { retryDeadLetter, type DeadLetterQueue } from "@/platform/operations/dea
 
 function argument(name: string): string | undefined {
   const prefix = `--${name}=`;
-  return process.argv.slice(2).find((value) => value.startsWith(prefix))?.slice(prefix.length);
+  return process.argv
+    .slice(2)
+    .find((value) => value.startsWith(prefix))
+    ?.slice(prefix.length);
 }
 
 const environment = argument("environment");

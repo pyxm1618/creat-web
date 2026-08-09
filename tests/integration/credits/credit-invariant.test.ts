@@ -60,11 +60,15 @@ it("conserves quantity through reserve, expiry, commit, and release transitions"
     expiresAt: new Date("2026-08-09T18:30:00Z"),
     now: new Date("2026-08-09T17:59:00Z"),
   });
-  expectConserved(await getGrantQuantityProjections(database.db, { subjectId, creditType: "reading" }));
+  expectConserved(
+    await getGrantQuantityProjections(database.db, { subjectId, creditType: "reading" }),
+  );
 
   const afterExpiry = new Date("2026-08-09T18:01:00Z");
   await expireGrants(database.db, { now: afterExpiry });
-  expectConserved(await getGrantQuantityProjections(database.db, { subjectId, creditType: "reading" }));
+  expectConserved(
+    await getGrantQuantityProjections(database.db, { subjectId, creditType: "reading" }),
+  );
 
   await commitReservation(database.db, {
     reservationId: first.id,

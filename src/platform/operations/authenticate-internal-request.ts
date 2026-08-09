@@ -1,9 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
-export function authenticateInternalRequest(
-  request: Request,
-  secret: string | undefined,
-): boolean {
+export function authenticateInternalRequest(request: Request, secret: string | undefined): boolean {
   if (!secret) return false;
   const expected = Buffer.from(`Bearer ${secret}`);
   const actual = Buffer.from(request.headers.get("authorization") ?? "");

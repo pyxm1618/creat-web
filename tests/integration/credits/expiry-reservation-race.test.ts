@@ -105,10 +105,7 @@ it("serializes stale reservation expiry against source grant expiry", async () =
   });
   const now = new Date("2026-08-09T15:01:00Z");
 
-  await Promise.all([
-    expireGrants(database.db, { now }),
-    expireReservations(database.db, { now }),
-  ]);
+  await Promise.all([expireGrants(database.db, { now }), expireReservations(database.db, { now })]);
 
   expect(await getCreditBalance(database.db, { subjectId, creditType: "reading", now })).toEqual({
     available: 0,
@@ -142,10 +139,7 @@ it("keeps two concurrent grant expiry workers idempotent", async () => {
     .select({ quantity: creditLedgerEntries.quantity })
     .from(creditLedgerEntries)
     .where(
-      and(
-        eq(creditLedgerEntries.grantId, grant.id),
-        eq(creditLedgerEntries.entryType, "expire"),
-      ),
+      and(eq(creditLedgerEntries.grantId, grant.id), eq(creditLedgerEntries.entryType, "expire")),
     );
   expect(expiryRows).toEqual([{ quantity: 5 }]);
 });

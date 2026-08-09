@@ -18,7 +18,12 @@ type QueueSnapshot = { readonly count: number; readonly oldestAt: Date | null };
 
 async function queueSnapshot(
   database: DatabaseClient,
-  table: "webhook" | "fulfillment" | "commerce_command" | "credit_finalization" | "account_deletion",
+  table:
+    | "webhook"
+    | "fulfillment"
+    | "commerce_command"
+    | "credit_finalization"
+    | "account_deletion",
 ): Promise<QueueSnapshot> {
   if (table === "webhook") {
     const [row] = await database

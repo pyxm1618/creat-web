@@ -52,12 +52,7 @@ function assertNeutralConfigApplied(cwd: string): void {
   }
 }
 
-function run(
-  cwd: string,
-  command: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv,
-): void {
+function run(cwd: string, command: string, args: readonly string[], env: NodeJS.ProcessEnv): void {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit" });
   if (result.status !== 0) {
     throw new Error(`clean setup command failed: ${command} ${args.join(" ")}`);

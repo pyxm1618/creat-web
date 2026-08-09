@@ -193,8 +193,12 @@ it("two workers claim disjoint webhook batches without duplicate ownership", asy
     claimWebhookInbox(database.db, { owner: "worker-b", now, limit: 6 }),
   ]);
 
-  const idsA = new Set(workerA.filter((row) => row.providerEventId.startsWith(prefix)).map((row) => row.id));
-  const idsB = new Set(workerB.filter((row) => row.providerEventId.startsWith(prefix)).map((row) => row.id));
+  const idsA = new Set(
+    workerA.filter((row) => row.providerEventId.startsWith(prefix)).map((row) => row.id),
+  );
+  const idsB = new Set(
+    workerB.filter((row) => row.providerEventId.startsWith(prefix)).map((row) => row.id),
+  );
   expect(idsA.size).toBe(6);
   expect(idsB.size).toBe(6);
   expect([...idsA].filter((id) => idsB.has(id))).toEqual([]);

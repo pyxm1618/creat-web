@@ -85,9 +85,7 @@ export function evaluateOperationalAlerts(
     );
   }
   if (snapshot.reconciliationMismatches > 0) {
-    alerts.push(
-      alert("reconciliation_mismatch", "critical", snapshot.reconciliationMismatches, 1),
-    );
+    alerts.push(alert("reconciliation_mismatch", "critical", snapshot.reconciliationMismatches, 1));
   }
   if (
     snapshot.jobBacklog >= thresholds.jobBacklog ||
@@ -115,12 +113,7 @@ export function evaluateOperationalAlerts(
     const ageRatio =
       snapshot.oldestRetainedWebhookAgeSeconds / thresholds.oldestRetainedWebhookAgeSeconds;
     alerts.push(
-      alert(
-        "webhook_retention_backlog_stale",
-        "critical",
-        Math.max(backlogRatio, ageRatio),
-        1,
-      ),
+      alert("webhook_retention_backlog_stale", "critical", Math.max(backlogRatio, ageRatio), 1),
     );
   }
   return alerts;

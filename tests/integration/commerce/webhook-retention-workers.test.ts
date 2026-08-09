@@ -48,7 +48,9 @@ it("multiple workers purge each expired encrypted payload once without exposing 
 
   const before = await getWebhookRetentionMetrics(database.db, now);
   expect(before).toEqual({ retainedPayloads: 18, oldestRetainedPayloadAgeSeconds: 3600 });
-  expect(JSON.stringify(before)).not.toMatch(/payloadHash|providerEventId|order|payment|user|email/i);
+  expect(JSON.stringify(before)).not.toMatch(
+    /payloadHash|providerEventId|order|payment|user|email/i,
+  );
 
   const processed = await Promise.all([
     purgeExpiredWebhookPayloads(database.db, { now, limit: 6 }),

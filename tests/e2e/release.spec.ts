@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("public release surface renders from versioned config without hidden setup", async ({ page }) => {
+test("public release surface renders from versioned config without hidden setup", async ({
+  page,
+}) => {
   await page.goto("/");
   await expect(page.locator("h1")).toBeVisible();
   await expect(page).toHaveTitle(/.+/);
