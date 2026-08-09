@@ -22,8 +22,8 @@ Add IndexNow as an optional, production-safe SEO capability for `creat-web` with
 5. `src/platform/seo/indexnow.ts` owns URL normalization, canonical-origin enforcement, deduplication, the 10,000 URL limit, payload construction, timeout handling, and provider response handling.
 6. Only URLs on the configured canonical origin are accepted. Fragments are stripped. Relative URLs are resolved against the canonical origin.
 7. `POST /api/internal/seo/indexnow` accepts `{ "urls": string[] }`, requires `Authorization: Bearer <CRON_SECRET>`, and calls the shared submission module.
-8. `bun run seo:indexnow -- <url...>` provides a deployment/publishing CLI using the same shared module.
-9. A dedicated `verify:indexnow` gate performs offline contract checks and is included in `verify:seo`, so CI validates the feature without calling the real IndexNow service.
+8. `bun scripts/submit-indexnow.ts <url...>` provides a deployment/publishing CLI using the same shared module without changing the package manifest or lockfile.
+9. `scripts/verify-indexnow.ts` performs offline protocol checks and is imported by the existing `scripts/verify-seo.ts`, so the authoritative `verify:seo` CI step validates IndexNow without calling the real service and without changing `package.json`/`bun.lock`.
 
 ## Error handling
 
@@ -37,5 +37,5 @@ Add IndexNow as an optional, production-safe SEO capability for `creat-web` with
 
 - Unit tests cover payload construction, deduplication, same-origin enforcement, fragment removal, URL-count limit, 200/202 acceptance, and provider failure.
 - Runtime configuration tests cover optional disablement, key validation, and deployed `CRON_SECRET` requirement when IndexNow is enabled.
-- The offline `verify:indexnow` script is wired into the authoritative SEO CI gate.
+- The offline `scripts/verify-indexnow.ts` check is wired directly into the authoritative SEO verification script.
 - Existing full Quality, E2E, Performance, and Clean Setup gates must pass on the final head before PR #7 is marked ready again.
