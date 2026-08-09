@@ -1,4 +1,4 @@
-import { accountDeletionService } from "@/platform/accounts/account-deletion-runtime";
+import { getAccountDeletionService } from "@/platform/accounts/account-deletion-runtime";
 import { requireAccountContext } from "@/platform/auth/account-context";
 import { assertFreshSession } from "@/platform/auth/session";
 import { env } from "@/platform/config/env";
@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
+  const accountDeletionService = getAccountDeletionService();
+  if (!accountDeletionService) return new Response("Not Found", { status: 404 });
   if (request.headers.get("origin") !== env.appOrigin) {
     return Response.json({ error: "invalid_origin" }, { status: 403 });
   }
