@@ -25,7 +25,7 @@ function featureConfigSource(features: ProductConfig["features"]): string {
   return `import type { ProductConfig } from "@/platform/config/types";\n\nexport const featuresConfig = ${JSON.stringify(features, null, 2)} as const satisfies ProductConfig["features"];\n`;
 }
 
-function build(label: string, env: NodeJS.ProcessEnv): void {
+function build(label: string, env: Readonly<Record<string, string | undefined>>): void {
   const result = spawnSync("bun", ["run", "build:test"], {
     stdio: "inherit",
     env: { ...process.env, ...env },
