@@ -2,7 +2,10 @@ import { routeRegistry } from "@/config/routes.config";
 import { env } from "@/platform/config/env";
 import { submitIndexNowUrls } from "@/platform/seo/indexnow";
 
-const urls = process.argv.slice(2).map((value) => value.trim()).filter(Boolean);
+const urls = process.argv
+  .slice(2)
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 if (!env.indexNowKey) {
   throw new Error("INDEXNOW_KEY is required before submitting URL changes");
