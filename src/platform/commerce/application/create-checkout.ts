@@ -43,7 +43,12 @@ export async function createCheckout(
   const { database, catalog, provider } = dependencies;
   const now = input.now ?? new Date();
   const snapshot = catalog.getEnabled(input.productKey, input.environment);
-  if (snapshot.commercialModel !== "one_time") throw new Error("product is not one-time");
+  if (snapshot.commercialModel === "one_time" && !provider.capabilities.oneTime) {
+    throw new Error("payment provider does not support one-time purchases");
+  }
+  if (snapshot.commercialModel === "subscription" && !provider.capabilities.subscriptions) {
+    throw new Error("payment provider does not support subscriptions");
+  }
   const product = await ensureCommerceProduct(database, snapshot, input.environment);
 
   const leaseToken = crypto.randomUUID();
@@ -116,7 +121,8 @@ export async function createCheckout(
   ).toString();
 
   try {
-    const checkout = await provider.createOneTimeCheckout({
+    const checkout = await provider.createCheckout({
+      model: snapshot.commercialModel,
       localOrderId: order.id,
       providerProductId: snapshot.providerProductId,
       expectedDisplayAmount: snapshot.expectedDisplayAmount,
@@ -146,11 +152,7 @@ export async function createCheckout(
   } catch (error) {
     await database
       .update(orders)
-      .set({
-        checkoutState: "failed",
-        checkoutLeaseToken: null,
-        checkoutLeaseExpiresAt: null,
-      })
+      .set({ checkoutState: "failed", checkoutLeaseToken: null, checkoutLeaseExpiresAt: null })
       .where(and(eq(orders.id, order.id), eq(orders.checkoutLeaseToken, leaseToken)));
     throw error;
   }
