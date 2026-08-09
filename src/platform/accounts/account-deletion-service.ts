@@ -114,25 +114,36 @@ export function createAccountDeletionService(input: {
   async function failClaim(current: AccountDeletionRequestRow, leaseToken: string): Promise<void> {
     const failedAt = now();
     const deadLetter = current.attempts >= MAX_ATTEMPTS;
-    await input.database
-      .update(accountDeletionRequests)
-      .set({
-        status: deadLetter ? "dead_letter" : "failed",
-        lastErrorCode: "deletion_step_failed",
-        leaseToken: null,
-        leaseExpiresAt: null,
-        nextAttemptAt: deadLetter
-          ? null
-          : new Date(failedAt.getTime() + nextBackoff(current.attempts)),
-        updatedAt: failedAt,
-      })
-      .where(
-        and(
-          eq(accountDeletionRequests.id, current.id),
-          eq(accountDeletionRequests.status, "processing"),
-          eq(accountDeletionRequests.leaseToken, leaseToken),
-        ),
-      );
+    await input.database.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(accountDeletionRequests)
+        .set({
+          status: deadLetter ? "dead_letter" : "failed",
+          lastErrorCode: "deletion_step_failed",
+          leaseToken: null,
+          leaseExpiresAt: null,
+          nextAttemptAt: deadLetter
+            ? null
+            : new Date(failedAt.getTime() + nextBackoff(current.attempts)),
+          updatedAt: failedAt,
+        })
+        .where(
+          and(
+            eq(accountDeletionRequests.id, current.id),
+            eq(accountDeletionRequests.status, "processing"),
+            eq(accountDeletionRequests.leaseToken, leaseToken),
+          ),
+        )
+        .returning({ id: accountDeletionRequests.id });
+
+      if (updated && deadLetter) {
+        await tx.insert(authSecurityEvents).values({
+          eventType: "dead_letter_created",
+          outcome: "failure",
+          details: { queue: "account_deletion" },
+        });
+      }
+    });
   }
 
   async function runClaimed(
