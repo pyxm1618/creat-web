@@ -47,8 +47,22 @@ async function subjectId(): Promise<string> {
 
 function provider(create: PaymentProvider["createOneTimeCheckout"]): PaymentProvider {
   return {
-    name: "waffo",
+    name: "test-provider",
+    capabilities: { oneTime: true, subscriptions: false, partialRefunds: false },
+    async createCheckout(input) {
+      const { model: _model, ...oneTimeInput } = input;
+      return create(oneTimeInput);
+    },
     createOneTimeCheckout: create,
+    async cancelSubscription() {
+      throw new Error("not used");
+    },
+    async resumeSubscription() {
+      throw new Error("not used");
+    },
+    async requestRefund() {
+      throw new Error("not used");
+    },
     async getPayment() {
       return null;
     },
