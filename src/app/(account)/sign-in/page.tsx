@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { env } from "@/platform/config/env";
+
 import { SignInForm } from "./sign-in-form";
 
 export const metadata: Metadata = {
@@ -14,7 +16,7 @@ export default function SignInPage() {
         <p className="eyebrow">Account access</p>
         <h1 id="sign-in-title">Sign in securely</h1>
         <p>No password is required. We will send a single-use confirmation link.</p>
-        <SignInForm />
+        <SignInForm turnstileSiteKey={env.turnstileSiteKey} />
       </section>
     </main>
   );
