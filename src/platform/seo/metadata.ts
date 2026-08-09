@@ -1,10 +1,64 @@
 import type { Metadata } from "next";
 
 import type { AppEnvironment } from "@/platform/config/load-runtime-config";
+import { buildLanguageAlternates, localePath } from "@/platform/i18n/routing";
 
 import { canonicalUrl } from "./canonical";
 import { seoEnvironmentPolicy } from "./environment-policy";
-import type { RouteRegistry } from "./types";
+import type { IndexablePage, RouteRegistry } from "./types";
+
+export type LocalizedSeoCopy = Pick<
+  IndexablePage,
+  "searchIntent" | "primaryKeyword" | "secondaryKeywords" | "title" | "description" | "h1"
+>;
+
+function indexableMetadata(
+  registry: RouteRegistry,
+  definition: IndexablePage,
+  mode: AppEnvironment,
+  locale: string,
+  copy: LocalizedSeoCopy,
+): Metadata {
+  const policy = seoEnvironmentPolicy(mode);
+  const canonicalRoute = definition.canonical ?? definition.route;
+  const localizedCanonical = canonicalUrl(
+    registry.site.canonicalOrigin,
+    localePath(registry.site, locale, canonicalRoute),
+  );
+  const image = definition.image ?? registry.site.defaultOgImage;
+  const languages = buildLanguageAlternates(
+    registry.site,
+    registry.site.canonicalOrigin,
+    canonicalRoute,
+  );
+
+  return {
+    title: copy.title,
+    description: copy.description,
+    alternates: policy.emitCanonical
+      ? { canonical: localizedCanonical, languages }
+      : undefined,
+    robots: {
+      index: policy.index,
+      follow: policy.follow,
+    },
+    openGraph: {
+      type: "website",
+      title: copy.title,
+      description: copy.description,
+      url: policy.emitCanonical ? localizedCanonical : undefined,
+      siteName: registry.site.siteName,
+      locale,
+      images: [{ url: image }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: copy.title,
+      description: copy.description,
+      images: [image],
+    },
+  };
+}
 
 export function metadataForRoute(
   registry: RouteRegistry,
@@ -26,34 +80,28 @@ export function metadataForRoute(
     };
   }
 
-  const canonical = canonicalUrl(
-    registry.site.canonicalOrigin,
-    definition.canonical ?? definition.route,
+  return indexableMetadata(
+    registry,
+    definition,
+    mode,
+    registry.site.defaultLocale,
+    definition,
   );
-  const image = definition.image ?? registry.site.defaultOgImage;
+}
 
-  return {
-    title: definition.title,
-    description: definition.description,
-    alternates: policy.emitCanonical ? { canonical } : undefined,
-    robots: {
-      index: policy.index,
-      follow: policy.follow,
-    },
-    openGraph: {
-      type: "website",
-      title: definition.title,
-      description: definition.description,
-      url: policy.emitCanonical ? canonical : undefined,
-      siteName: registry.site.siteName,
-      locale: registry.site.defaultLocale,
-      images: [{ url: image }],
-    },
-    twitter: {
-      card: "summary_large_image",
-      title: definition.title,
-      description: definition.description,
-      images: [image],
-    },
-  };
+export function metadataForLocalizedRoute(
+  registry: RouteRegistry,
+  route: string,
+  locale: string,
+  copy: LocalizedSeoCopy,
+  mode: AppEnvironment,
+): Metadata {
+  const definition = registry.get(route);
+  if (definition.class !== "public_indexable") {
+    throw new Error(`localized metadata requires an indexable route: ${route}`);
+  }
+  if (!registry.site.supportedLocales.includes(locale)) {
+    throw new Error(`unsupported localized metadata locale: ${locale}`);
+  }
+  return indexableMetadata(registry, definition, mode, locale, copy);
 }
