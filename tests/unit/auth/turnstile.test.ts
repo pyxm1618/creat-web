@@ -11,14 +11,16 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("verifyTurnstileToken", () => {
   it("accepts a valid single-use token with the expected action and hostname", async () => {
-    const fetchImpl = vi.fn(async () =>
-      jsonResponse({
+    let requestBody: BodyInit | null | undefined;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body;
+      return jsonResponse({
         success: true,
         hostname: "example.com",
         action: "magic-link",
         "error-codes": [],
-      }),
-    );
+      });
+    });
 
     await expect(
       verifyTurnstileToken({
@@ -31,8 +33,7 @@ describe("verifyTurnstileToken", () => {
       }),
     ).resolves.toEqual({ ok: true });
 
-    const [, init] = fetchImpl.mock.calls[0] ?? [];
-    const body = init?.body as URLSearchParams;
+    const body = requestBody as URLSearchParams;
     expect(body.get("response")).toBe("valid-token");
     expect(body.get("remoteip")).toBe("203.0.113.10");
     expect(body.get("idempotency_key")).toMatch(/^[0-9a-f-]{36}$/i);
