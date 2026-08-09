@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "creat-web:analytics-consent:v1";
+const CONSENT_EVENT = "creat-web:analytics-consent-changed";
 type Consent = "unknown" | "granted" | "denied";
 
 declare global {
@@ -11,6 +12,28 @@ declare global {
     gtag?: (...args: unknown[]) => void;
     clarity?: ((...args: unknown[]) => void) & { q?: unknown[][] };
   }
+}
+
+function readConsent(): Consent {
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  return stored === "granted" || stored === "denied" ? stored : "unknown";
+}
+
+function subscribeConsent(onStoreChange: () => void): () => void {
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY) onStoreChange();
+  };
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(CONSENT_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(CONSENT_EVENT, onStoreChange);
+  };
+}
+
+function persistConsent(consent: Exclude<Consent, "unknown">): void {
+  window.localStorage.setItem(STORAGE_KEY, consent);
+  window.dispatchEvent(new Event(CONSENT_EVENT));
 }
 
 function loadScript(id: string, src: string): void {
@@ -53,13 +76,8 @@ export function AnalyticsClient({
   clarityProjectId?: string;
   consentRequired: boolean;
 }>) {
-  const [consent, setConsent] = useState<Consent>(consentRequired ? "unknown" : "granted");
-
-  useEffect(() => {
-    if (!consentRequired) return;
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "granted" || stored === "denied") setConsent(stored);
-  }, [consentRequired]);
+  const storedConsent = useSyncExternalStore(subscribeConsent, readConsent, () => "unknown");
+  const consent: Consent = consentRequired ? storedConsent : "granted";
 
   useEffect(() => {
     if (consent !== "granted") return;
@@ -73,22 +91,10 @@ export function AnalyticsClient({
     <aside className="analytics-consent" aria-label="Analytics consent">
       <p>Allow optional analytics to help improve this site?</p>
       <div>
-        <button
-          type="button"
-          onClick={() => {
-            window.localStorage.setItem(STORAGE_KEY, "granted");
-            setConsent("granted");
-          }}
-        >
+        <button type="button" onClick={() => persistConsent("granted")}>
           Allow analytics
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            window.localStorage.setItem(STORAGE_KEY, "denied");
-            setConsent("denied");
-          }}
-        >
+        <button type="button" onClick={() => persistConsent("denied")}>
           Decline
         </button>
       </div>
