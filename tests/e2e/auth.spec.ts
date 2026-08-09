@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const TURNSTILE_TEST_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
+
 function extractConfirmationUrl(html: string): string {
   const match = html.match(/href="([^"]+)"/);
   if (!match?.[1]) throw new Error("confirmation link missing from test email");
@@ -23,13 +25,15 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
 
   await page.goto("/sign-in");
   await page.getByLabel("Email address").fill(email);
+  const sendButton = page.getByRole("button", { name: "Send secure sign-in link" });
+  await expect(sendButton).toBeEnabled({ timeout: 15_000 });
   const sendResponsePromise = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/auth/magic-link/request") &&
       response.request().method() === "POST",
     { timeout: 15_000 },
   );
-  await page.getByRole("button", { name: "Send secure sign-in link" }).click();
+  await sendButton.click();
   const sendResponse = await sendResponsePromise;
   expect(sendResponse.status()).toBe(202);
   await expect(page.getByText(/a sign-in link has been sent/i)).toBeVisible();
@@ -72,7 +76,9 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
 
   await page.goto(confirmationUrl);
   await expect(page).toHaveURL(/\/auth\/magic-link\/confirm$/);
-  expect(externalRequests).toEqual([]);
+  expect(
+    externalRequests.every((url) => new URL(url).hostname === "challenges.cloudflare.com"),
+  ).toBeTruthy();
   expect(getRequests.some((url) => token && url.includes(token))).toBeFalsy();
 
   const verificationResponsePromise = page.waitForResponse(
@@ -98,7 +104,19 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
   expect(replay.ok()).toBeFalsy();
 });
 
-test("magic link sending is bounded per normalized email", async ({ request }) => {
+test("magic link requests fail closed without a Turnstile token", async ({ request }) => {
+  const response = await request.post("/api/auth/magic-link/request", {
+    headers: {
+      origin: "http://127.0.0.1:3000",
+      "content-type": "application/json",
+      "x-real-ip": "203.0.113.80",
+    },
+    data: { email: `missing-challenge-${Date.now()}@example.com`, returnTo: "/account" },
+  });
+  expect(response.status()).toBe(400);
+});
+
+test("magic link sending is bounded per normalized email after a valid challenge", async ({ request }) => {
   const email = `limited-${Date.now()}@example.com`;
   for (let index = 0; index < 3; index += 1) {
     const response = await request.post("/api/auth/magic-link/request", {
@@ -107,7 +125,11 @@ test("magic link sending is bounded per normalized email", async ({ request }) =
         "content-type": "application/json",
         "x-real-ip": `203.0.113.${30 + index}`,
       },
-      data: { email: index % 2 === 0 ? email.toUpperCase() : email, returnTo: "/account" },
+      data: {
+        email: index % 2 === 0 ? email.toUpperCase() : email,
+        returnTo: "/account",
+        turnstileToken: TURNSTILE_TEST_TOKEN,
+      },
     });
     expect(response.status()).toBe(202);
   }
@@ -118,7 +140,7 @@ test("magic link sending is bounded per normalized email", async ({ request }) =
       "content-type": "application/json",
       "x-real-ip": "203.0.113.99",
     },
-    data: { email, returnTo: "/account" },
+    data: { email, returnTo: "/account", turnstileToken: TURNSTILE_TEST_TOKEN },
   });
   expect(limited.status()).toBe(429);
 });
