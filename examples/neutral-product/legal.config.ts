@@ -1,7 +1,7 @@
 import type { LegalConfig } from "@/platform/legal/types";
 
 const draftDocument = {
-  version: "test-only-draft-1",
+  version: "draft-1",
   effectiveDate: "2026-08-09",
   reviewStatus: "draft",
 } as const;
