@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/commerce-schema";
+import { commerceCommandJobs } from "@/platform/database/subscription-schema";
 
 const LEASE_MS = 5 * 60 * 1000;
 
@@ -78,6 +79,46 @@ export async function claimFulfillmentJobs(
         .update(fulfillmentJobs)
         .set({ leaseOwner: input.owner, leaseExpiresAt: expiresAt, state: "processing" })
         .where(eq(fulfillmentJobs.id, row.id))
+        .returning();
+      if (updated) claimed.push(updated);
+    }
+    return claimed;
+  });
+}
+
+export async function claimCommerceCommandJobs(
+  database: DatabaseClient,
+  input: { readonly owner: string; readonly limit?: number; readonly now?: Date },
+) {
+  const now = input.now ?? new Date();
+  const expiresAt = new Date(now.getTime() + LEASE_MS);
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
+
+  return database.transaction(async (tx) => {
+    const candidates = await tx
+      .select()
+      .from(commerceCommandJobs)
+      .where(
+        and(
+          inArray(commerceCommandJobs.state, ["pending", "processing"]),
+          lte(commerceCommandJobs.nextAttemptAt, now),
+          or(
+            isNull(commerceCommandJobs.leaseOwner),
+            isNull(commerceCommandJobs.leaseExpiresAt),
+            lte(commerceCommandJobs.leaseExpiresAt, now),
+          ),
+        ),
+      )
+      .orderBy(commerceCommandJobs.createdAt)
+      .limit(limit)
+      .for("update", { skipLocked: true });
+
+    const claimed = [];
+    for (const row of candidates) {
+      const [updated] = await tx
+        .update(commerceCommandJobs)
+        .set({ leaseOwner: input.owner, leaseExpiresAt: expiresAt, state: "processing" })
+        .where(eq(commerceCommandJobs.id, row.id))
         .returning();
       if (updated) claimed.push(updated);
     }
