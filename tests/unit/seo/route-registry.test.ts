@@ -7,10 +7,13 @@ const site: SiteSeoConfig = {
   siteName: "Example Tool",
   canonicalOrigin: "https://example.com",
   defaultLocale: "en",
+  supportedLocales: ["en"],
+  localeLabels: { en: "English" },
+  localePrefixStrategy: "as-needed",
   defaultTitle: "Example Tool",
   titleTemplate: "%s | Example Tool",
   defaultDescription: "A precise description of the example tool for testing purposes.",
-  defaultOgImage: "/og/default.png",
+  defaultOgImage: "/og/default.svg",
   releaseStatus: "draft",
 };
 
