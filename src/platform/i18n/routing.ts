@@ -12,8 +12,12 @@ function normalizeRoute(route: string): string {
   return `/${route.replace(/^\/+|\/+$/g, "")}`;
 }
 
+export function isSupportedLocale(config: I18nRoutingConfig, locale: string): boolean {
+  return config.supportedLocales.some((supported) => supported === locale);
+}
+
 function assertLocale(config: I18nRoutingConfig, locale: string): void {
-  if (!config.supportedLocales.includes(locale)) throw new Error(`unsupported locale: ${locale}`);
+  if (!isSupportedLocale(config, locale)) throw new Error(`unsupported locale: ${locale}`);
 }
 
 export function localePath(config: I18nRoutingConfig, locale: string, route: string): string {
@@ -25,7 +29,7 @@ export function localePath(config: I18nRoutingConfig, locale: string, route: str
 
 export function localeFromPath(config: I18nRoutingConfig, pathname: string): string {
   const firstSegment = normalizeRoute(pathname).split("/").filter(Boolean)[0];
-  if (firstSegment && config.supportedLocales.includes(firstSegment)) return firstSegment;
+  if (firstSegment && isSupportedLocale(config, firstSegment)) return firstSegment;
   return config.defaultLocale;
 }
 
