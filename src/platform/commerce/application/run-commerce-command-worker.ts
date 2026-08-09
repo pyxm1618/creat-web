@@ -2,7 +2,10 @@ import { eq } from "drizzle-orm";
 
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
-import { payments } from "@/platform/database/commerce-schema";
+import {
+  commerceReconciliationRuns,
+  payments,
+} from "@/platform/database/commerce-schema";
 import {
   commerceCommandJobs,
   refunds,
@@ -129,7 +132,7 @@ export async function runCommerceCommandWorker(input: {
           })
           .where(eq(commerceCommandJobs.id, job.id));
         if (dead && job.commandType === "refund_request") {
-          await tx
+          const [refund] = await tx
             .update(refunds)
             .set({
               status: "reconciliation_required",
@@ -137,7 +140,26 @@ export async function runCommerceCommandWorker(input: {
               operatorReviewReason: "refund provider command exhausted retries",
               updatedAt: now,
             })
-            .where(eq(refunds.id, job.targetId));
+            .where(eq(refunds.id, job.targetId))
+            .returning({ id: refunds.id, paymentId: refunds.paymentId });
+          if (refund) {
+            await tx.insert(commerceReconciliationRuns).values({
+              targetType: "payment_refund",
+              targetId: refund.paymentId,
+              actorType: "worker",
+              beforeJson: {
+                refundId: refund.id,
+                commandId: job.id,
+                attempts,
+              },
+              afterJson: {
+                refundId: refund.id,
+                status: "reconciliation_required",
+                reason: "provider_command_dead_letter",
+              },
+              result: "operator_review_required",
+            });
+          }
         }
       });
     }
