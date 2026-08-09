@@ -8,13 +8,13 @@ it("prefixes only translated indexable internal links", () => {
     {
       type: "hero",
       h1: "Localized heading",
-      body: "Body",
+      lead: "Body",
       primaryCta: { label: "Guide", href: "/guide" },
       secondaryCta: { label: "Privacy", href: "/privacy" },
     },
     {
       type: "related-resources",
-      title: "Related",
+      heading: "Related",
       links: [
         { label: "Home", href: "/" },
         { label: "External", href: "https://example.org" },
