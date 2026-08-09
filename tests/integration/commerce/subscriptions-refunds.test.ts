@@ -47,6 +47,7 @@ async function subscriptionFixture() {
       key: `subscription-${crypto.randomUUID()}`,
       version: 1,
       model: "subscription",
+      billingInterval: "month",
       environment: "test",
       providerProductId: `PROD_${crypto.randomUUID()}`,
       currency: "USD",
@@ -83,6 +84,7 @@ async function paidFixture(amountMinor = 1000n) {
       key: `one-time-${crypto.randomUUID()}`,
       version: 1,
       model: "one_time",
+      billingInterval: null,
       environment: "test",
       providerProductId: `PROD_${crypto.randomUUID()}`,
       currency: "USD",
@@ -126,7 +128,9 @@ async function paidFixture(amountMinor = 1000n) {
   return { subject, product, order, payment };
 }
 
-async function activateSubscription(order: Awaited<ReturnType<typeof subscriptionFixture>>["order"]) {
+async function activateSubscription(
+  order: Awaited<ReturnType<typeof subscriptionFixture>>["order"],
+) {
   const periodStart = new Date("2026-08-01T00:00:00Z");
   const periodEnd = new Date("2026-09-01T00:00:00Z");
   await processProviderEvent(
@@ -288,10 +292,7 @@ it("returns the same refund for an idempotent retry even after the balance is fu
   const repeated = await enqueueRefundRequest(database.db, request);
   expect(repeated.id).toBe(first.id);
 
-  const stored = await database.db
-    .select()
-    .from(refunds)
-    .where(eq(refunds.paymentId, payment.id));
+  const stored = await database.db.select().from(refunds).where(eq(refunds.paymentId, payment.id));
   expect(stored).toHaveLength(1);
 });
 
