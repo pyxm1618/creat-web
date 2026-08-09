@@ -1,39 +1,53 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
+import { featuresConfig } from "@/config/features.config";
 import { expireGrants, expireReservations } from "@/platform/credits/application/credit-service";
 import { runCreditFinalizationWorker } from "@/platform/credits/application/finalization-worker";
 import { reconcileCreditLedger } from "@/platform/credits/application/reconcile-credit-ledger";
-import { featuresConfig } from "@/config/features.config";
 import { env } from "@/platform/config/env";
 import { db } from "@/platform/database/application-database";
+import {
+  authenticateInternalRequest,
+  unauthorizedInternalResponse,
+} from "@/platform/operations/authenticate-internal-request";
+import { runBoundedJob } from "@/platform/operations/run-bounded-job";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function authorized(request: Request): boolean {
-  if (!env.cronSecret) return false;
-  const expected = Buffer.from(`Bearer ${env.cronSecret}`);
-  const actual = Buffer.from(request.headers.get("authorization") ?? "");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
+const CREDIT_BATCH_LIMIT = 50;
+const CREDIT_RUNTIME_MS = 45_000;
 
 export async function GET(request: Request): Promise<Response> {
-  if (!authorized(request)) {
-    return new Response("Unauthorized", { status: 401, headers: { "cache-control": "no-store" } });
-  }
+  if (!authenticateInternalRequest(request, env.cronSecret)) return unauthorizedInternalResponse();
   if (!featuresConfig.commerce.credits) return new Response("Not Found", { status: 404 });
 
-  const expiredReservations = await expireReservations(db);
-  const finalized = await runCreditFinalizationWorker(db, { owner: `credits:${randomUUID()}` });
-  const expiredGrants = await expireGrants(db);
-  const issues = await reconcileCreditLedger(db);
-  return Response.json(
-    {
-      expiredReservations,
-      finalized,
-      expiredGrants,
-      reconciliationIssues: issues.length,
+  const result = await runBoundedJob({
+    batchLimit: CREDIT_BATCH_LIMIT,
+    maxRuntimeMs: CREDIT_RUNTIME_MS,
+    run: async (job) => {
+      const expiredReservations = await expireReservations(db, { limit: job.batchLimit });
+      job.assertWithinBudget();
+      const finalized = job.canContinue(2_000)
+        ? await runCreditFinalizationWorker(db, {
+            owner: `credits:${randomUUID()}`,
+            limit: job.batchLimit,
+          })
+        : { completed: 0, deferred: 0 };
+      job.assertWithinBudget();
+      const expiredGrants = job.canContinue(2_000)
+        ? await expireGrants(db, { limit: job.batchLimit })
+        : 0;
+      job.assertWithinBudget();
+      const issues = job.canContinue(2_000) ? await reconcileCreditLedger(db) : [];
+      return {
+        expiredReservations,
+        finalized,
+        expiredGrants,
+        reconciliationIssues: issues.length,
+      };
     },
-    { headers: { "cache-control": "no-store" } },
-  );
+  });
+
+  return Response.json(result, { headers: { "cache-control": "no-store" } });
 }
