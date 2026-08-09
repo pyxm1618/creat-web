@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import type { ReactNode } from "react";
 
 import { SiteFooter } from "@/components/navigation/site-footer";
@@ -10,7 +11,8 @@ import "../globals.css";
 
 export const metadata: Metadata = rootMetadata();
 
-export default function LegalLayout({ children }: Readonly<{ children: ReactNode }>) {
+export default async function LegalLayout({ children }: Readonly<{ children: ReactNode }>) {
+  await connection();
   return (
     <html lang={siteConfig.defaultLocale}>
       <body>
