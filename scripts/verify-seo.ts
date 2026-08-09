@@ -1,3 +1,5 @@
+import "./verify-indexnow";
+
 import type { LandingSection } from "@/components/landing/landing-page";
 import { homeConfig } from "@/config/home.config";
 import { routeRegistry } from "@/config/routes.config";
@@ -131,5 +133,6 @@ console.log(
     indexableRoutes: indexable.length,
     sitemapEntries: sitemap.length,
     releaseStatus: seoConfig.releaseStatus,
+    indexNowGate: "verified",
   }),
 );
