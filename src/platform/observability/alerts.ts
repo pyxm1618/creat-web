@@ -4,7 +4,8 @@ export type OperationalAlertCode =
   | "webhook_invalid_signature_spike"
   | "reconciliation_mismatch"
   | "job_backlog_stale"
-  | "provider_outage_repeated";
+  | "provider_outage_repeated"
+  | "webhook_retention_backlog_stale";
 
 export type OperationalAlert = Readonly<{
   event: "operational_alert";
@@ -22,6 +23,8 @@ export type OperationalAlertSnapshot = Readonly<{
   jobBacklog: number;
   oldestJobAgeSeconds: number;
   providerFailures5m: number;
+  webhookRetentionBacklog: number;
+  oldestRetainedWebhookAgeSeconds: number;
 }>;
 
 export type OperationalAlertThresholds = Readonly<{
@@ -30,6 +33,8 @@ export type OperationalAlertThresholds = Readonly<{
   jobBacklog: number;
   oldestJobAgeSeconds: number;
   providerFailures5m: number;
+  webhookRetentionBacklog: number;
+  oldestRetainedWebhookAgeSeconds: number;
 }>;
 
 export const DEFAULT_OPERATIONAL_ALERT_THRESHOLDS: OperationalAlertThresholds = {
@@ -38,6 +43,8 @@ export const DEFAULT_OPERATIONAL_ALERT_THRESHOLDS: OperationalAlertThresholds = 
   jobBacklog: 100,
   oldestJobAgeSeconds: 15 * 60,
   providerFailures5m: 10,
+  webhookRetentionBacklog: 100,
+  oldestRetainedWebhookAgeSeconds: 30 * 24 * 60 * 60,
 };
 
 function alert(
@@ -88,14 +95,7 @@ export function evaluateOperationalAlerts(
   ) {
     const backlogRatio = snapshot.jobBacklog / thresholds.jobBacklog;
     const ageRatio = snapshot.oldestJobAgeSeconds / thresholds.oldestJobAgeSeconds;
-    alerts.push(
-      alert(
-        "job_backlog_stale",
-        "critical",
-        Math.max(backlogRatio, ageRatio),
-        1,
-      ),
-    );
+    alerts.push(alert("job_backlog_stale", "critical", Math.max(backlogRatio, ageRatio), 1));
   }
   if (snapshot.providerFailures5m >= thresholds.providerFailures5m) {
     alerts.push(
@@ -104,6 +104,22 @@ export function evaluateOperationalAlerts(
         "critical",
         snapshot.providerFailures5m,
         thresholds.providerFailures5m,
+      ),
+    );
+  }
+  if (
+    snapshot.webhookRetentionBacklog >= thresholds.webhookRetentionBacklog ||
+    snapshot.oldestRetainedWebhookAgeSeconds >= thresholds.oldestRetainedWebhookAgeSeconds
+  ) {
+    const backlogRatio = snapshot.webhookRetentionBacklog / thresholds.webhookRetentionBacklog;
+    const ageRatio =
+      snapshot.oldestRetainedWebhookAgeSeconds / thresholds.oldestRetainedWebhookAgeSeconds;
+    alerts.push(
+      alert(
+        "webhook_retention_backlog_stale",
+        "critical",
+        Math.max(backlogRatio, ageRatio),
+        1,
       ),
     );
   }
