@@ -12,6 +12,6 @@ export const seoConfig = {
   titleTemplate: "%s | Creat Web Sample",
   defaultDescription:
     "A neutral SEO-first starter for launching useful web products quickly with optional platform capabilities that remain disabled until needed.",
-  defaultOgImage: "/og/default.png",
+  defaultOgImage: "/og/default.svg",
   releaseStatus: "draft",
 } as const satisfies SiteSeoConfig;
