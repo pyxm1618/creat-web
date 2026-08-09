@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { routeRegistry } from "@/config/routes.config";
 
-test("test environment is layered noindex with no production canonical or sitemap", async ({
+test("test environment is layered noindex with no production canonical, sitemap, or IndexNow key", async ({
   page,
   request,
 }) => {
@@ -19,6 +19,10 @@ test("test environment is layered noindex with no production canonical or sitema
 
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.status()).toBe(404);
+
+  const indexNowKey = await request.get("/indexnow-key.txt");
+  expect(indexNowKey.status()).toBe(404);
+  expect(indexNowKey.headers()["x-robots-tag"]).toBe("noindex, nofollow");
 });
 
 test("structured data parses and matches registered homepage SEO facts", async ({ page }) => {
