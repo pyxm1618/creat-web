@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 
 const featureConfigPath = "src/config/features.config.ts";
@@ -12,8 +13,15 @@ export const featuresConfig = {
 } as const satisfies ProductConfig["features"];
 `;
 
+function waitForExit(child: ChildProcess): Promise<number> {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code ?? 1));
+  });
+}
+
 let restored = false;
-let server: ReturnType<typeof Bun.spawn> | undefined;
+let server: ChildProcess | undefined;
 async function restore(): Promise<void> {
   if (restored) return;
   restored = true;
@@ -29,22 +37,18 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 try {
   await writeFile(featureConfigPath, enabledProfile, "utf8");
-  const build = Bun.spawn(["bun", "run", "build:test"], {
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
+  const build = spawn("bun", ["run", "build:test"], {
+    stdio: "inherit",
     env: process.env,
   });
-  const buildExitCode = await build.exited;
+  const buildExitCode = await waitForExit(build);
   if (buildExitCode !== 0) process.exitCode = buildExitCode;
   else {
-    server = Bun.spawn(["bun", "run", "start"], {
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "inherit",
+    server = spawn("bun", ["run", "start"], {
+      stdio: "inherit",
       env: process.env,
     });
-    process.exitCode = await server.exited;
+    process.exitCode = await waitForExit(server);
   }
 } finally {
   await restore();
