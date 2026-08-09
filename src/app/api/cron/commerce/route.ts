@@ -26,16 +26,20 @@ export async function GET(request: Request): Promise<Response> {
     batchLimit: COMMERCE_BATCH_LIMIT,
     maxRuntimeMs: COMMERCE_RUNTIME_MS,
     run: async (job) => {
+      let workerClaimed = 0;
       const worker = await runCommerceWorker({
         database: commerce.database,
         provider: commerce.provider,
         fulfillment: commerce.fulfillment,
         owner: `cron:${randomUUID()}`,
         limit: job.batchLimit,
+        onClaimed: (count) => {
+          workerClaimed = count;
+        },
       });
       job.assertWithinBudget();
 
-      let remaining = Math.max(0, job.batchLimit - worker.attempted);
+      let remaining = Math.max(0, job.batchLimit - workerClaimed);
       const staleRefundsReconciled =
         remaining > 0 && job.canContinue(2_000)
           ? await reconcileStaleRefunds(commerce.database, { limit: remaining })
