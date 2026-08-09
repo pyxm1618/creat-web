@@ -142,6 +142,7 @@ for (const requiredFile of [
   "docs/runbooks/key-rotation.md",
   "docs/runbooks/release-rollback.md",
   "docs/runbooks/dead-letters.md",
+  "docs/runbooks/data-retention.md",
   "docs/upgrade/owned-project-upgrades.md",
 ]) {
   await readFile(requiredFile, "utf8");
