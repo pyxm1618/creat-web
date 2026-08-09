@@ -4,9 +4,9 @@
   "private": true,
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "build:test": "APP_ENV=test next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "build:test": "APP_ENV=test next build --webpack",
     "start": "next start",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
