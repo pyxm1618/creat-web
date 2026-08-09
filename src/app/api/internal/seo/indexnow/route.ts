@@ -3,14 +3,14 @@ import { z } from "zod";
 import { routeRegistry } from "@/config/routes.config";
 import { env } from "@/platform/config/env";
 import {
+  authenticateInternalRequest,
+  unauthorizedInternalResponse,
+} from "@/platform/operations/authenticate-internal-request";
+import {
   INDEXNOW_MAX_URLS,
   IndexNowSubmissionError,
   submitIndexNowUrls,
 } from "@/platform/seo/indexnow";
-import {
-  authenticateInternalRequest,
-  unauthorizedInternalResponse,
-} from "@/platform/operations/authenticate-internal-request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,10 +22,7 @@ const requestSchema = z
   .strict();
 
 function jsonError(error: string, status: number): Response {
-  return Response.json(
-    { error },
-    { status, headers: { "cache-control": "no-store" } },
-  );
+  return Response.json({ error }, { status, headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(request: Request): Promise<Response> {
