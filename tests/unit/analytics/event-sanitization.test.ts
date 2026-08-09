@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  sanitizeAnalyticsEvent,
-  type AnalyticsEventInput,
-} from "@/platform/analytics/events";
+import { sanitizeAnalyticsEvent, type AnalyticsEventInput } from "@/platform/analytics/events";
 
 describe("analytics event sanitization", () => {
   it("keeps only allowlisted event properties", () => {
