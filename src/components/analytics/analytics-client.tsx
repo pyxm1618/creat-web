@@ -19,6 +19,10 @@ function readConsent(): Consent {
   return stored === "granted" || stored === "denied" ? stored : "unknown";
 }
 
+function serverConsent(): Consent {
+  return "unknown";
+}
+
 function subscribeConsent(onStoreChange: () => void): () => void {
   const handleStorage = (event: StorageEvent) => {
     if (event.key === STORAGE_KEY) onStoreChange();
@@ -76,7 +80,7 @@ export function AnalyticsClient({
   clarityProjectId?: string;
   consentRequired: boolean;
 }>) {
-  const storedConsent = useSyncExternalStore(subscribeConsent, readConsent, () => "unknown");
+  const storedConsent = useSyncExternalStore<Consent>(subscribeConsent, readConsent, serverConsent);
   const consent: Consent = consentRequired ? storedConsent : "granted";
 
   useEffect(() => {
