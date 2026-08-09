@@ -7,8 +7,11 @@ function waitForExit(child: ChildProcess): Promise<number> {
   });
 }
 
-const env = {
-  ...process.env,
+const inheritedEnv: NodeJS.ProcessEnv = { ...process.env };
+delete inheritedEnv.TEST_EMAIL_DIR;
+
+const env: NodeJS.ProcessEnv = {
+  ...inheritedEnv,
   APP_ENV: "production",
   APP_ORIGIN: "https://example.com",
   DATABASE_URL: process.env.DATABASE_URL ?? "postgres://test:test@127.0.0.1:5432/test",
