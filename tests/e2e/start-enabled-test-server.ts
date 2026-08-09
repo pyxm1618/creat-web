@@ -13,27 +13,39 @@ export const featuresConfig = {
 `;
 
 let restored = false;
+let server: ReturnType<typeof Bun.spawn> | undefined;
 async function restore(): Promise<void> {
   if (restored) return;
   restored = true;
   await writeFile(featureConfigPath, original, "utf8");
 }
 
-await writeFile(featureConfigPath, enabledProfile, "utf8");
-const child = Bun.spawn(["bun", "run", "dev"], {
-  stdout: "inherit",
-  stderr: "inherit",
-  stdin: "inherit",
-  env: process.env,
-});
-
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    child.kill(signal);
+    server?.kill(signal);
     void restore().finally(() => process.exit(0));
   });
 }
 
-const exitCode = await child.exited;
-await restore();
-process.exit(exitCode);
+try {
+  await writeFile(featureConfigPath, enabledProfile, "utf8");
+  const build = Bun.spawn(["bun", "run", "build:test"], {
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+    env: process.env,
+  });
+  const buildExitCode = await build.exited;
+  if (buildExitCode !== 0) process.exitCode = buildExitCode;
+  else {
+    server = Bun.spawn(["bun", "run", "start"], {
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+      env: process.env,
+    });
+    process.exitCode = await server.exited;
+  }
+} finally {
+  await restore();
+}
