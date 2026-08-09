@@ -5,12 +5,18 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
 import { requireAccountContext } from "@/platform/auth/account-context";
-import { auth } from "@/platform/auth/auth";
+import { getAuth } from "@/platform/auth/auth";
 
 async function authenticatedHeaders(): Promise<Headers> {
   const requestHeaders = await headers();
   await requireAccountContext(requestHeaders);
   return requestHeaders;
+}
+
+function requireAuth() {
+  const auth = getAuth();
+  if (!auth) throw new Error("authentication is disabled");
+  return auth;
 }
 
 export async function revokeSessionAction(formData: FormData): Promise<void> {
@@ -20,7 +26,7 @@ export async function revokeSessionAction(formData: FormData): Promise<void> {
   }
 
   const requestHeaders = await authenticatedHeaders();
-  await auth.api.revokeSession({
+  await requireAuth().api.revokeSession({
     body: { token },
     headers: requestHeaders,
   });
@@ -29,18 +35,18 @@ export async function revokeSessionAction(formData: FormData): Promise<void> {
 
 export async function revokeOtherSessionsAction(): Promise<void> {
   const requestHeaders = await authenticatedHeaders();
-  await auth.api.revokeOtherSessions({ headers: requestHeaders });
+  await requireAuth().api.revokeOtherSessions({ headers: requestHeaders });
   revalidatePath("/account/security");
 }
 
 export async function revokeAllSessionsAction(): Promise<void> {
   const requestHeaders = await authenticatedHeaders();
-  await auth.api.revokeSessions({ headers: requestHeaders });
+  await requireAuth().api.revokeSessions({ headers: requestHeaders });
   redirect("/sign-in");
 }
 
 export async function signOutAction(): Promise<void> {
   const requestHeaders = await headers();
-  await auth.api.signOut({ headers: requestHeaders });
+  await requireAuth().api.signOut({ headers: requestHeaders });
   redirect("/sign-in");
 }
