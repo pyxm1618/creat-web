@@ -36,8 +36,15 @@ export async function GET(request: Request): Promise<Response> {
               owner: `credits:${randomUUID()}`,
               limit: remaining,
             })
-          : { completed: 0, deferred: 0 };
-      remaining = Math.max(0, remaining - finalized.completed - finalized.deferred);
+          : {
+              claimed: 0,
+              processed: 0,
+              completed: 0,
+              deferred: 0,
+              deadLettered: 0,
+              lostLease: 0,
+            };
+      remaining = Math.max(0, remaining - Math.max(finalized.claimed, finalized.processed));
       job.assertWithinBudget();
       const expiredGrants =
         remaining > 0 && job.canContinue(2_000) ? await expireGrants(db, { limit: remaining }) : 0;

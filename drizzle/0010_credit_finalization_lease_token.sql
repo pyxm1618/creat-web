@@ -1,0 +1,1 @@
+ALTER TABLE "credit_finalization_jobs" ADD COLUMN "lease_token" text;

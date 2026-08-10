@@ -71,6 +71,13 @@
       "when": 1786326841206,
       "tag": "0009_production_readiness",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786331504734,
+      "tag": "0010_credit_finalization_lease_token",
+      "breakpoints": true
     }
   ]
 }

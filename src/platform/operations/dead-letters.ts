@@ -189,6 +189,7 @@ export async function retryDeadLetter(
           attempts: 0,
           nextAttemptAt: now,
           leaseOwner: null,
+          leaseToken: null,
           leaseExpiresAt: null,
           lastErrorCode: null,
         })

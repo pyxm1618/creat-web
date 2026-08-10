@@ -175,6 +175,7 @@ export const creditFinalizationJobs = pgTable(
     state: text("state").default("pending").notNull(),
     attempts: integer("attempts").default(0).notNull(),
     leaseOwner: text("lease_owner"),
+    leaseToken: text("lease_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" })
       .defaultNow()
