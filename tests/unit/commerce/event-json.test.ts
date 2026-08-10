@@ -119,4 +119,57 @@ describe("normalized provider event JSON codec", () => {
       }),
     ).toThrow();
   });
+
+  it.each([
+    {
+      name: "payment",
+      payload: {
+        type: "one_time_payment_succeeded",
+        eventId: "legacy-payment-event",
+        environment: "test",
+        externalOrderId: "legacy-order",
+        merchantOrderReference: "legacy-merchant-order",
+        externalPaymentId: "legacy-payment",
+        amount: { currency: "USD", minor: "2900" },
+        occurredAt: "2026-08-09T01:02:03.000Z",
+        merchantId: "legacy-merchant",
+        storeId: "legacy-store",
+      },
+      expected: {
+        type: "one_time_payment_succeeded",
+        eventId: "legacy-payment-event",
+        environment: "test",
+        externalOrderId: "legacy-order",
+        merchantOrderReference: "legacy-merchant-order",
+        externalPaymentId: "legacy-payment",
+        amount: { currency: "USD", minor: 2900n },
+        occurredAt: new Date("2026-08-09T01:02:03.000Z"),
+        merchantId: "legacy-merchant",
+        storeId: "legacy-store",
+      },
+    },
+    {
+      name: "refund",
+      payload: {
+        type: "refund_failed",
+        eventId: "legacy-refund-event",
+        environment: "production",
+        externalPaymentId: "legacy-refund-payment",
+        externalRefundReference: "legacy-refund-reference",
+        merchantOrderReference: "legacy-refund-order",
+        occurredAt: "2026-08-09T02:03:04.000Z",
+      },
+      expected: {
+        type: "refund_failed",
+        eventId: "legacy-refund-event",
+        environment: "production",
+        externalPaymentId: "legacy-refund-payment",
+        externalRefundReference: "legacy-refund-reference",
+        merchantOrderReference: "legacy-refund-order",
+        occurredAt: new Date("2026-08-09T02:03:04.000Z"),
+      },
+    },
+  ] as const)("decodes a persisted versionless V0 $name event", ({ payload, expected }) => {
+    expect(parseNormalizedProviderEvent(payload)).toEqual(expected);
+  });
 });

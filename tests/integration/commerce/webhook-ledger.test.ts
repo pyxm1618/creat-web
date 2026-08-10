@@ -9,6 +9,7 @@ import type { PaymentProvider } from "@/platform/commerce/application/payment-pr
 import { processOneTimePaymentEvent } from "@/platform/commerce/application/process-one-time-payment-event";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
+import { runWebhookInboxWorker } from "@/platform/commerce/application/run-webhook-inbox-worker";
 import { payloadHash } from "@/platform/commerce/application/webhook-retention";
 import type { NormalizedProviderEvent } from "@/platform/commerce/domain/events";
 import { createDatabaseClient } from "@/platform/database/client";
@@ -275,6 +276,63 @@ it("encrypts unsupported signed events and purges expired ciphertext", async () 
   });
   expect(after?.rawPayloadCiphertext).toBeNull();
   expect(after?.rawPayloadPurgedAt).toEqual(new Date("2026-09-08T00:00:00Z"));
+});
+
+it("processes a legacy versionless pending inbox payment after deployment", async () => {
+  const { order } = await seedOrder();
+  const eventId = `legacy-${crypto.randomUUID()}`;
+  const externalPaymentId = `PAY_${crypto.randomUUID()}`;
+  const hash = payloadHash(new TextEncoder().encode(eventId));
+  const now = new Date("2026-08-10T01:02:03.000Z");
+  const [legacyRow] = await database.db
+    .insert(paymentWebhookInbox)
+    .values({
+      environment: "test",
+      providerEventId: eventId,
+      dedupHash: hash,
+      eventType: "one_time_payment_succeeded",
+      signatureValid: true,
+      normalizedPayloadJson: {
+        type: "one_time_payment_succeeded",
+        eventId,
+        environment: "test",
+        externalOrderId: `ORD_${crypto.randomUUID()}`,
+        merchantOrderReference: order.id,
+        externalPaymentId,
+        amount: { currency: "USD", minor: "2900" },
+        occurredAt: "2026-08-09T01:02:03.000Z",
+      },
+      payloadHash: hash,
+      payloadSizeBytes: 128,
+      retentionClass: "normalized_only",
+      state: "pending",
+      nextAttemptAt: now,
+      receivedAt: now,
+    })
+    .returning();
+  if (!legacyRow) throw new Error("legacy inbox insert failed");
+
+  expect(
+    await runWebhookInboxWorker({
+      database: database.db,
+      owner: "legacy-worker",
+      now,
+      limit: 1,
+    }),
+  ).toEqual({ claimed: 1, processed: 1 });
+
+  const processedRow = await database.db.query.paymentWebhookInbox.findFirst({
+    where: eq(paymentWebhookInbox.id, legacyRow.id),
+  });
+  expect(processedRow).toMatchObject({ state: "completed", attempts: 0 });
+  const processedOrder = await database.db.query.orders.findFirst({
+    where: eq(orders.id, order.id),
+  });
+  expect(processedOrder).toMatchObject({ status: "paid" });
+  const payment = await database.db.query.payments.findFirst({
+    where: and(eq(payments.environment, "test"), eq(payments.externalPaymentId, externalPaymentId)),
+  });
+  expect(payment).toMatchObject({ orderId: order.id, status: "succeeded" });
 });
 
 it("stores a JSON-safe lossless subscription event for deferred inbox processing", async () => {

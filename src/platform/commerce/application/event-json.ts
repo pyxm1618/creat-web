@@ -17,13 +17,14 @@ const amountSchema = z.object({
   currency: z.string().length(3),
   minor: z.string().regex(/^\d+$/),
 });
-const base = z.object({
-  version: z.literal(1),
+const baseFields = {
   type: z.string(),
   eventId: z.string().min(1),
   environment: z.enum(["test", "production"]),
   occurredAt: z.iso.datetime(),
-});
+} as const;
+const legacyV0Base = z.object(baseFields);
+const v1Base = z.object({ version: z.literal(1), ...baseFields });
 const providerIdentityFields = {
   merchantId: z.string().min(1).optional(),
   storeId: z.string().min(1).optional(),
@@ -151,14 +152,14 @@ function parsedAmount(value: z.infer<typeof amountSchema>) {
   };
 }
 
-export function parseNormalizedProviderEvent(value: unknown): NormalizedProviderEvent {
-  const parsedBase = base.parse(value);
+function parseV1NormalizedProviderEvent(value: unknown): NormalizedProviderEvent {
+  const parsedBase = v1Base.parse(value);
   const environment = parsedBase.environment as CommerceEnvironment;
   const occurredAt = new Date(parsedBase.occurredAt);
 
   switch (parsedBase.type) {
     case "one_time_payment_succeeded": {
-      const parsed = base
+      const parsed = v1Base
         .extend({
           ...orderFields,
           externalPaymentId: z.string().min(1),
@@ -180,7 +181,7 @@ export function parseNormalizedProviderEvent(value: unknown): NormalizedProvider
     }
     case "one_time_payment_failed":
     case "one_time_payment_canceled": {
-      const parsed = base
+      const parsed = v1Base
         .extend({
           ...orderFields,
           externalPaymentId: z.string().min(1).optional(),
@@ -205,7 +206,7 @@ export function parseNormalizedProviderEvent(value: unknown): NormalizedProvider
     case "subscription_updated":
     case "subscription_canceled":
     case "subscription_past_due": {
-      const parsed = base
+      const parsed = v1Base
         .extend({
           ...orderFields,
           currentPeriodStart: z.iso.datetime().optional(),
@@ -232,7 +233,7 @@ export function parseNormalizedProviderEvent(value: unknown): NormalizedProvider
       };
     }
     case "refund_succeeded": {
-      const parsed = base
+      const parsed = v1Base
         .extend({
           externalPaymentId: z.string().min(1),
           externalRefundReference: z.string().min(1).optional(),
@@ -254,7 +255,7 @@ export function parseNormalizedProviderEvent(value: unknown): NormalizedProvider
       };
     }
     case "refund_failed": {
-      const parsed = base
+      const parsed = v1Base
         .extend({
           externalPaymentId: z.string().min(1),
           externalRefundReference: z.string().min(1).optional(),
@@ -274,7 +275,7 @@ export function parseNormalizedProviderEvent(value: unknown): NormalizedProvider
       };
     }
     case "unsupported_signed_event": {
-      const parsed = base.extend({ providerType: z.string().min(1) }).parse(value);
+      const parsed = v1Base.extend({ providerType: z.string().min(1) }).parse(value);
       return {
         type: "unsupported_signed_event",
         eventId: parsed.eventId,
@@ -286,4 +287,20 @@ export function parseNormalizedProviderEvent(value: unknown): NormalizedProvider
     default:
       throw new Error(`unsupported normalized event type: ${parsedBase.type}`);
   }
+}
+
+function parseLegacyV0NormalizedProviderEvent(
+  value: Record<string, unknown>,
+): NormalizedProviderEvent {
+  const legacy = legacyV0Base.passthrough().parse(value);
+  return parseV1NormalizedProviderEvent({ ...legacy, version: 1 });
+}
+
+export function parseNormalizedProviderEvent(value: unknown): NormalizedProviderEvent {
+  const envelope = z.record(z.string(), z.unknown()).parse(value);
+  if (!Object.hasOwn(envelope, "version")) {
+    return parseLegacyV0NormalizedProviderEvent(envelope);
+  }
+  if (envelope.version === 1) return parseV1NormalizedProviderEvent(envelope);
+  throw new Error(`unsupported normalized event version: ${String(envelope.version)}`);
 }
