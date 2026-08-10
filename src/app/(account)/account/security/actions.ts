@@ -20,14 +20,19 @@ function requireAuth() {
 }
 
 export async function revokeSessionAction(formData: FormData): Promise<void> {
-  const token = formData.get("token");
-  if (typeof token !== "string" || token.length < 16) {
-    throw new Error("invalid session token");
+  const sessionId = formData.get("sessionId");
+  if (typeof sessionId !== "string" || sessionId.length < 1) {
+    throw new Error("invalid session id");
   }
 
   const requestHeaders = await authenticatedHeaders();
-  await requireAuth().api.revokeSession({
-    body: { token },
+  const auth = requireAuth();
+  const sessions = await auth.api.listSessions({ headers: requestHeaders });
+  const matched = sessions.filter((session) => session.id === sessionId);
+  if (matched.length !== 1 || !matched[0]) throw new Error("session not found");
+
+  await auth.api.revokeSession({
+    body: { token: matched[0].token },
     headers: requestHeaders,
   });
   revalidatePath("/account/security");

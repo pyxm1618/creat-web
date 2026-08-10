@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
 
 const TURNSTILE_TEST_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
@@ -31,6 +31,32 @@ async function installBrowserTurnstileMock(page: Page): Promise<void> {
   }, TURNSTILE_TEST_TOKEN);
 }
 
+async function signInWithMagicLink(input: {
+  readonly browser: Browser;
+  readonly request: APIRequestContext;
+  readonly email: string;
+}): Promise<Page> {
+  const send = await input.request.post("/api/auth/magic-link/request", {
+    headers: {
+      origin: "http://127.0.0.1:3000",
+      "content-type": "application/json",
+      "x-real-ip": "203.0.113.201",
+    },
+    data: { email: input.email, returnTo: "/account", turnstileToken: TURNSTILE_TEST_TOKEN },
+  });
+  expect(send.status()).toBe(202);
+  const mailbox = await input.request.get(
+    `/api/test/emails/latest?to=${encodeURIComponent(input.email)}`,
+  );
+  const message = (await mailbox.json()) as { html: string };
+  const context = await input.browser.newContext();
+  const page = await context.newPage();
+  await page.goto(extractConfirmationUrl(message.html));
+  await page.getByRole("button", { name: "Confirm sign in" }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  return page;
+}
+
 test("native Better Auth mutation endpoints are not public", async ({ request }) => {
   for (const path of ["/api/auth/delete-user", "/api/auth/sign-in/magic-link"]) {
     const response = await request.post(path, {
@@ -38,6 +64,47 @@ test("native Better Auth mutation endpoints are not public", async ({ request })
     });
     expect(response.status()).toBe(404);
   }
+});
+
+test("session revocation keeps tokens out of rendered account security HTML", async ({
+  browser,
+  request,
+}) => {
+  const email = `session-revocation-${Date.now()}@example.com`;
+  const targetPage = await signInWithMagicLink({ browser, request, email });
+  const currentPage = await signInWithMagicLink({ browser, request, email });
+  const currentContext = currentPage.context();
+
+  const sessionsResponse = await currentContext.request.get("/api/auth/list-sessions");
+  expect(sessionsResponse.ok()).toBeTruthy();
+  const sessions = (await sessionsResponse.json()) as Array<{ id: string; token: string }>;
+  const currentSessionResponse = await currentContext.request.get("/api/auth/get-session");
+  const currentSession = (await currentSessionResponse.json()) as {
+    session: { id: string; token: string };
+  };
+  const targetSession = sessions.find((session) => session.id !== currentSession.session.id);
+  if (!targetSession) throw new Error("target session missing");
+
+  await currentPage.goto("/account/security");
+  const html = await currentPage.content();
+  expect(html).not.toContain(targetSession.token);
+  expect(html).toContain('name="sessionId"');
+
+  await currentPage.getByRole("button", { name: "Revoke this session" }).click();
+
+  await expect
+    .poll(async () => {
+      const remainingResponse = await currentContext.request.get("/api/auth/list-sessions");
+      const remaining = (await remainingResponse.json()) as Array<{ id: string }>;
+      return remaining.map((session) => session.id);
+    })
+    .toEqual([currentSession.session.id]);
+  await targetPage.goto("/account");
+  await expect(targetPage).toHaveURL(/\/sign-in$/);
+  await expect(currentPage).toHaveURL(/\/account\/security$/);
+
+  await targetPage.context().close();
+  await currentContext.close();
 });
 
 test("magic link confirmation is scanner-safe and single-use", async ({ page, request }) => {

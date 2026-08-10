@@ -49,7 +49,7 @@ export default async function AccountSecurityPage() {
                 </p>
                 {!current ? (
                   <form action={revokeSessionAction}>
-                    <input type="hidden" name="token" value={session.token} />
+                    <input type="hidden" name="sessionId" value={session.id} />
                     <button type="submit">Revoke this session</button>
                   </form>
                 ) : null}
