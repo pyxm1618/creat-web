@@ -1,3 +1,5 @@
+import { sql } from "drizzle-orm";
+
 import type { DatabaseClient } from "@/platform/database/client";
 import { paymentWebhookInbox } from "@/platform/database/commerce-schema";
 
@@ -48,25 +50,49 @@ export async function ingestProviderWebhook(input: {
     if (!(error instanceof InvalidWebhookSignatureError)) throw error;
     const providerEventId = invalidDiagnosticId(input.environment, now);
     const diagnosticDedupHash = payloadHash(new TextEncoder().encode(providerEventId));
-    const inserted = await input.database
-      .insert(paymentWebhookInbox)
-      .values({
+    const duplicate = await input.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${providerEventId}, 0))`);
+      const [existing] = await tx
+        .select({ id: paymentWebhookInbox.id })
+        .from(paymentWebhookInbox)
+        .where(
+          sql`${paymentWebhookInbox.environment} = ${input.environment} and ${paymentWebhookInbox.providerEventId} = ${providerEventId}`,
+        )
+        .limit(1);
+      if (existing) {
+        await tx
+          .update(paymentWebhookInbox)
+          .set({
+            normalizedPayloadJson: sql<Record<string, unknown>>`jsonb_build_object(
+              'occurrenceCount',
+              CASE
+                WHEN jsonb_typeof(${paymentWebhookInbox.normalizedPayloadJson} -> 'occurrenceCount') = 'number'
+                  THEN (${paymentWebhookInbox.normalizedPayloadJson} ->> 'occurrenceCount')::bigint + 1
+                ELSE 2
+              END
+            )`,
+          })
+          .where(sql`${paymentWebhookInbox.id} = ${existing.id}`);
+        return true;
+      }
+
+      await tx.insert(paymentWebhookInbox).values({
         environment: input.environment,
         providerEventId,
         dedupHash: diagnosticDedupHash,
         eventType: "invalid_signature",
         signatureValid: false,
-        normalizedPayloadJson: {},
+        normalizedPayloadJson: { occurrenceCount: 1 },
         payloadHash: hash,
         payloadSizeBytes: size,
         retentionClass: "invalid_signature",
         state: "rejected",
         receivedAt: now,
         processedAt: now,
-      })
-      .onConflictDoNothing()
-      .returning({ id: paymentWebhookInbox.id });
-    return { accepted: false, duplicate: inserted.length === 0 };
+      });
+      return false;
+    });
+    return { accepted: false, duplicate };
   }
 
   if (event.environment !== input.environment) throw new Error("webhook environment mismatch");

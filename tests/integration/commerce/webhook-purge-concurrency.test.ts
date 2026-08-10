@@ -100,32 +100,32 @@ it("active legal hold is not purged", async () => {
   expect(stored?.rawPayloadPurgedAt).toBeNull();
 });
 
-it("concurrent workers delete disjoint expired rejected diagnostics and retain recent rows", async () => {
+it("purges oldest diagnostics within each worker limit and skips rows locked by another worker", async () => {
   const now = new Date("2026-08-10T12:00:00.000Z");
-  const expiredAt = new Date(now.getTime() - 24 * 60 * 60 * 1000 - 1);
   const recentAt = new Date(now.getTime() - 24 * 60 * 60 * 1000 + 1);
+  const expired = Array.from({ length: 12 }, (_, index) => ({
+    environment: "test",
+    providerEventId: `invalid:test:expired:${String(index).padStart(2, "0")}`,
+    dedupHash: `expired-invalid-dedup-${index}`,
+    eventType: "invalid_signature",
+    signatureValid: false,
+    normalizedPayloadJson: { occurrenceCount: index + 1 },
+    payloadHash: `expired-invalid-payload-${index}`,
+    payloadSizeBytes: 32,
+    retentionClass: "invalid_signature",
+    state: "rejected",
+    receivedAt: new Date(now.getTime() - (48 * 60 - index * 2) * 60 * 1000),
+    processedAt: new Date(now.getTime() - (48 * 60 - index * 2) * 60 * 1000),
+  }));
   await database.db.insert(paymentWebhookInbox).values([
-    ...Array.from({ length: 12 }, (_, index) => ({
-      environment: "test",
-      providerEventId: `invalid:test:2026-08-08T${String(index).padStart(2, "0")}:00`,
-      dedupHash: `expired-invalid-dedup-${index}`,
-      eventType: "invalid_signature",
-      signatureValid: false,
-      normalizedPayloadJson: {},
-      payloadHash: `expired-invalid-payload-${index}`,
-      payloadSizeBytes: 32,
-      retentionClass: "invalid_signature",
-      state: "rejected",
-      receivedAt: expiredAt,
-      processedAt: expiredAt,
-    })),
+    ...expired,
     ...Array.from({ length: 2 }, (_, index) => ({
       environment: "test",
       providerEventId: `invalid:test:2026-08-10T1${index}:00`,
       dedupHash: `recent-invalid-dedup-${index}`,
       eventType: "invalid_signature",
       signatureValid: false,
-      normalizedPayloadJson: {},
+      normalizedPayloadJson: { occurrenceCount: 1 },
       payloadHash: `recent-invalid-payload-${index}`,
       payloadSizeBytes: 32,
       retentionClass: "invalid_signature",
@@ -135,11 +135,70 @@ it("concurrent workers delete disjoint expired rejected diagnostics and retain r
     })),
   ]);
 
-  const [workerA, workerB] = await Promise.all([
-    purgeRejectedWebhookDiagnostics(database.db, { now, limit: 6 }),
-    purgeRejectedWebhookDiagnostics(database.db, { now, limit: 6 }),
-  ]);
-  expect(workerA + workerB).toBe(12);
+  expect(await purgeRejectedWebhookDiagnostics(database.db, { now, limit: 3 })).toBe(3);
+  let remainingIds = new Set(
+    (
+      await database.db
+        .select({ providerEventId: paymentWebhookInbox.providerEventId })
+        .from(paymentWebhookInbox)
+        .where(eq(paymentWebhookInbox.signatureValid, false))
+    ).map((row) => row.providerEventId),
+  );
+  expect(remainingIds.has(expired[0]!.providerEventId)).toBe(false);
+  expect(remainingIds.has(expired[1]!.providerEventId)).toBe(false);
+  expect(remainingIds.has(expired[2]!.providerEventId)).toBe(false);
+  expect(remainingIds.has(expired[3]!.providerEventId)).toBe(true);
+
+  let notifyLocked!: () => void;
+  const rowLocked = new Promise<void>((resolve) => {
+    notifyLocked = resolve;
+  });
+  let releaseLock!: () => void;
+  const lockRelease = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const lockingTransaction = database.db.transaction(async (tx) => {
+    await tx
+      .select({ id: paymentWebhookInbox.id })
+      .from(paymentWebhookInbox)
+      .where(eq(paymentWebhookInbox.providerEventId, expired[3]!.providerEventId))
+      .for("update");
+    notifyLocked();
+    await lockRelease;
+  });
+  await rowLocked;
+
+  const startedAt = performance.now();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const skippedLocked = await Promise.race([
+      purgeRejectedWebhookDiagnostics(database.db, { now, limit: 2 }),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("SKIP LOCKED purge blocked")), 1_500);
+      }),
+    ]);
+    expect(skippedLocked).toBe(2);
+    expect(performance.now() - startedAt).toBeLessThan(1_500);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    releaseLock();
+    await lockingTransaction;
+  }
+
+  remainingIds = new Set(
+    (
+      await database.db
+        .select({ providerEventId: paymentWebhookInbox.providerEventId })
+        .from(paymentWebhookInbox)
+        .where(eq(paymentWebhookInbox.signatureValid, false))
+    ).map((row) => row.providerEventId),
+  );
+  expect(remainingIds.has(expired[3]!.providerEventId)).toBe(true);
+  expect(remainingIds.has(expired[4]!.providerEventId)).toBe(false);
+  expect(remainingIds.has(expired[5]!.providerEventId)).toBe(false);
+
+  expect(await purgeRejectedWebhookDiagnostics(database.db, { now, limit: 4 })).toBe(4);
+  expect(await purgeRejectedWebhookDiagnostics(database.db, { now, limit: 3 })).toBe(3);
 
   const remaining = await database.db
     .select({ id: paymentWebhookInbox.id })

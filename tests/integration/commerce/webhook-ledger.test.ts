@@ -106,6 +106,7 @@ async function seedOrder() {
 }
 
 it("stores no raw body for an invalid signature", async () => {
+  const now = new Date("2026-08-10T02:03:04.000Z");
   const raw = new TextEncoder().encode('{"secret":"must-not-be-retained"}');
   const result = await ingestProviderWebhook({
     database: database.db,
@@ -114,12 +115,20 @@ it("stores no raw body for an invalid signature", async () => {
     rawBody: raw,
     signature: "bad",
     retention: { encryptionKeyBase64: retentionKey, keyId: "test-key" },
+    now,
   });
   expect(result.accepted).toBe(false);
+  const providerEventId = "invalid:test:2026-08-10T02:03";
   const row = await database.db.query.paymentWebhookInbox.findFirst({
-    where: eq(paymentWebhookInbox.dedupHash, payloadHash(raw)),
+    where: eq(paymentWebhookInbox.providerEventId, providerEventId),
   });
-  expect(row).toMatchObject({ signatureValid: false, retentionClass: "invalid_signature" });
+  expect(row).toMatchObject({
+    providerEventId,
+    dedupHash: payloadHash(new TextEncoder().encode(providerEventId)),
+    signatureValid: false,
+    retentionClass: "invalid_signature",
+    normalizedPayloadJson: { occurrenceCount: 1 },
+  });
   expect(row?.rawPayloadCiphertext).toBeNull();
   expect(row?.rawPayloadKeyId).toBeNull();
 });

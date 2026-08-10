@@ -109,7 +109,15 @@ export async function collectOperationalAlertSnapshot(
     ),
     scalarCount(
       database
-        .select({ count: sql<number>`count(*)::int` })
+        .select({
+          count: sql<number>`coalesce(sum(
+            CASE
+              WHEN jsonb_typeof(${paymentWebhookInbox.normalizedPayloadJson} -> 'occurrenceCount') = 'number'
+                THEN (${paymentWebhookInbox.normalizedPayloadJson} ->> 'occurrenceCount')::bigint
+              ELSE 1
+            END
+          ), 0)::bigint`,
+        })
         .from(paymentWebhookInbox)
         .where(
           and(

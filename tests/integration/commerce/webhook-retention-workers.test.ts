@@ -13,6 +13,12 @@ import { payloadHash } from "@/platform/commerce/application/webhook-retention";
 import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import { createDatabaseClient } from "@/platform/database/client";
 import { paymentWebhookInbox } from "@/platform/database/schema";
+import {
+  DEFAULT_OPERATIONAL_ALERT_THRESHOLDS,
+  evaluateOperationalAlerts,
+} from "@/platform/observability/alerts";
+import { collectOperationalAlertSnapshot } from "@/platform/observability/operational-snapshot";
+import type { CommerceEnvironment } from "@/platform/commerce/domain/product";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
@@ -57,11 +63,15 @@ const invalidSignatureProvider: PaymentProvider = {
   },
 };
 
-async function ingestInvalidPayload(body: Uint8Array, now: Date) {
+async function ingestInvalidPayload(
+  body: Uint8Array,
+  now: Date,
+  environment: CommerceEnvironment = "test",
+) {
   return ingestProviderWebhook({
     database: database.db,
     provider: invalidSignatureProvider,
-    environment: "test",
+    environment,
     rawBody: body,
     signature: "invalid",
     retention: {},
@@ -123,38 +133,96 @@ it("multiple workers purge each expired encrypted payload once without exposing 
   });
 });
 
-it("buckets distinct invalid bodies into one diagnostic per environment and UTC minute", async () => {
+it("atomically counts invalid-signature occurrences so the five-minute alert remains reachable", async () => {
+  await database.db
+    .delete(paymentWebhookInbox)
+    .where(eq(paymentWebhookInbox.signatureValid, false));
   const now = new Date("2026-08-09T20:00:10.000Z");
-  const bodyA = new TextEncoder().encode('{"invalid":"a"}');
-  const bodyB = new TextEncoder().encode('{"invalid":"b"}');
+  const bodies = Array.from({ length: 25 }, (_, index) =>
+    new TextEncoder().encode(`{"invalid":"secret-${index}"}`),
+  );
+  const settled = await Promise.allSettled(
+    bodies.map((body, index) =>
+      ingestInvalidPayload(body, new Date(now.getTime() + (index % 40) * 1_000)),
+    ),
+  );
+  expect(settled.filter((result) => result.status === "rejected")).toHaveLength(0);
+  const results = settled
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  expect(results.filter((result) => result.duplicate)).toHaveLength(24);
 
-  expect(await ingestInvalidPayload(bodyA, now)).toMatchObject({
-    accepted: false,
-    duplicate: false,
+  const providerEventId = "invalid:test:2026-08-09T20:00";
+  const row = await database.db.query.paymentWebhookInbox.findFirst({
+    where: eq(paymentWebhookInbox.providerEventId, providerEventId),
   });
-  expect(await ingestInvalidPayload(bodyB, new Date(now.getTime() + 20_000))).toMatchObject({
-    accepted: false,
-    duplicate: true,
+  expect(row).toMatchObject({
+    providerEventId,
+    dedupHash: payloadHash(new TextEncoder().encode(providerEventId)),
+    signatureValid: false,
+    normalizedPayloadJson: { occurrenceCount: 25 },
   });
+  expect(new Set(bodies.map((body) => payloadHash(body))).has(row?.payloadHash ?? "")).toBe(true);
+  expect(new Set(bodies.map((body) => body.byteLength)).has(row?.payloadSizeBytes ?? -1)).toBe(
+    true,
+  );
+  expect(row?.rawPayloadCiphertext).toBeNull();
+  expect(row?.rawPayloadKeyId).toBeNull();
+  expect(JSON.stringify(row?.normalizedPayloadJson)).not.toMatch(/secret|signature|body/i);
+
+  const snapshot = await collectOperationalAlertSnapshot(
+    database.db,
+    new Date("2026-08-09T20:04:59.000Z"),
+  );
+  expect(snapshot.invalidWebhookSignatures5m).toBe(25);
+  expect(
+    evaluateOperationalAlerts(snapshot).find(
+      (alert) => alert.code === "webhook_invalid_signature_spike",
+    ),
+  ).toMatchObject({
+    observedValue: 25,
+    threshold: DEFAULT_OPERATIONAL_ALERT_THRESHOLDS.invalidWebhookSignatures5m,
+  });
+});
+
+it("uses deterministic distinct buckets across environment and UTC-minute boundaries", async () => {
+  await database.db
+    .delete(paymentWebhookInbox)
+    .where(eq(paymentWebhookInbox.signatureValid, false));
+  const now = new Date("2026-08-09T20:10:10.000Z");
+  await ingestInvalidPayload(new TextEncoder().encode('{"invalid":"test-a"}'), now, "test");
+  await ingestInvalidPayload(
+    new TextEncoder().encode('{"invalid":"test-b"}'),
+    new Date(now.getTime() + 20_000),
+    "test",
+  );
+  await ingestInvalidPayload(
+    new TextEncoder().encode('{"invalid":"production"}'),
+    now,
+    "production",
+  );
+  await ingestInvalidPayload(
+    new TextEncoder().encode('{"invalid":"next-minute"}'),
+    new Date("2026-08-09T20:11:00.000Z"),
+    "test",
+  );
 
   const rows = await database.db
     .select()
     .from(paymentWebhookInbox)
-    .where(
-      and(
-        eq(paymentWebhookInbox.providerEventId, "invalid:test:2026-08-09T20:00"),
-        eq(paymentWebhookInbox.state, "rejected"),
-      ),
-    );
-  expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({
-    signatureValid: false,
-    normalizedPayloadJson: {},
-    payloadHash: payloadHash(bodyA),
-    payloadSizeBytes: bodyA.byteLength,
-  });
-  expect(rows[0]?.rawPayloadCiphertext).toBeNull();
-  expect(rows[0]?.rawPayloadKeyId).toBeNull();
+    .where(eq(paymentWebhookInbox.signatureValid, false));
+  const expected = new Map([
+    ["invalid:test:2026-08-09T20:10", 2],
+    ["invalid:production:2026-08-09T20:10", 1],
+    ["invalid:test:2026-08-09T20:11", 1],
+  ]);
+  expect(rows).toHaveLength(expected.size);
+  for (const row of rows) {
+    expect(row.dedupHash).toBe(payloadHash(new TextEncoder().encode(row.providerEventId)));
+    expect(row.normalizedPayloadJson).toEqual({
+      occurrenceCount: expected.get(row.providerEventId),
+    });
+  }
 });
 
 it("deletes a rejected invalid-signature diagnostic after 24 hours", async () => {
