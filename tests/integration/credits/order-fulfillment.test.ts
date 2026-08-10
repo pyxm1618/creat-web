@@ -11,6 +11,8 @@ import {
   creditGrants,
   orders,
   payments,
+  subscriptionPeriods,
+  subscriptions,
 } from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -125,4 +127,101 @@ it("fails closed when the external payment id is ambiguous across environments",
       operationKey: `payment:test:${externalPaymentId}:fulfill:credit-pack`,
     }),
   ).rejects.toThrow("missing or ambiguous");
+});
+
+it("expires renewal credits from the matched subscription period start", async () => {
+  const externalPaymentId = `PAY_${crypto.randomUUID()}`;
+  const externalOrderId = `ORD_${crypto.randomUUID()}`;
+  const periodStart = new Date("2026-09-08T10:00:00Z");
+  const [subject] = await database.db.insert(accountSubjects).values({}).returning();
+  if (!subject) throw new Error("subject insert failed");
+  const [product] = await database.db
+    .insert(commerceProducts)
+    .values({
+      key: `credits-${crypto.randomUUID()}`,
+      version: 1,
+      model: "subscription",
+      billingInterval: "month",
+      environment: "test",
+      providerProductId: `PROD_${crypto.randomUUID().replaceAll("-", "").slice(0, 22)}`,
+      currency: "USD",
+      expectedMinor: 900n,
+      fulfillmentKey: "credit-pack",
+      refundPolicyKey: "default",
+    })
+    .returning();
+  if (!product) throw new Error("product insert failed");
+  const [order] = await database.db
+    .insert(orders)
+    .values({
+      subjectId: subject.id,
+      productId: product.id,
+      environment: "test",
+      status: "paid",
+      expectedCurrency: "USD",
+      expectedMinor: 900n,
+      checkoutIdempotencyKey: `checkout:${crypto.randomUUID()}`,
+      checkoutState: "created",
+      externalOrderId,
+      paidAt: new Date("2026-08-08T10:00:00Z"),
+    })
+    .returning();
+  if (!order) throw new Error("order insert failed");
+  const [payment] = await database.db
+    .insert(payments)
+    .values({
+      orderId: order.id,
+      environment: "test",
+      externalPaymentId,
+      status: "succeeded",
+      refundStatus: "none",
+      currency: "USD",
+      amountMinor: 900n,
+      rawPayloadHash: "a".repeat(64),
+    })
+    .returning();
+  if (!payment) throw new Error("payment insert failed");
+  const [subscription] = await database.db
+    .insert(subscriptions)
+    .values({
+      orderId: order.id,
+      subjectId: subject.id,
+      environment: "test",
+      externalOrderId,
+      status: "active",
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: new Date("2026-10-08T10:00:00Z"),
+    })
+    .returning();
+  if (!subscription) throw new Error("subscription insert failed");
+  const [period] = await database.db
+    .insert(subscriptionPeriods)
+    .values({
+      subscriptionId: subscription.id,
+      paymentId: payment.id,
+      periodStart,
+      periodEnd: new Date("2026-10-08T10:00:00Z"),
+      state: "paid",
+    })
+    .returning();
+  if (!period) throw new Error("subscription period insert failed");
+
+  const fulfill = createCreditOrderFulfillment(database.db, {
+    fulfillmentKey: "credit-pack",
+    creditType: "reading",
+    quantity: 3,
+    expiresAfterDays: 30,
+  });
+  await fulfill({
+    sourceType: "subscription_payment",
+    sourceId: externalPaymentId,
+    operation: "fulfill:credit-pack",
+    operationKey: `subscription-payment:test:${externalPaymentId}:fulfill:credit-pack`,
+  });
+
+  const [grant] = await database.db
+    .select()
+    .from(creditGrants)
+    .where(eq(creditGrants.sourceId, period.id));
+  expect(grant?.expiresAt).toEqual(new Date("2026-10-08T10:00:00Z"));
 });

@@ -22,21 +22,33 @@ export type CreditOrderFulfillmentDefinition = {
   readonly expiresAfterDays?: number;
 };
 
+type CreditSourceFact = Readonly<{
+  source: CreditSource;
+  grantBase: Date;
+}>;
+
 async function creditSourceForPayment(
   database: DatabaseClient,
   paymentId: string,
   productModel: string,
   orderId: string,
-): Promise<CreditSource> {
-  if (productModel !== "subscription") return { type: "order", id: orderId };
+  paidAt: Date | null,
+): Promise<CreditSourceFact> {
+  if (productModel !== "subscription") {
+    if (!paidAt) throw new Error("paid order timestamp is required for credit fulfillment");
+    return { source: { type: "order", id: orderId }, grantBase: paidAt };
+  }
   const periods = await database
-    .select({ id: subscriptionPeriods.id })
+    .select({ id: subscriptionPeriods.id, periodStart: subscriptionPeriods.periodStart })
     .from(subscriptionPeriods)
     .where(eq(subscriptionPeriods.paymentId, paymentId))
     .limit(2);
   if (periods.length !== 1 || !periods[0])
     throw new Error("subscription period source is missing or ambiguous");
-  return { type: "subscription_period", id: periods[0].id };
+  return {
+    source: { type: "subscription_period", id: periods[0].id },
+    grantBase: periods[0].periodStart,
+  };
 }
 
 export function createCreditOrderFulfillment(
@@ -71,16 +83,17 @@ export function createCreditOrderFulfillment(
     }
     if (fact.fulfillmentKey !== definition.fulfillmentKey)
       throw new Error("credit fulfillment definition mismatch");
-    const base = fact.paidAt ?? new Date();
-    const expiresAt = definition.expiresAfterDays
-      ? new Date(base.getTime() + definition.expiresAfterDays * 86_400_000)
-      : null;
-    const source = await creditSourceForPayment(
+    const sourceFact = await creditSourceForPayment(
       database,
       fact.paymentId,
       fact.productModel,
       fact.orderId,
+      fact.paidAt,
     );
+    const expiresAt = definition.expiresAfterDays
+      ? new Date(sourceFact.grantBase.getTime() + definition.expiresAfterDays * 86_400_000)
+      : null;
+    const source = sourceFact.source;
     await grantCredits(database, {
       subjectId: fact.subjectId,
       creditType: definition.creditType,
@@ -106,6 +119,7 @@ export function createCreditRefundReversal(
         reversalStatus: refunds.reversalStatus,
         paymentId: payments.id,
         orderId: orders.id,
+        paidAt: orders.paidAt,
         productModel: commerceProducts.model,
         fulfillmentKey: commerceProducts.fulfillmentKey,
       })
@@ -121,11 +135,12 @@ export function createCreditRefundReversal(
     if (row.fulfillmentKey !== definition.fulfillmentKey)
       throw new Error("credit reversal definition mismatch");
     if (row.reversalStatus === "completed") return;
-    const source = await creditSourceForPayment(
+    const { source } = await creditSourceForPayment(
       database,
       row.paymentId,
       row.productModel,
       row.orderId,
+      row.paidAt,
     );
     const result = await revokeSourceCredits(database, {
       source,
