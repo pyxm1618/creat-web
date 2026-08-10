@@ -21,12 +21,12 @@ export class FreshAuthenticationRequiredError extends Error {
 
 export async function requireFreshAccountSession(
   headers: Headers,
-  now = new Date(),
+  now?: Date,
 ): Promise<AccountContext> {
   const account = await getAccountContext(headers);
   if (!account) throw new AuthenticationRequiredError();
   try {
-    assertFreshSession({ authenticatedAt: new Date(account.session.createdAt) }, now);
+    assertFreshSession({ authenticatedAt: new Date(account.session.createdAt) }, now ?? new Date());
   } catch {
     throw new FreshAuthenticationRequiredError();
   }
