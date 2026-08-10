@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { InvalidWebhookSignatureError } from "@/platform/commerce/application/errors";
+import { parseNormalizedProviderEvent } from "@/platform/commerce/application/event-json";
 import { ingestProviderWebhook } from "@/platform/commerce/application/ingest-provider-webhook";
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import { processOneTimePaymentEvent } from "@/platform/commerce/application/process-one-time-payment-event";
@@ -274,4 +275,36 @@ it("encrypts unsupported signed events and purges expired ciphertext", async () 
   });
   expect(after?.rawPayloadCiphertext).toBeNull();
   expect(after?.rawPayloadPurgedAt).toEqual(new Date("2026-09-08T00:00:00Z"));
+});
+
+it("stores a JSON-safe lossless subscription event for deferred inbox processing", async () => {
+  const event: NormalizedProviderEvent = {
+    type: "subscription_payment_succeeded",
+    eventId: `subscription-${crypto.randomUUID()}`,
+    environment: "test",
+    externalOrderId: `SUB_${crypto.randomUUID()}`,
+    merchantOrderReference: crypto.randomUUID(),
+    externalPaymentId: `PAY_${crypto.randomUUID()}`,
+    amount: { currency: "USD", minor: 2900n },
+    occurredAt: new Date("2026-08-10T01:02:03.000Z"),
+    currentPeriodStart: new Date("2026-08-01T00:00:00.000Z"),
+    currentPeriodEnd: new Date("2026-09-01T00:00:00.000Z"),
+    merchantId: "MER_test",
+    storeId: "STO_test",
+  };
+
+  await ingestProviderWebhook({
+    database: database.db,
+    provider: provider(event),
+    environment: "test",
+    rawBody: new TextEncoder().encode('{"signed":"subscription"}'),
+    signature: "valid-by-fixture",
+    retention: {},
+  });
+
+  const row = await database.db.query.paymentWebhookInbox.findFirst({
+    where: eq(paymentWebhookInbox.providerEventId, event.eventId),
+  });
+  expect(row?.normalizedPayloadJson).toMatchObject({ version: 1, type: event.type });
+  expect(parseNormalizedProviderEvent(row?.normalizedPayloadJson)).toEqual(event);
 });

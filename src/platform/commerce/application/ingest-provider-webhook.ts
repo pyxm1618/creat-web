@@ -2,6 +2,7 @@ import type { DatabaseClient } from "@/platform/database/client";
 import { paymentWebhookInbox } from "@/platform/database/commerce-schema";
 
 import { InvalidWebhookSignatureError } from "./errors";
+import { serializeNormalizedProviderEvent } from "./event-json";
 import type { PaymentProvider } from "./payment-provider";
 import { encryptWebhookPayload, payloadHash, retentionExpiry } from "./webhook-retention";
 import type { NormalizedProviderEvent } from "../domain/events";
@@ -13,43 +14,6 @@ type RetentionConfig = {
   readonly encryptionKeyBase64?: string;
   readonly keyId?: string;
 };
-
-function normalizedJson(event: NormalizedProviderEvent): Record<string, unknown> {
-  switch (event.type) {
-    case "one_time_payment_succeeded":
-      return {
-        type: event.type,
-        eventId: event.eventId,
-        environment: event.environment,
-        externalOrderId: event.externalOrderId,
-        ...(event.merchantOrderReference
-          ? { merchantOrderReference: event.merchantOrderReference }
-          : {}),
-        externalPaymentId: event.externalPaymentId,
-        amount: { currency: event.amount.currency, minor: event.amount.minor.toString() },
-        occurredAt: event.occurredAt.toISOString(),
-        ...(event.merchantId ? { merchantId: event.merchantId } : {}),
-        ...(event.storeId ? { storeId: event.storeId } : {}),
-      };
-    case "refund_succeeded":
-      return {
-        type: event.type,
-        eventId: event.eventId,
-        environment: event.environment,
-        externalPaymentId: event.externalPaymentId,
-        ...(event.merchantOrderReference
-          ? { merchantOrderReference: event.merchantOrderReference }
-          : {}),
-        amount: { currency: event.amount.currency, minor: event.amount.minor.toString() },
-        occurredAt: event.occurredAt.toISOString(),
-      };
-    default:
-      return {
-        ...event,
-        occurredAt: event.occurredAt.toISOString(),
-      };
-  }
-}
 
 export async function ingestProviderWebhook(input: {
   readonly database: DatabaseClient;
@@ -123,7 +87,7 @@ export async function ingestProviderWebhook(input: {
       dedupHash: hash,
       eventType: event.type,
       signatureValid: true,
-      normalizedPayloadJson: normalizedJson(event),
+      normalizedPayloadJson: serializeNormalizedProviderEvent(event),
       payloadHash: hash,
       payloadSizeBytes: size,
       ...(rawPayloadCiphertext ? { rawPayloadCiphertext } : {}),
