@@ -6,7 +6,7 @@ import { getCreditBalance, grantCredits } from "@/platform/credits/application/c
 import { executeCreditBackedWork } from "@/platform/credits/application/execute-credit-backed-work";
 import { withCreditReservation } from "@/platform/credits/application/finalization-service";
 import { runCreditFinalizationWorker } from "@/platform/credits/application/finalization-worker";
-import { createDatabaseClient } from "@/platform/database/client";
+import { createDatabaseClient, type DatabaseTransaction } from "@/platform/database/client";
 import {
   accountSubjects,
   creditFinalizationJobs,
@@ -54,6 +54,19 @@ function reserveInput(subjectId: string) {
     purpose: { type: "reading", id: crypto.randomUUID() },
     idempotencyKey: `reserve-${crypto.randomUUID()}`,
     expiresAt: new Date(Date.now() + 60_000),
+  };
+}
+
+function twoPartyBarrier(): () => Promise<void> {
+  let arrivals = 0;
+  let release: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return async () => {
+    arrivals += 1;
+    if (arrivals === 2) release?.();
+    await ready;
   };
 }
 
@@ -258,6 +271,128 @@ it("rejects a different delivery reference for an existing reservation obligatio
   expect(
     await runCreditFinalizationWorker(database.db, { owner: "conflict-test-cleanup" }),
   ).toMatchObject({ completed: 1 });
+});
+
+it("treats sequential same-reference executeCreditBackedWork retries as completed", async () => {
+  const subjectId = await grantedSubject();
+  const input = reserveInput(subjectId);
+  const deliveryReference = `delivery-${crypto.randomUUID()}`;
+  const deliveryKey = `delivery:${crypto.randomUUID()}`;
+  const callbacks = {
+    work: async () => ({ text: "generated" }),
+    persistDelivery: async (
+      _generated: { text: string },
+      _reservation: { id: string },
+      tx: DatabaseTransaction,
+    ) => {
+      await tx
+        .insert(platformMeta)
+        .values({ key: deliveryKey, value: "stored" })
+        .onConflictDoNothing({ target: platformMeta.key });
+      return { deliveryReference };
+    },
+  };
+
+  const first = await executeCreditBackedWork(database.db, input, callbacks);
+  const retry = await executeCreditBackedWork(database.db, input, callbacks);
+
+  expect(first.finalizationPending).toBe(false);
+  expect(retry.finalizationPending).toBe(false);
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.deliveryReference, deliveryReference),
+    }),
+  ).toMatchObject({ state: "completed" });
+});
+
+it("treats sequential same-reference withCreditReservation retries as completed", async () => {
+  const subjectId = await grantedSubject();
+  const input = reserveInput(subjectId);
+  const deliveryReference = `delivery-${crypto.randomUUID()}`;
+  const deliveryKey = `delivery:${crypto.randomUUID()}`;
+  const callbacks = {
+    work: async () => ({ text: "generated" }),
+    persistDelivery: async (
+      _generated: { text: string },
+      _reservation: { id: string },
+      tx: DatabaseTransaction,
+    ) => {
+      await tx
+        .insert(platformMeta)
+        .values({ key: deliveryKey, value: "stored" })
+        .onConflictDoNothing({ target: platformMeta.key });
+      return { deliveryReference };
+    },
+  };
+
+  const first = await withCreditReservation(database.db, input, callbacks);
+  const retry = await withCreditReservation(database.db, input, callbacks);
+
+  expect(first.finalizationPending).toBe(false);
+  expect(retry.finalizationPending).toBe(false);
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.deliveryReference, deliveryReference),
+    }),
+  ).toMatchObject({ state: "completed" });
+});
+
+it("treats concurrent same-reference executeCreditBackedWork retries as completed", async () => {
+  const subjectId = await grantedSubject();
+  const input = reserveInput(subjectId);
+  const deliveryReference = `delivery-${crypto.randomUUID()}`;
+  const deliveryKey = `delivery:${crypto.randomUUID()}`;
+  const rendezvous = twoPartyBarrier();
+  const call = () =>
+    executeCreditBackedWork(database.db, input, {
+      work: async () => ({ text: "generated" }),
+      persistDelivery: async (_generated, _reservation, tx) => {
+        await rendezvous();
+        await tx
+          .insert(platformMeta)
+          .values({ key: deliveryKey, value: "stored" })
+          .onConflictDoNothing({ target: platformMeta.key });
+        return { deliveryReference };
+      },
+    });
+
+  const results = await Promise.all([call(), call()]);
+
+  expect(results.map((result) => result.finalizationPending)).toEqual([false, false]);
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.deliveryReference, deliveryReference),
+    }),
+  ).toMatchObject({ state: "completed" });
+});
+
+it("treats concurrent same-reference withCreditReservation retries as completed", async () => {
+  const subjectId = await grantedSubject();
+  const input = reserveInput(subjectId);
+  const deliveryReference = `delivery-${crypto.randomUUID()}`;
+  const deliveryKey = `delivery:${crypto.randomUUID()}`;
+  const rendezvous = twoPartyBarrier();
+  const call = () =>
+    withCreditReservation(database.db, input, {
+      work: async () => ({ text: "generated" }),
+      persistDelivery: async (_generated, _reservation, tx) => {
+        await rendezvous();
+        await tx
+          .insert(platformMeta)
+          .values({ key: deliveryKey, value: "stored" })
+          .onConflictDoNothing({ target: platformMeta.key });
+        return { deliveryReference };
+      },
+    });
+
+  const results = await Promise.all([call(), call()]);
+
+  expect(results.map((result) => result.finalizationPending)).toEqual([false, false]);
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.deliveryReference, deliveryReference),
+    }),
+  ).toMatchObject({ state: "completed" });
 });
 
 it("does not redo or release delivered work when credit commit temporarily fails", async () => {

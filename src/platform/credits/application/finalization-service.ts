@@ -59,7 +59,21 @@ export async function completeCreditFinalization(
       ),
     )
     .returning({ id: creditFinalizationJobs.id });
-  if (!completed) throw new Error("credit finalization obligation completion failed");
+  if (completed) return;
+
+  const [existing] = await database
+    .select({ state: creditFinalizationJobs.state })
+    .from(creditFinalizationJobs)
+    .where(
+      and(
+        eq(creditFinalizationJobs.id, input.id),
+        eq(creditFinalizationJobs.reservationId, input.reservationId),
+        eq(creditFinalizationJobs.deliveryReference, input.deliveryReference),
+      ),
+    )
+    .limit(1);
+  if (existing?.state === "completed") return;
+  throw new Error("credit finalization obligation completion failed");
 }
 
 export async function withCreditReservation<T>(
