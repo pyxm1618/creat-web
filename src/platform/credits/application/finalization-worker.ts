@@ -63,7 +63,7 @@ export async function runCreditFinalizationWorker(
         correlationId: `delivery:${job.deliveryReference}`,
         now,
       });
-      await database
+      const [owned] = await database
         .update(creditFinalizationJobs)
         .set({
           state: "completed",
@@ -75,15 +75,18 @@ export async function runCreditFinalizationWorker(
         .where(
           and(
             eq(creditFinalizationJobs.id, job.id),
+            eq(creditFinalizationJobs.state, "processing"),
             eq(creditFinalizationJobs.leaseOwner, input.owner),
           ),
-        );
+        )
+        .returning({ id: creditFinalizationJobs.id });
+      if (!owned) continue;
       completed += 1;
     } catch (error) {
       const attempts = job.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
-      await database.transaction(async (tx) => {
-        await tx
+      const owned = await database.transaction(async (tx) => {
+        const [updated] = await tx
           .update(creditFinalizationJobs)
           .set({
             state: dead ? "dead_letter" : "pending",
@@ -96,9 +99,12 @@ export async function runCreditFinalizationWorker(
           .where(
             and(
               eq(creditFinalizationJobs.id, job.id),
+              eq(creditFinalizationJobs.state, "processing"),
               eq(creditFinalizationJobs.leaseOwner, input.owner),
             ),
-          );
+          )
+          .returning({ id: creditFinalizationJobs.id });
+        if (!updated) return false;
         if (dead) {
           await tx.insert(authSecurityEvents).values({
             eventType: "dead_letter_created",
@@ -106,8 +112,9 @@ export async function runCreditFinalizationWorker(
             details: { queue: "credit_finalization" },
           });
         }
+        return true;
       });
-      deferred += 1;
+      if (owned) deferred += 1;
     }
   }
   return { completed, deferred };

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { getCreditBalance, grantCredits } from "@/platform/credits/application/credit-service";
@@ -9,6 +9,7 @@ import { runCreditFinalizationWorker } from "@/platform/credits/application/fina
 import { createDatabaseClient, type DatabaseTransaction } from "@/platform/database/client";
 import {
   accountSubjects,
+  authSecurityEvents,
   creditFinalizationJobs,
   creditReservations,
   platformMeta,
@@ -16,7 +17,8 @@ import {
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
-const database = createDatabaseClient(databaseUrl);
+const testDatabaseUrl: string = databaseUrl;
+const database = createDatabaseClient(testDatabaseUrl);
 
 beforeAll(async () => {
   await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS public CASCADE"));
@@ -68,6 +70,58 @@ function twoPartyBarrier(): () => Promise<void> {
     if (arrivals === 2) release?.();
     await ready;
   };
+}
+
+async function holdCreditMutationLock(subjectId: string): Promise<() => Promise<void>> {
+  const lockDatabase = createDatabaseClient(testDatabaseUrl);
+  let releaseLock: (() => void) | undefined;
+  let acquiredLock: (() => void) | undefined;
+  let rejectAcquisition: ((error: unknown) => void) | undefined;
+  const released = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const acquired = new Promise<void>((resolve, reject) => {
+    acquiredLock = resolve;
+    rejectAcquisition = reject;
+  });
+  const transaction = lockDatabase.db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`${subjectId}:reading`}, 0))`,
+    );
+    acquiredLock?.();
+    await released;
+  });
+  void transaction.then(undefined, (error) => rejectAcquisition?.(error));
+
+  try {
+    await acquired;
+  } catch (error) {
+    await lockDatabase.close();
+    throw error;
+  }
+
+  let releasedOnce = false;
+  return async () => {
+    if (releasedOnce) return;
+    releasedOnce = true;
+    releaseLock?.();
+    try {
+      await transaction;
+    } finally {
+      await lockDatabase.close();
+    }
+  };
+}
+
+async function waitForFinalizationLease(jobId: string, owner: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const job = await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.id, jobId),
+    });
+    if (job?.state === "processing" && job.leaseOwner === owner) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`finalization lease was not acquired by ${owner}`);
 }
 
 it("rolls back delivery and finalization obligation when delivery persistence fails", async () => {
@@ -469,4 +523,145 @@ it("does not redo or release delivered work when credit commit temporarily fails
   ).toHaveLength(1);
   expect(workCalls).toBe(1);
   expect(persistCalls).toBe(1);
+});
+
+it("does not complete or count a finalization job after its lease is reclaimed", async () => {
+  const subjectId = await grantedSubject();
+  const deliveryReference = `delivery-${crypto.randomUUID()}`;
+  const deliveryKey = `delivery:${deliveryReference}`;
+  const result = await executeCreditBackedWork(database.db, reserveInput(subjectId), {
+    work: async () => ({ text: "durably delivered" }),
+    persistDelivery: async (_generated, _reservation, tx) => {
+      await tx.insert(platformMeta).values({ key: deliveryKey, value: "stored" });
+      return { deliveryReference };
+    },
+    finalize: async () => {
+      throw new Error("injected direct finalization outage");
+    },
+  });
+  const job = await database.db.query.creditFinalizationJobs.findFirst({
+    where: eq(creditFinalizationJobs.deliveryReference, result.deliveryReference),
+  });
+  if (!job) throw new Error("finalization job fixture failed");
+
+  const oldNow = new Date(Date.now() + 1_000);
+  const releaseCreditLock = await holdCreditMutationLock(subjectId);
+  const oldWorker = runCreditFinalizationWorker(database.db, {
+    owner: "old-completion-owner",
+    now: oldNow,
+    limit: 1,
+  });
+  try {
+    await waitForFinalizationLease(job.id, "old-completion-owner");
+    const [reclaimed] = await database.db
+      .update(creditFinalizationJobs)
+      .set({
+        state: "processing",
+        leaseOwner: "new-completion-owner",
+        leaseExpiresAt: new Date(oldNow.getTime() + 10 * 60 * 1000),
+      })
+      .where(
+        and(
+          eq(creditFinalizationJobs.id, job.id),
+          eq(creditFinalizationJobs.state, "processing"),
+          eq(creditFinalizationJobs.leaseOwner, "old-completion-owner"),
+        ),
+      )
+      .returning({ id: creditFinalizationJobs.id });
+    expect(reclaimed?.id).toBe(job.id);
+  } finally {
+    await releaseCreditLock();
+  }
+
+  await expect(oldWorker).resolves.toEqual({ completed: 0, deferred: 0 });
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.id, job.id),
+    }),
+  ).toMatchObject({
+    state: "processing",
+    leaseOwner: "new-completion-owner",
+  });
+});
+
+it("does not defer or dead-letter a finalization job after its lease is reclaimed", async () => {
+  const subjectId = await grantedSubject();
+  const committedDeliveryReference = `delivery-${crypto.randomUUID()}`;
+  const deliveryKey = `delivery:${committedDeliveryReference}`;
+  const result = await executeCreditBackedWork(database.db, reserveInput(subjectId), {
+    work: async () => ({ text: "durably delivered" }),
+    persistDelivery: async (_generated, _reservation, tx) => {
+      await tx.insert(platformMeta).values({ key: deliveryKey, value: "stored" });
+      return { deliveryReference: committedDeliveryReference };
+    },
+  });
+  const job = await database.db.query.creditFinalizationJobs.findFirst({
+    where: eq(creditFinalizationJobs.deliveryReference, result.deliveryReference),
+  });
+  if (!job) throw new Error("finalization job fixture failed");
+
+  const conflictingDeliveryReference = `delivery-${crypto.randomUUID()}`;
+  const oldNow = new Date(Date.now() + 1_000);
+  await database.db
+    .update(creditFinalizationJobs)
+    .set({
+      state: "pending",
+      attempts: 11,
+      deliveryReference: conflictingDeliveryReference,
+      nextAttemptAt: oldNow,
+      completedAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    })
+    .where(eq(creditFinalizationJobs.id, job.id));
+
+  const releaseCreditLock = await holdCreditMutationLock(subjectId);
+  const oldWorker = runCreditFinalizationWorker(database.db, {
+    owner: "old-failure-owner",
+    now: oldNow,
+    limit: 1,
+  });
+  try {
+    await waitForFinalizationLease(job.id, "old-failure-owner");
+    const [reclaimed] = await database.db
+      .update(creditFinalizationJobs)
+      .set({
+        state: "processing",
+        leaseOwner: "new-failure-owner",
+        leaseExpiresAt: new Date(oldNow.getTime() + 10 * 60 * 1000),
+      })
+      .where(
+        and(
+          eq(creditFinalizationJobs.id, job.id),
+          eq(creditFinalizationJobs.state, "processing"),
+          eq(creditFinalizationJobs.leaseOwner, "old-failure-owner"),
+        ),
+      )
+      .returning({ id: creditFinalizationJobs.id });
+    expect(reclaimed?.id).toBe(job.id);
+  } finally {
+    await releaseCreditLock();
+  }
+
+  await expect(oldWorker).resolves.toEqual({ completed: 0, deferred: 0 });
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(creditFinalizationJobs.id, job.id),
+    }),
+  ).toMatchObject({
+    state: "processing",
+    attempts: 11,
+    leaseOwner: "new-failure-owner",
+  });
+  expect(
+    await database.db
+      .select()
+      .from(authSecurityEvents)
+      .where(
+        and(
+          eq(authSecurityEvents.eventType, "dead_letter_created"),
+          sql`${authSecurityEvents.details}->>'queue' = 'credit_finalization'`,
+        ),
+      ),
+  ).toHaveLength(0);
 });
