@@ -8,6 +8,7 @@ import {
   commerceCommandJobs,
   commerceReconciliationRuns,
   creditFinalizationJobs,
+  creditReconciliationIncidents,
   fulfillmentJobs,
   paymentWebhookInbox,
 } from "@/platform/database/schema";
@@ -91,6 +92,7 @@ export async function collectOperationalAlertSnapshot(
     magicLinkRequests5m,
     invalidWebhookSignatures5m,
     reconciliationMismatches,
+    openCreditReconciliationIncidents,
     providerFailures5m,
     deadLettersCreated,
     webhookRetention,
@@ -140,6 +142,12 @@ export async function collectOperationalAlertSnapshot(
     scalarCount(
       database
         .select({ count: sql<number>`count(*)::int` })
+        .from(creditReconciliationIncidents)
+        .where(eq(creditReconciliationIncidents.status, "open")),
+    ),
+    scalarCount(
+      database
+        .select({ count: sql<number>`count(*)::int` })
         .from(authSecurityEvents)
         .where(
           and(
@@ -181,7 +189,7 @@ export async function collectOperationalAlertSnapshot(
     deadLettersCreated,
     magicLinkRequests5m,
     invalidWebhookSignatures5m,
-    reconciliationMismatches,
+    reconciliationMismatches: reconciliationMismatches + openCreditReconciliationIncidents,
     jobBacklog,
     oldestJobAgeSeconds,
     providerFailures5m,

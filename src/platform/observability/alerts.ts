@@ -19,6 +19,7 @@ export type OperationalAlertSnapshot = Readonly<{
   deadLettersCreated: number;
   magicLinkRequests5m: number;
   invalidWebhookSignatures5m: number;
+  /** Recent Commerce mismatches plus durable open Credits reconciliation incidents. */
   reconciliationMismatches: number;
   jobBacklog: number;
   oldestJobAgeSeconds: number;

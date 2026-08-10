@@ -34,12 +34,13 @@ async function assertLatestSchema(label: string): Promise<void> {
     "subscription_periods",
     "refunds",
     "commerce_command_jobs",
+    "credit_reconciliation_incidents",
   ];
   const tables = await database.db.execute(sql<{ table_name: string }>`
     select table_name
     from information_schema.tables
     where table_schema = 'public'
-      and table_name in ('platform_meta','subscriptions','subscription_periods','refunds','commerce_command_jobs')
+      and table_name in ('platform_meta','subscriptions','subscription_periods','refunds','commerce_command_jobs','credit_reconciliation_incidents')
   `);
   const actualTables = new Set(tables.map((row) => row.table_name));
   for (const table of requiredTables) {
@@ -55,6 +56,38 @@ async function assertLatestSchema(label: string): Promise<void> {
   `);
   if (billingInterval.length !== 1) {
     throw new Error(`${label}: commerce_products.billing_interval is missing`);
+  }
+
+  const triggerFunctions = await database.db.execute(sql<{ function_name: string }>`
+    select p.proname as function_name
+    from pg_proc p
+    inner join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'reject_credit_ledger_mutation'
+  `);
+  if (triggerFunctions.length !== 1) {
+    throw new Error(`${label}: reject_credit_ledger_mutation function is missing`);
+  }
+
+  const ledgerTriggers = await database.db.execute(
+    sql<{ trigger_name: string; function_name: string; enabled: string }>`
+      select t.tgname as trigger_name, p.proname as function_name, t.tgenabled as enabled
+      from pg_trigger t
+      inner join pg_class c on c.oid = t.tgrelid
+      inner join pg_namespace n on n.oid = c.relnamespace
+      inner join pg_proc p on p.oid = t.tgfoid
+      where n.nspname = 'public'
+        and c.relname = 'credit_ledger_entries'
+        and t.tgname = 'credit_ledger_entries_append_only'
+        and not t.tgisinternal
+    `,
+  );
+  if (
+    ledgerTriggers.length !== 1 ||
+    ledgerTriggers[0]?.function_name !== "reject_credit_ledger_mutation" ||
+    ledgerTriggers[0]?.enabled === "D"
+  ) {
+    throw new Error(`${label}: credit_ledger_entries_append_only trigger is missing or disabled`);
   }
 }
 

@@ -4,6 +4,7 @@ import type { DatabaseClient } from "@/platform/database/client";
 import {
   creditGrants,
   creditLedgerEntries,
+  creditReconciliationIncidents,
   creditReservationAllocations,
   creditReservations,
 } from "@/platform/database/credit-schema";
@@ -120,6 +121,54 @@ async function saveReconciliationCursor(
     .update(platformMeta)
     .set({ value: JSON.stringify(cursor), updatedAt: new Date() })
     .where(eq(platformMeta.key, RECONCILIATION_CHECKPOINT_KEY));
+}
+
+async function persistReconciliationIncidents(
+  tx: CreditTx,
+  processedEntities: readonly CreditReconciliationEntity[],
+  issues: readonly CreditReconciliationIssue[],
+  now: Date,
+): Promise<void> {
+  const entityIds = [...new Set(processedEntities.map((entity) => entity.id))];
+  if (entityIds.length > 0) {
+    await tx
+      .update(creditReconciliationIncidents)
+      .set({ status: "resolved", resolvedAt: now })
+      .where(
+        and(
+          inArray(creditReconciliationIncidents.entityId, entityIds),
+          eq(creditReconciliationIncidents.status, "open"),
+        ),
+      );
+  }
+
+  const currentIssues = new Map(
+    issues.map((issue) => [`${issue.code}\u0000${issue.entityId}`, issue] as const),
+  );
+  for (const issue of currentIssues.values()) {
+    await tx
+      .insert(creditReconciliationIncidents)
+      .values({
+        code: issue.code,
+        entityId: issue.entityId,
+        detail: issue.detail,
+        status: "open",
+        occurrences: 1,
+        firstDetectedAt: now,
+        lastDetectedAt: now,
+        resolvedAt: null,
+      })
+      .onConflictDoUpdate({
+        target: [creditReconciliationIncidents.code, creditReconciliationIncidents.entityId],
+        set: {
+          detail: issue.detail,
+          status: "open",
+          occurrences: sql`${creditReconciliationIncidents.occurrences} + 1`,
+          lastDetectedAt: now,
+          resolvedAt: null,
+        },
+      });
+  }
 }
 
 async function reconcileReservationBatch(
@@ -408,6 +457,7 @@ export async function reconcileCreditLedgerBatch(
     }
 
     assertBatchCanContinue(input);
+    await persistReconciliationIncidents(tx, processedEntities, issues, now);
     await saveReconciliationCursor(tx, nextCursor);
     return {
       issues,

@@ -9,6 +9,7 @@ import {
   accountSubjects,
   creditGrants,
   creditLedgerEntries,
+  creditReconciliationIncidents,
   platformMeta,
 } from "@/platform/database/schema";
 
@@ -58,6 +59,28 @@ async function createGrant(subjectId: string, suffix: string) {
   });
 }
 
+async function mutateLedgerQuantity(grantId: string, quantity: number): Promise<void> {
+  await database.db.execute(
+    sql.raw(
+      'ALTER TABLE "credit_ledger_entries" DISABLE TRIGGER "credit_ledger_entries_append_only"',
+    ),
+  );
+  try {
+    await database.db
+      .update(creditLedgerEntries)
+      .set({ quantity })
+      .where(
+        and(eq(creditLedgerEntries.grantId, grantId), eq(creditLedgerEntries.entryType, "grant")),
+      );
+  } finally {
+    await database.db.execute(
+      sql.raw(
+        'ALTER TABLE "credit_ledger_entries" ENABLE TRIGGER "credit_ledger_entries_append_only"',
+      ),
+    );
+  }
+}
+
 it("limits one scan and eventually reaches grants after the cursor advances", async () => {
   const subjectId = await createSubject();
   await createGrant(subjectId, "one");
@@ -79,15 +102,7 @@ it("limits one scan and eventually reaches grants after the cursor advances", as
   const laterGrant = grants.find((grant) => !processedIds.has(grant.id));
   if (!laterGrant) throw new Error("later grant was not found");
 
-  await database.db
-    .update(creditLedgerEntries)
-    .set({ quantity: 2 })
-    .where(
-      and(
-        eq(creditLedgerEntries.grantId, laterGrant.id),
-        eq(creditLedgerEntries.entryType, "grant"),
-      ),
-    );
+  await mutateLedgerQuantity(laterGrant.id, 2);
 
   const second = await reconcileCreditLedgerBatch(database.db, { limit: 2 });
   expect(second.processed).toBe(1);
@@ -96,6 +111,70 @@ it("limits one scan and eventually reaches grants after the cursor advances", as
     expect.objectContaining({ code: "GRANT_LEDGER_MISMATCH", entityId: laterGrant.id }),
   ]);
   expect(second.cycleComplete).toBe(true);
+});
+
+it("persists, increments, and resolves reconciliation incidents", async () => {
+  const subjectId = await createSubject();
+  const grant = await createGrant(subjectId, "durable-incident");
+  const firstDetectedAt = new Date("2026-08-10T01:00:00Z");
+  const detectedAgainAt = new Date("2026-08-10T01:05:00Z");
+  const resolvedAt = new Date("2026-08-10T01:10:00Z");
+
+  await mutateLedgerQuantity(grant.id, 2);
+  const first = await reconcileCreditLedgerBatch(database.db, {
+    limit: 10,
+    now: firstDetectedAt,
+  });
+  expect(first.issues).toContainEqual(
+    expect.objectContaining({ code: "GRANT_LEDGER_MISMATCH", entityId: grant.id }),
+  );
+
+  const second = await reconcileCreditLedgerBatch(database.db, {
+    limit: 10,
+    now: detectedAgainAt,
+  });
+  expect(second.issues).toContainEqual(
+    expect.objectContaining({ code: "GRANT_LEDGER_MISMATCH", entityId: grant.id }),
+  );
+  const open = await database.db
+    .select()
+    .from(creditReconciliationIncidents)
+    .where(
+      and(
+        eq(creditReconciliationIncidents.code, "GRANT_LEDGER_MISMATCH"),
+        eq(creditReconciliationIncidents.entityId, grant.id),
+      ),
+    );
+  expect(open).toHaveLength(1);
+  expect(open[0]).toMatchObject({
+    status: "open",
+    occurrences: 2,
+    firstDetectedAt,
+    lastDetectedAt: detectedAgainAt,
+    resolvedAt: null,
+  });
+
+  await mutateLedgerQuantity(grant.id, 3);
+  const repaired = await reconcileCreditLedgerBatch(database.db, { limit: 10, now: resolvedAt });
+  expect(repaired.issues).not.toContainEqual(
+    expect.objectContaining({ code: "GRANT_LEDGER_MISMATCH", entityId: grant.id }),
+  );
+  const [resolved] = await database.db
+    .select()
+    .from(creditReconciliationIncidents)
+    .where(
+      and(
+        eq(creditReconciliationIncidents.code, "GRANT_LEDGER_MISMATCH"),
+        eq(creditReconciliationIncidents.entityId, grant.id),
+      ),
+    );
+  expect(resolved).toMatchObject({
+    status: "resolved",
+    occurrences: 2,
+    firstDetectedAt,
+    lastDetectedAt: detectedAgainAt,
+    resolvedAt,
+  });
 });
 
 it("does not advance its checkpoint after an aborted batch", async () => {

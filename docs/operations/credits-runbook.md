@@ -39,6 +39,10 @@ Run the credit reconciliation against the affected environment before changing d
 
 Do not repair by editing a balance. Preserve the immutable history and use an explicit reviewed adjustment or compensating workflow after determining the cause.
 
+`credit_reconciliation_incidents` durably records each `(code, entity_id)` mismatch. Repeated detections increment `occurrences` and refresh `last_detected_at`; a clean scan of that entity changes the incident from `open` to `resolved`. Operational alerts report only the aggregate count of open incidents and never include the code, entity ID, or detail.
+
+PostgreSQL enforces the append-only ledger with the `credit_ledger_entries_append_only` trigger. Application and operator workflows must not disable it or directly update/delete ledger rows. Repairs use reviewed compensating entries so the original history remains auditable.
+
 ## Finalization backlog
 
 For `credit_finalization_jobs`:

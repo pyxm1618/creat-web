@@ -6,6 +6,7 @@ import { GET as live } from "@/app/api/health/live/route";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   authSecurityEvents,
+  creditReconciliationIncidents,
   fulfillmentJobs,
   paymentWebhookInbox,
 } from "@/platform/database/schema";
@@ -78,6 +79,30 @@ it("covers every required operational alert class with bounded payloads", () => 
     ]),
   );
   expect(JSON.stringify(alerts)).not.toMatch(/email|userId|orderId|paymentId|sessionId/i);
+});
+
+it("alerts on durable open credit incidents without exposing incident data", async () => {
+  const entityId = `private-grant-${crypto.randomUUID()}`;
+  const detail = `private-detail-${crypto.randomUUID()}`;
+  await database.db.insert(creditReconciliationIncidents).values({
+    code: "GRANT_LEDGER_MISMATCH",
+    entityId,
+    detail,
+  });
+
+  const snapshot = await collectOperationalAlertSnapshot(database.db);
+  const alerts = evaluateOperationalAlerts(snapshot);
+  const reconciliationAlert = alerts.find((item) => item.code === "reconciliation_mismatch");
+  expect(reconciliationAlert).toMatchObject({
+    event: "operational_alert",
+    code: "reconciliation_mismatch",
+    severity: "critical",
+    observedValue: 1,
+    threshold: 1,
+  });
+  expect(JSON.stringify(reconciliationAlert)).not.toContain(entityId);
+  expect(JSON.stringify(reconciliationAlert)).not.toContain(detail);
+  expect(JSON.stringify(reconciliationAlert)).not.toContain("GRANT_LEDGER_MISMATCH");
 });
 
 it("measures retained webhook backlog and oldest retained payload age", async () => {
