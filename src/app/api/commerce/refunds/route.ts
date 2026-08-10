@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 import { featuresConfig } from "@/config/features.config";
-import { getAccountContext } from "@/platform/auth/account-context";
+import {
+  AuthenticationRequiredError,
+  FreshAuthenticationRequiredError,
+  requireFreshAccountSession,
+} from "@/platform/auth/fresh-account-session";
 import { enqueueRefundRequest } from "@/platform/commerce/application/commerce-commands";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { parseDisplayAmount } from "@/platform/commerce/domain/money";
@@ -23,8 +27,16 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "invalid_origin" }, { status: 403 });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json"))
     return Response.json({ error: "invalid_content_type" }, { status: 415 });
-  const account = await getAccountContext(request.headers);
-  if (!account) return Response.json({ error: "authentication_required" }, { status: 401 });
+  let account;
+  try {
+    account = await requireFreshAccountSession(request.headers);
+  } catch (error) {
+    if (error instanceof AuthenticationRequiredError)
+      return Response.json({ error: "authentication_required" }, { status: 401 });
+    if (error instanceof FreshAuthenticationRequiredError)
+      return Response.json({ error: "fresh_authentication_required" }, { status: 403 });
+    throw error;
+  }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "invalid_request" }, { status: 400 });
   const commerce = await getCommerceRuntime();

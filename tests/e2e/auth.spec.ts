@@ -1,4 +1,8 @@
 import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
+import { eq } from "drizzle-orm";
+
+import { createDatabaseClient } from "@/platform/database/client";
+import { session } from "@/platform/database/schema";
 
 const TURNSTILE_TEST_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
@@ -140,6 +144,61 @@ test("forged session revocation cannot revoke the current session", async ({
 
   await targetPage.context().close();
   await currentContext.close();
+});
+
+test("billing mutations require a fresh session", async ({ browser, request }) => {
+  const page = await signInWithMagicLink({
+    browser,
+    request,
+    email: `stale-billing-${Date.now()}@example.com`,
+  });
+  const context = page.context();
+  const currentSessionResponse = await context.request.get("/api/auth/get-session");
+  const currentSession = (await currentSessionResponse.json()) as { session: { id: string } };
+  const databaseUrl = process.env.TEST_DATABASE_URL;
+  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
+  const database = createDatabaseClient(databaseUrl);
+  try {
+    const updated = await database.db
+      .update(session)
+      .set({ createdAt: new Date(Date.now() - 16 * 60 * 1000) })
+      .where(eq(session.id, currentSession.session.id))
+      .returning({ id: session.id });
+    expect(updated).toEqual([{ id: currentSession.session.id }]);
+  } finally {
+    await database.close();
+  }
+
+  const validBodies = {
+    "/api/commerce/refunds": {
+      paymentId: "00000000-0000-4000-8000-000000000001",
+      amount: "1.00",
+      currency: "USD",
+      reason: "customer request",
+    },
+    "/api/commerce/subscription/cancel": {
+      subscriptionId: "00000000-0000-4000-8000-000000000002",
+    },
+    "/api/commerce/subscription/resume": {
+      subscriptionId: "00000000-0000-4000-8000-000000000003",
+    },
+  } as const;
+
+  let index = 0;
+  for (const path of Object.keys(validBodies) as Array<keyof typeof validBodies>) {
+    const response = await context.request.post(path, {
+      headers: {
+        origin: "http://127.0.0.1:3000",
+        "content-type": "application/json",
+        "idempotency-key": `billing-stale:${index++}:${Date.now()}`,
+      },
+      data: validBodies[path],
+    });
+    expect(response.status()).toBe(403);
+    expect(await response.json()).toEqual({ error: "fresh_authentication_required" });
+  }
+
+  await context.close();
 });
 
 test("magic link confirmation is scanner-safe and single-use", async ({ page, request }) => {
