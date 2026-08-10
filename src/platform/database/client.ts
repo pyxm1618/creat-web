@@ -17,3 +17,4 @@ export function createDatabaseClient(url: string) {
 }
 
 export type DatabaseClient = ReturnType<typeof createDatabaseClient>["db"];
+export type DatabaseTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];

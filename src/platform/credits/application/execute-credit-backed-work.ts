@@ -1,12 +1,12 @@
-import type { DatabaseClient } from "@/platform/database/client";
+import type { DatabaseClient, DatabaseTransaction } from "@/platform/database/client";
 
 import {
   commitReservation,
-  enqueueCreditFinalization,
   releaseReservation,
   reserveCredits,
   type CreditReservationRecord,
 } from "./credit-service";
+import { completeCreditFinalization, enqueueCreditFinalization } from "./finalization-service";
 
 export async function executeCreditBackedWork<T>(
   database: DatabaseClient,
@@ -16,6 +16,7 @@ export async function executeCreditBackedWork<T>(
     readonly persistDelivery: (
       result: T,
       reservation: CreditReservationRecord,
+      tx: DatabaseTransaction,
     ) => Promise<{ readonly deliveryReference: string }>;
     readonly finalize?: (input: {
       readonly reservationId: string;
@@ -41,7 +42,14 @@ export async function executeCreditBackedWork<T>(
     throw error;
   }
 
-  const delivery = await callbacks.persistDelivery(result, reservation);
+  const delivery = await database.transaction(async (tx) => {
+    const stored = await callbacks.persistDelivery(result, reservation, tx);
+    await enqueueCreditFinalization(tx, {
+      reservationId: reservation.id,
+      deliveryReference: stored.deliveryReference,
+    });
+    return stored;
+  });
   const correlationId = `delivery:${delivery.deliveryReference}`;
   try {
     if (callbacks.finalize) {
@@ -49,16 +57,13 @@ export async function executeCreditBackedWork<T>(
     } else {
       await commitReservation(database, { reservationId: reservation.id, correlationId });
     }
+    await completeCreditFinalization(database, { reservationId: reservation.id });
     return {
       result,
       deliveryReference: delivery.deliveryReference,
       finalizationPending: false,
     };
   } catch {
-    await enqueueCreditFinalization(database, {
-      reservationId: reservation.id,
-      deliveryReference: delivery.deliveryReference,
-    });
     return {
       result,
       deliveryReference: delivery.deliveryReference,
