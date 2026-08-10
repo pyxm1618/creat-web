@@ -49,6 +49,18 @@ describe("validateProductConfig", () => {
     ).toThrow("subscriptions require commerce");
   });
 
+  it("accepts the commerce-enabled subscription release profile", () => {
+    const configured = validateProductConfig({
+      ...valid,
+      features: {
+        ...valid.features,
+        commerce: { ...valid.features.commerce, enabled: true, subscriptions: true },
+      },
+    });
+
+    expect(configured.features.commerce).toMatchObject({ enabled: true, subscriptions: true });
+  });
+
   it("rejects credits when commerce is disabled", () => {
     expect(() =>
       validateProductConfig({

@@ -1,6 +1,9 @@
 import "server-only";
 
+import { makeSignature } from "better-auth/crypto";
+
 import { getAuth } from "@/platform/auth/auth";
+import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { db } from "@/platform/database/application-database";
 
 import { createAccountDeletionService } from "./account-deletion-service";
@@ -19,13 +22,23 @@ export function getAccountDeletionService(): AccountDeletionService | null {
   const subjects = createPostgresAccountSubjectRepository(db);
   const identityDeletion = createBetterAuthIdentityDeletion({
     database: db,
-    invokeDeleteUser: (headers) => auth.api.deleteUser({ body: {}, headers, asResponse: true }),
+    invokeDeleteUser: async (workerSessionToken) => {
+      const context = await auth.$context;
+      const signature = await makeSignature(workerSessionToken, context.secret);
+      const headers = new Headers({
+        cookie: `${context.authCookies.sessionToken.name}=${workerSessionToken}.${signature}`,
+      });
+      return auth.api.deleteUser({ body: {}, headers, asResponse: true });
+    },
   });
 
   service = createAccountDeletionService({
     database: db,
     subjects,
-    coordinator: createPlatformAccountDeletionCoordinator(),
+    coordinator: createPlatformAccountDeletionCoordinator({
+      database: db,
+      getCommerce: getCommerceRuntime,
+    }),
     identityDeletion,
   });
   return service;

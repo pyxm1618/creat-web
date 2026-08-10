@@ -151,6 +151,21 @@ for (const requiredFile of [
   await readFile(requiredFile, "utf8");
 }
 
+const accountDeletionRuntimeSource = await readFile(
+  "src/platform/accounts/account-deletion-runtime.ts",
+  "utf8",
+);
+const accountDeletionCoordinatorInput = accountDeletionRuntimeSource.match(
+  /createPlatformAccountDeletionCoordinator\(\{(?<input>[^}]+)\}\)/m,
+)?.groups?.input;
+if (
+  !accountDeletionCoordinatorInput ||
+  !/\bdatabase:\s*db\b/.test(accountDeletionCoordinatorInput) ||
+  !/\bgetCommerce:\s*getCommerceRuntime\b/.test(accountDeletionCoordinatorInput)
+) {
+  throw new Error("commerce-enabled account deletion coordinator must be wired");
+}
+
 console.log(
   JSON.stringify({
     event: "release_verified",

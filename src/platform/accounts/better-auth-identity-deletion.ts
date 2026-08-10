@@ -15,7 +15,7 @@ export interface IdentityDeletion {
 
 export function createBetterAuthIdentityDeletion(input: {
   readonly database: DatabaseClient;
-  readonly invokeDeleteUser: (headers: Headers) => Promise<Response>;
+  readonly invokeDeleteUser: (workerSessionToken: string) => Promise<Response>;
   readonly now?: () => Date;
 }): IdentityDeletion {
   const now = input.now ?? (() => new Date());
@@ -69,9 +69,7 @@ export function createBetterAuthIdentityDeletion(input: {
         throw new Error("account deletion worker credential is unavailable");
       }
 
-      const response = await input.invokeDeleteUser(
-        new Headers({ authorization: `Bearer ${workerSession.token}` }),
-      );
+      const response = await input.invokeDeleteUser(workerSession.token);
       if (!response.ok) {
         throw new Error(`Better Auth user deletion failed with status ${response.status}`);
       }
