@@ -329,3 +329,70 @@ it("serializes concurrent refund reservations so cumulative requested refunds ca
     .where(eq(refunds.paymentId, payment.id));
   expect(BigInt(total?.requested ?? 0n)).toBe(600n);
 });
+
+it("refunds only the paid subscription period and accepts the next renewal", async () => {
+  const { order } = await subscriptionFixture();
+  const subscription = await activateSubscription(order);
+  const [periodOne] = await database.db
+    .select()
+    .from(subscriptionPeriods)
+    .where(eq(subscriptionPeriods.subscriptionId, subscription.id));
+  if (!periodOne?.paymentId) throw new Error("first subscription period payment missing");
+  const paymentOne = await database.db.query.payments.findFirst({
+    where: eq(payments.id, periodOne.paymentId),
+  });
+  if (!paymentOne) throw new Error("first subscription payment missing");
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-refund-period-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: paymentOne.externalPaymentId,
+      externalRefundReference: `REF_PERIOD_${crypto.randomUUID()}`,
+      amount: { currency: "USD", minor: 1900n },
+      occurredAt: new Date("2026-08-15T00:00:00Z"),
+    },
+    "9".repeat(64),
+  );
+
+  const refundedPeriod = await database.db.query.subscriptionPeriods.findFirst({
+    where: eq(subscriptionPeriods.id, periodOne.id),
+  });
+  const subscriptionOrder = await database.db.query.orders.findFirst({
+    where: eq(orders.id, order.id),
+  });
+  expect(refundedPeriod?.state).toBe("refunded");
+  expect(subscriptionOrder?.status).toBe("paid");
+
+  const paymentTwoExternalId = `PAY_${crypto.randomUUID()}`;
+  await processProviderEvent(
+    database.db,
+    {
+      type: "subscription_payment_succeeded",
+      eventId: `evt-renew-after-refund-${crypto.randomUUID()}`,
+      environment: "test",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      externalPaymentId: paymentTwoExternalId,
+      amount: { currency: "USD", minor: 1900n },
+      currentPeriodStart: new Date("2026-09-01T00:00:00Z"),
+      currentPeriodEnd: new Date("2026-10-01T00:00:00Z"),
+      occurredAt: new Date("2026-09-01T00:00:05Z"),
+    },
+    "a".repeat(64),
+  );
+
+  const periods = await database.db
+    .select()
+    .from(subscriptionPeriods)
+    .where(eq(subscriptionPeriods.subscriptionId, subscription.id));
+  expect(periods).toHaveLength(2);
+  expect(periods.find((period) => period.id === periodOne.id)?.state).toBe("refunded");
+  expect(periods.find((period) => period.paymentId !== periodOne.paymentId)?.state).toBe("paid");
+  const renewedOrder = await database.db.query.orders.findFirst({
+    where: eq(orders.id, order.id),
+  });
+  expect(renewedOrder?.status).toBe("paid");
+});

@@ -8,7 +8,7 @@ import {
   orders,
   payments,
 } from "@/platform/database/commerce-schema";
-import { refunds } from "@/platform/database/subscription-schema";
+import { refunds, subscriptionPeriods } from "@/platform/database/subscription-schema";
 
 import type { NormalizedProviderEvent } from "../domain/events";
 import { transitionOrder, type OrderStatus } from "../domain/order";
@@ -142,6 +142,22 @@ export async function processRefundEvent(
   const candidates = await matchingRefunds(tx, payment.id, event);
   const matched = candidates.length === 1 ? candidates[0]! : undefined;
 
+  if (matched && matched.paymentId !== payment.id) {
+    await recordRefundReconciliation(tx, {
+      targetType: "payment_refund",
+      targetId: payment.id,
+      before: { refundStatus: payment.refundStatus },
+      after: {
+        reason: "external_refund_reference_payment_mismatch",
+        refundId: matched.id,
+        matchedPaymentId: matched.paymentId,
+        eventPaymentId: payment.id,
+        externalRefundReference: event.externalRefundReference ?? null,
+      },
+    });
+    return;
+  }
+
   if (event.type === "refund_failed") {
     if (matched?.status === "succeeded") {
       const stale = Boolean(
@@ -223,32 +239,15 @@ export async function processRefundEvent(
   if (refundedMinor > payment.amountMinor) throw new Error("refund exceeds captured payment");
   const full = refundedMinor === payment.amountMinor;
 
-  await tx
-    .update(payments)
-    .set({
-      refundedMinor,
-      refundStatus: full ? "refunded" : "partial",
-      updatedAt: new Date(),
-    })
-    .where(eq(payments.id, payment.id));
-  await tx
-    .update(orders)
-    .set({
-      status: transitionOrder(
-        parseOrderStatus(order.status),
-        full ? "refund_full_succeeded" : "refund_partial_succeeded",
-      ),
-    })
-    .where(eq(orders.id, order.id));
-
   const [product] = await tx
-    .select({ fulfillmentKey: commerceProducts.fulfillmentKey })
+    .select({ fulfillmentKey: commerceProducts.fulfillmentKey, model: commerceProducts.model })
     .from(commerceProducts)
     .where(eq(commerceProducts.id, order.productId))
     .limit(1);
   if (!product) throw new Error("refund order product not found");
 
-  if (!matched) {
+  let refund = matched;
+  if (!refund) {
     if (candidates.length > 1) {
       await tx
         .update(refunds)
@@ -264,23 +263,79 @@ export async function processRefundEvent(
             candidates.map((candidate) => candidate.id),
           ),
         );
+      await recordRefundReconciliation(tx, {
+        targetType: "payment_refund",
+        targetId: payment.id,
+        before: { refundedMinor: payment.refundedMinor.toString() },
+        after: {
+          refundedMinor: refundedMinor.toString(),
+          unmatchedRefund: true,
+          candidateCount: candidates.length,
+        },
+      });
     }
-    await recordRefundReconciliation(tx, {
-      targetType: "payment_refund",
-      targetId: payment.id,
-      before: { refundedMinor: payment.refundedMinor.toString() },
-      after: {
-        refundedMinor: refundedMinor.toString(),
-        unmatchedRefund: true,
-        candidateCount: candidates.length,
-      },
-    });
-    return;
+    const [providerRefund] = await tx
+      .insert(refunds)
+      .values({
+        paymentId: payment.id,
+        subjectId: order.subjectId,
+        environment: event.environment,
+        externalRefundReference: event.externalRefundReference,
+        idempotencyKey: `provider-refund:${event.environment}:${event.eventId}`,
+        currency: event.amount.currency,
+        requestedMinor: event.amount.minor,
+        succeededMinor: event.amount.minor,
+        reason: "provider-originated refund",
+        status: "succeeded",
+        reversalStatus: full ? "pending" : "reconciliation_required",
+        operatorReviewReason: full
+          ? null
+          : "partial refund entitlement reversal requires operator policy",
+        providerUpdatedAt: event.occurredAt,
+      })
+      .returning();
+    if (!providerRefund) throw new Error("provider refund insert failed");
+    refund = providerRefund;
   }
 
-  const refund = matched;
   if (event.amount.minor > refund.requestedMinor) {
     throw new Error("refund webhook exceeds requested refund amount");
+  }
+
+  if (product.model === "subscription" && full) {
+    const periods = await tx
+      .select({ id: subscriptionPeriods.id })
+      .from(subscriptionPeriods)
+      .where(eq(subscriptionPeriods.paymentId, payment.id))
+      .limit(2)
+      .for("update");
+    if (periods.length !== 1) {
+      throw new Error("unique subscription period not found for refunded payment");
+    }
+    await tx
+      .update(subscriptionPeriods)
+      .set({ state: "refunded" })
+      .where(eq(subscriptionPeriods.id, periods[0]!.id));
+  }
+
+  await tx
+    .update(payments)
+    .set({
+      refundedMinor,
+      refundStatus: full ? "refunded" : "partial",
+      updatedAt: new Date(),
+    })
+    .where(eq(payments.id, payment.id));
+  if (product.model === "one_time") {
+    await tx
+      .update(orders)
+      .set({
+        status: transitionOrder(
+          parseOrderStatus(order.status),
+          full ? "refund_full_succeeded" : "refund_partial_succeeded",
+        ),
+      })
+      .where(eq(orders.id, order.id));
   }
 
   if (!full) {
