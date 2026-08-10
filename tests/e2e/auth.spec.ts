@@ -31,6 +31,15 @@ async function installBrowserTurnstileMock(page: Page): Promise<void> {
   }, TURNSTILE_TEST_TOKEN);
 }
 
+test("native Better Auth mutation endpoints are not public", async ({ request }) => {
+  for (const path of ["/api/auth/delete-user", "/api/auth/sign-in/magic-link"]) {
+    const response = await request.post(path, {
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status()).toBe(404);
+  }
+});
+
 test("magic link confirmation is scanner-safe and single-use", async ({ page, request }) => {
   const email = `browser-${Date.now()}@example.com`;
   const externalRequests: string[] = [];
