@@ -92,10 +92,11 @@ async function handleSettledRefundReplay(
 ): Promise<boolean> {
   if (refund.status !== "succeeded") return false;
   const sameAmount = refund.succeededMinor === event.amount.minor;
+  const sameCurrency = refund.currency === event.amount.currency;
   const sameReference =
     !event.externalRefundReference ||
     refund.externalRefundReference === event.externalRefundReference;
-  if (sameAmount && sameReference) return true;
+  if (sameAmount && sameCurrency && sameReference) return true;
 
   await recordRefundReconciliation(tx, {
     targetType: "payment_refund",
@@ -103,11 +104,13 @@ async function handleSettledRefundReplay(
     before: {
       refundId: refund.id,
       succeededMinor: refund.succeededMinor.toString(),
+      currency: refund.currency,
       externalRefundReference: refund.externalRefundReference,
     },
     after: {
       conflictingProviderSuccess: true,
       eventAmountMinor: event.amount.minor.toString(),
+      eventCurrency: event.amount.currency,
       eventExternalRefundReference: event.externalRefundReference ?? null,
     },
   });
@@ -138,6 +141,25 @@ export async function processRefundEvent(
     .limit(1)
     .for("update");
   if (!order) throw new Error("order not found for refund event");
+
+  if (event.merchantOrderReference && event.merchantOrderReference !== order.id) {
+    await recordRefundReconciliation(tx, {
+      targetType: "payment_refund",
+      targetId: payment.id,
+      before: {
+        orderId: order.id,
+        refundStatus: payment.refundStatus,
+        refundedMinor: payment.refundedMinor.toString(),
+      },
+      after: {
+        reason: "merchant_order_reference_payment_mismatch",
+        externalPaymentId: event.externalPaymentId,
+        expectedMerchantOrderReference: order.id,
+        eventMerchantOrderReference: event.merchantOrderReference,
+      },
+    });
+    return;
+  }
 
   const candidates = await matchingRefunds(tx, payment.id, event);
   const matched = candidates.length === 1 ? candidates[0]! : undefined;

@@ -11,6 +11,7 @@ import {
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   accountSubjects,
+  commerceAppliedEvents,
   commerceReconciliationRuns,
   commerceProducts,
   fulfillmentJobs,
@@ -231,6 +232,141 @@ it("reconciles a refund reference bound to another payment without mutating eith
     matchedPaymentId: paymentA.payment.id,
     eventPaymentId: paymentB.payment.id,
   });
+});
+
+it("reconciles a merchant order reference bound to another order before refund mutation", async () => {
+  const paymentA = await refundFixture();
+  const paymentB = await refundFixture();
+  const eventId = `evt:${crypto.randomUUID()}`;
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId,
+      environment: "test",
+      externalPaymentId: paymentA.payment.externalPaymentId,
+      externalRefundReference: paymentA.externalRefundReference,
+      merchantOrderReference: paymentB.order.id,
+      amount: { currency: "USD", minor: 1000n },
+      occurredAt: new Date("2026-08-09T03:30:00Z"),
+    },
+    "0".repeat(64),
+  );
+
+  const [persistedPaymentA, persistedPaymentB, persistedRefundA] = await Promise.all([
+    database.db.query.payments.findFirst({ where: eq(payments.id, paymentA.payment.id) }),
+    database.db.query.payments.findFirst({ where: eq(payments.id, paymentB.payment.id) }),
+    database.db.query.refunds.findFirst({ where: eq(refunds.id, paymentA.refund.id) }),
+  ]);
+  expect(persistedPaymentA).toMatchObject({ refundedMinor: 0n, refundStatus: "none" });
+  expect(persistedPaymentB).toMatchObject({ refundedMinor: 0n, refundStatus: "none" });
+  expect(persistedRefundA).toMatchObject({
+    status: "processing",
+    succeededMinor: 0n,
+    reversalStatus: "pending",
+  });
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, paymentA.refund.id)),
+  ).toHaveLength(0);
+
+  const reconciliations = await database.db
+    .select()
+    .from(commerceReconciliationRuns)
+    .where(
+      and(
+        eq(commerceReconciliationRuns.targetType, "payment_refund"),
+        eq(commerceReconciliationRuns.targetId, paymentA.payment.id),
+      ),
+    );
+  expect(reconciliations).toHaveLength(1);
+  expect(reconciliations[0]?.afterJson).toEqual({
+    reason: "merchant_order_reference_payment_mismatch",
+    externalPaymentId: paymentA.payment.externalPaymentId,
+    expectedMerchantOrderReference: paymentA.order.id,
+    eventMerchantOrderReference: paymentB.order.id,
+  });
+});
+
+it("reconciles a settled replay whose currency conflicts with the persisted refund", async () => {
+  const fixture = await refundFixture();
+  const firstEventId = `evt:${crypto.randomUUID()}`;
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: firstEventId,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      externalRefundReference: fixture.externalRefundReference,
+      merchantOrderReference: fixture.order.id,
+      amount: { currency: "USD", minor: 1000n },
+      occurredAt: new Date("2026-08-09T03:40:00Z"),
+    },
+    "2".repeat(64),
+  );
+
+  const conflictingEventId = `evt:${crypto.randomUUID()}`;
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: conflictingEventId,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      externalRefundReference: fixture.externalRefundReference,
+      merchantOrderReference: fixture.order.id,
+      amount: { currency: "EUR", minor: 1000n },
+      occurredAt: new Date("2026-08-09T03:45:00Z"),
+    },
+    "3".repeat(64),
+  );
+
+  const persistedPayment = await database.db.query.payments.findFirst({
+    where: eq(payments.id, fixture.payment.id),
+  });
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedPayment).toMatchObject({
+    currency: "USD",
+    refundedMinor: 1000n,
+    refundStatus: "refunded",
+  });
+  expect(persistedRefund).toMatchObject({
+    currency: "USD",
+    succeededMinor: 1000n,
+    status: "succeeded",
+  });
+
+  const reconciliations = await database.db
+    .select()
+    .from(commerceReconciliationRuns)
+    .where(
+      and(
+        eq(commerceReconciliationRuns.targetType, "payment_refund"),
+        eq(commerceReconciliationRuns.targetId, fixture.payment.id),
+      ),
+    );
+  expect(reconciliations).toHaveLength(1);
+  expect(reconciliations[0]?.beforeJson).toMatchObject({ currency: "USD" });
+  expect(reconciliations[0]?.afterJson).toMatchObject({
+    conflictingProviderSuccess: true,
+    eventCurrency: "EUR",
+  });
+  const applied = await database.db
+    .select()
+    .from(commerceAppliedEvents)
+    .where(
+      and(
+        eq(commerceAppliedEvents.environment, "test"),
+        eq(commerceAppliedEvents.providerEventId, conflictingEventId),
+      ),
+    );
+  expect(applied).toHaveLength(1);
 });
 
 it("materializes and reverses a provider-originated full refund exactly once", async () => {
