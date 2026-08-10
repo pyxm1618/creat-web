@@ -1,8 +1,15 @@
-import { isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
+import { InvalidWebhookSignatureError } from "@/platform/commerce/application/errors";
+import { ingestProviderWebhook } from "@/platform/commerce/application/ingest-provider-webhook";
+import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
+import {
+  purgeExpiredWebhookPayloads,
+  purgeRejectedWebhookDiagnostics,
+} from "@/platform/commerce/application/purge-webhook-payloads";
+import { payloadHash } from "@/platform/commerce/application/webhook-retention";
 import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import { createDatabaseClient } from "@/platform/database/client";
 import { paymentWebhookInbox } from "@/platform/database/schema";
@@ -23,6 +30,44 @@ beforeAll(async () => {
 });
 
 afterAll(async () => database.close());
+
+const invalidSignatureProvider: PaymentProvider = {
+  name: "invalid-signature-test-provider",
+  capabilities: { oneTime: true, subscriptions: false, partialRefunds: false },
+  async createCheckout() {
+    throw new Error("not used");
+  },
+  async createOneTimeCheckout() {
+    throw new Error("not used");
+  },
+  async cancelSubscription() {
+    throw new Error("not used");
+  },
+  async resumeSubscription() {
+    throw new Error("not used");
+  },
+  async requestRefund() {
+    throw new Error("not used");
+  },
+  async getPayment() {
+    return null;
+  },
+  async verifyAndNormalizeWebhook() {
+    throw new InvalidWebhookSignatureError();
+  },
+};
+
+async function ingestInvalidPayload(body: Uint8Array, now: Date) {
+  return ingestProviderWebhook({
+    database: database.db,
+    provider: invalidSignatureProvider,
+    environment: "test",
+    rawBody: body,
+    signature: "invalid",
+    retention: {},
+    now,
+  });
+}
 
 it("multiple workers purge each expired encrypted payload once without exposing payload data", async () => {
   const now = new Date("2026-08-09T20:00:00Z");
@@ -76,4 +121,59 @@ it("multiple workers purge each expired encrypted payload once without exposing 
     retainedPayloads: 0,
     oldestRetainedPayloadAgeSeconds: 0,
   });
+});
+
+it("buckets distinct invalid bodies into one diagnostic per environment and UTC minute", async () => {
+  const now = new Date("2026-08-09T20:00:10.000Z");
+  const bodyA = new TextEncoder().encode('{"invalid":"a"}');
+  const bodyB = new TextEncoder().encode('{"invalid":"b"}');
+
+  expect(await ingestInvalidPayload(bodyA, now)).toMatchObject({
+    accepted: false,
+    duplicate: false,
+  });
+  expect(await ingestInvalidPayload(bodyB, new Date(now.getTime() + 20_000))).toMatchObject({
+    accepted: false,
+    duplicate: true,
+  });
+
+  const rows = await database.db
+    .select()
+    .from(paymentWebhookInbox)
+    .where(
+      and(
+        eq(paymentWebhookInbox.providerEventId, "invalid:test:2026-08-09T20:00"),
+        eq(paymentWebhookInbox.state, "rejected"),
+      ),
+    );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    signatureValid: false,
+    normalizedPayloadJson: {},
+    payloadHash: payloadHash(bodyA),
+    payloadSizeBytes: bodyA.byteLength,
+  });
+  expect(rows[0]?.rawPayloadCiphertext).toBeNull();
+  expect(rows[0]?.rawPayloadKeyId).toBeNull();
+});
+
+it("deletes a rejected invalid-signature diagnostic after 24 hours", async () => {
+  await database.db
+    .delete(paymentWebhookInbox)
+    .where(
+      and(eq(paymentWebhookInbox.signatureValid, false), eq(paymentWebhookInbox.state, "rejected")),
+    );
+  const now = new Date("2026-08-09T21:00:10.000Z");
+  await ingestInvalidPayload(new TextEncoder().encode('{"invalid":"expired"}'), now);
+
+  expect(
+    await purgeRejectedWebhookDiagnostics(database.db, {
+      now: new Date(now.getTime() + 24 * 60 * 60 * 1000 + 1),
+    }),
+  ).toBe(1);
+  const rows = await database.db
+    .select({ id: paymentWebhookInbox.id })
+    .from(paymentWebhookInbox)
+    .where(eq(paymentWebhookInbox.providerEventId, "invalid:test:2026-08-09T21:00"));
+  expect(rows).toHaveLength(0);
 });

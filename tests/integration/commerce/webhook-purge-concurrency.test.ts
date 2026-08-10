@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-import { purgeExpiredWebhookPayloads } from "@/platform/commerce/application/purge-webhook-payloads";
+import {
+  purgeExpiredWebhookPayloads,
+  purgeRejectedWebhookDiagnostics,
+} from "@/platform/commerce/application/purge-webhook-payloads";
 import { createDatabaseClient } from "@/platform/database/client";
 import { paymentWebhookInbox } from "@/platform/database/schema";
 
@@ -95,4 +98,55 @@ it("active legal hold is not purged", async () => {
   });
   expect(stored?.rawPayloadCiphertext).not.toBeNull();
   expect(stored?.rawPayloadPurgedAt).toBeNull();
+});
+
+it("concurrent workers delete disjoint expired rejected diagnostics and retain recent rows", async () => {
+  const now = new Date("2026-08-10T12:00:00.000Z");
+  const expiredAt = new Date(now.getTime() - 24 * 60 * 60 * 1000 - 1);
+  const recentAt = new Date(now.getTime() - 24 * 60 * 60 * 1000 + 1);
+  await database.db.insert(paymentWebhookInbox).values([
+    ...Array.from({ length: 12 }, (_, index) => ({
+      environment: "test",
+      providerEventId: `invalid:test:2026-08-08T${String(index).padStart(2, "0")}:00`,
+      dedupHash: `expired-invalid-dedup-${index}`,
+      eventType: "invalid_signature",
+      signatureValid: false,
+      normalizedPayloadJson: {},
+      payloadHash: `expired-invalid-payload-${index}`,
+      payloadSizeBytes: 32,
+      retentionClass: "invalid_signature",
+      state: "rejected",
+      receivedAt: expiredAt,
+      processedAt: expiredAt,
+    })),
+    ...Array.from({ length: 2 }, (_, index) => ({
+      environment: "test",
+      providerEventId: `invalid:test:2026-08-10T1${index}:00`,
+      dedupHash: `recent-invalid-dedup-${index}`,
+      eventType: "invalid_signature",
+      signatureValid: false,
+      normalizedPayloadJson: {},
+      payloadHash: `recent-invalid-payload-${index}`,
+      payloadSizeBytes: 32,
+      retentionClass: "invalid_signature",
+      state: "rejected",
+      receivedAt: recentAt,
+      processedAt: recentAt,
+    })),
+  ]);
+
+  const [workerA, workerB] = await Promise.all([
+    purgeRejectedWebhookDiagnostics(database.db, { now, limit: 6 }),
+    purgeRejectedWebhookDiagnostics(database.db, { now, limit: 6 }),
+  ]);
+  expect(workerA + workerB).toBe(12);
+
+  const remaining = await database.db
+    .select({ id: paymentWebhookInbox.id })
+    .from(paymentWebhookInbox)
+    .where(
+      and(eq(paymentWebhookInbox.signatureValid, false), eq(paymentWebhookInbox.state, "rejected")),
+    );
+  expect(remaining).toHaveLength(2);
+  expect(await purgeRejectedWebhookDiagnostics(database.db, { now, limit: 12 })).toBe(0);
 });

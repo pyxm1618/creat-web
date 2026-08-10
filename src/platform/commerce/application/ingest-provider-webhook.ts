@@ -15,6 +15,10 @@ type RetentionConfig = {
   readonly keyId?: string;
 };
 
+function invalidDiagnosticId(environment: CommerceEnvironment, now: Date): string {
+  return `invalid:${environment}:${now.toISOString().slice(0, 16)}`;
+}
+
 export async function ingestProviderWebhook(input: {
   readonly database: DatabaseClient;
   readonly provider: PaymentProvider;
@@ -42,12 +46,14 @@ export async function ingestProviderWebhook(input: {
     });
   } catch (error) {
     if (!(error instanceof InvalidWebhookSignatureError)) throw error;
+    const providerEventId = invalidDiagnosticId(input.environment, now);
+    const diagnosticDedupHash = payloadHash(new TextEncoder().encode(providerEventId));
     const inserted = await input.database
       .insert(paymentWebhookInbox)
       .values({
         environment: input.environment,
-        providerEventId: `invalid:${hash}`,
-        dedupHash: hash,
+        providerEventId,
+        dedupHash: diagnosticDedupHash,
         eventType: "invalid_signature",
         signatureValid: false,
         normalizedPayloadJson: {},
@@ -55,6 +61,7 @@ export async function ingestProviderWebhook(input: {
         payloadSizeBytes: size,
         retentionClass: "invalid_signature",
         state: "rejected",
+        receivedAt: now,
         processedAt: now,
       })
       .onConflictDoNothing()
