@@ -107,6 +107,41 @@ test("session revocation keeps tokens out of rendered account security HTML", as
   await currentContext.close();
 });
 
+test("forged session revocation cannot revoke the current session", async ({
+  browser,
+  request,
+}) => {
+  const email = `current-session-protection-${Date.now()}@example.com`;
+  const targetPage = await signInWithMagicLink({ browser, request, email });
+  const currentPage = await signInWithMagicLink({ browser, request, email });
+  const currentContext = currentPage.context();
+  const currentSessionResponse = await currentContext.request.get("/api/auth/get-session");
+  const currentSession = (await currentSessionResponse.json()) as { session: { id: string } };
+
+  await currentPage.goto("/account/security");
+  const sessionId = currentPage.locator('input[name="sessionId"]');
+  await expect(sessionId).toHaveCount(1);
+  await sessionId.evaluate((element, value) => {
+    (element as HTMLInputElement).value = value;
+  }, currentSession.session.id);
+
+  const actionResponse = currentPage.waitForResponse(
+    (response) =>
+      response.url().endsWith("/account/security") && response.request().method() === "POST",
+  );
+  await currentPage.getByRole("button", { name: "Revoke this session" }).click();
+  expect((await actionResponse).status()).toBeGreaterThanOrEqual(400);
+
+  const retainedSessionResponse = await currentContext.request.get("/api/auth/get-session");
+  expect(retainedSessionResponse.ok()).toBeTruthy();
+  expect(((await retainedSessionResponse.json()) as { session: { id: string } }).session.id).toBe(
+    currentSession.session.id,
+  );
+
+  await targetPage.context().close();
+  await currentContext.close();
+});
+
 test("magic link confirmation is scanner-safe and single-use", async ({ page, request }) => {
   const email = `browser-${Date.now()}@example.com`;
   const externalRequests: string[] = [];
