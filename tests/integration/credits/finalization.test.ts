@@ -163,6 +163,103 @@ it("marks the withCreditReservation obligation completed after direct commit", a
   ).toMatchObject({ state: "completed" });
 });
 
+it("rolls back delivery when finalization obligation insertion fails", async () => {
+  const deliveryReference = `delivery-${crypto.randomUUID()}`;
+  const existingDeliveryKey = `delivery:${crypto.randomUUID()}`;
+  const rejectedDeliveryKey = `delivery:${crypto.randomUUID()}`;
+  const firstSubjectId = await grantedSubject();
+  const secondSubjectId = await grantedSubject();
+
+  await executeCreditBackedWork(database.db, reserveInput(firstSubjectId), {
+    work: async () => ({ text: "first" }),
+    persistDelivery: async (_generated, _reservation, tx) => {
+      await tx.insert(platformMeta).values({ key: existingDeliveryKey, value: "stored" });
+      return { deliveryReference };
+    },
+  });
+
+  let enqueueError: unknown;
+  try {
+    await executeCreditBackedWork(database.db, reserveInput(secondSubjectId), {
+      work: async () => ({ text: "second" }),
+      persistDelivery: async (_generated, _reservation, tx) => {
+        await tx.insert(platformMeta).values({ key: rejectedDeliveryKey, value: "stored" });
+        return { deliveryReference };
+      },
+    });
+  } catch (error) {
+    enqueueError = error;
+  }
+  expect(enqueueError).toBeInstanceOf(Error);
+  const enqueueCause = (enqueueError as Error).cause as { constraint_name?: string } | undefined;
+  expect(enqueueCause?.constraint_name).toBe("credit_finalization_delivery_uq");
+
+  expect(
+    await database.db.select().from(platformMeta).where(eq(platformMeta.key, rejectedDeliveryKey)),
+  ).toHaveLength(0);
+  expect(
+    await database.db
+      .select()
+      .from(creditFinalizationJobs)
+      .where(eq(creditFinalizationJobs.deliveryReference, deliveryReference)),
+  ).toHaveLength(1);
+});
+
+it("rejects a different delivery reference for an existing reservation obligation", async () => {
+  const subjectId = await grantedSubject();
+  const input = reserveInput(subjectId);
+  const firstDeliveryReference = `delivery-${crypto.randomUUID()}`;
+  const secondDeliveryReference = `delivery-${crypto.randomUUID()}`;
+  const firstDeliveryKey = `delivery:${crypto.randomUUID()}`;
+  const rejectedDeliveryKey = `delivery:${crypto.randomUUID()}`;
+  let reservationId: string | undefined;
+
+  const first = await executeCreditBackedWork(database.db, input, {
+    work: async () => ({ text: "first" }),
+    persistDelivery: async (_generated, reservation, tx) => {
+      reservationId = reservation.id;
+      await tx.insert(platformMeta).values({ key: firstDeliveryKey, value: "stored" });
+      return { deliveryReference: firstDeliveryReference };
+    },
+    finalize: async () => {
+      throw new Error("injected post-delivery commit outage");
+    },
+  });
+  expect(first.finalizationPending).toBe(true);
+
+  await expect(
+    executeCreditBackedWork(database.db, input, {
+      work: async () => ({ text: "retry" }),
+      persistDelivery: async (_generated, _reservation, tx) => {
+        await tx.insert(platformMeta).values({ key: rejectedDeliveryKey, value: "stored" });
+        return { deliveryReference: secondDeliveryReference };
+      },
+    }),
+  ).rejects.toThrow("credit finalization delivery reference conflict");
+
+  expect(
+    await database.db.select().from(platformMeta).where(eq(platformMeta.key, firstDeliveryKey)),
+  ).toHaveLength(1);
+  expect(
+    await database.db.select().from(platformMeta).where(eq(platformMeta.key, rejectedDeliveryKey)),
+  ).toHaveLength(0);
+  expect(
+    await database.db.query.creditFinalizationJobs.findFirst({
+      where: eq(
+        creditFinalizationJobs.reservationId,
+        reservationId ?? "00000000-0000-0000-0000-000000000000",
+      ),
+    }),
+  ).toMatchObject({
+    state: "pending",
+    deliveryReference: firstDeliveryReference,
+  });
+
+  expect(
+    await runCreditFinalizationWorker(database.db, { owner: "conflict-test-cleanup" }),
+  ).toMatchObject({ completed: 1 });
+});
+
 it("does not redo or release delivered work when credit commit temporarily fails", async () => {
   const subjectId = await grantedSubject();
   const deliveryReference = `delivery-${crypto.randomUUID()}`;

@@ -6,26 +6,55 @@ import { creditFinalizationJobs } from "@/platform/database/schema";
 import { commitReservation, releaseReservation, reserveCredits } from "./reservation-service";
 import type { CreditReservationRecord } from "./internal/credit-support";
 
+export type CreditFinalizationObligation = Readonly<{
+  id: string;
+  reservationId: string;
+  deliveryReference: string;
+}>;
+
 export async function enqueueCreditFinalization(
   database: DatabaseClient | DatabaseTransaction,
   input: { readonly reservationId: string; readonly deliveryReference: string },
-): Promise<void> {
-  await database
+): Promise<CreditFinalizationObligation> {
+  const [inserted] = await database
     .insert(creditFinalizationJobs)
     .values({ reservationId: input.reservationId, deliveryReference: input.deliveryReference })
-    .onConflictDoNothing({ target: creditFinalizationJobs.reservationId });
+    .onConflictDoNothing({ target: creditFinalizationJobs.reservationId })
+    .returning({
+      id: creditFinalizationJobs.id,
+      reservationId: creditFinalizationJobs.reservationId,
+      deliveryReference: creditFinalizationJobs.deliveryReference,
+    });
+  if (inserted) return inserted;
+
+  const [existing] = await database
+    .select({
+      id: creditFinalizationJobs.id,
+      reservationId: creditFinalizationJobs.reservationId,
+      deliveryReference: creditFinalizationJobs.deliveryReference,
+    })
+    .from(creditFinalizationJobs)
+    .where(eq(creditFinalizationJobs.reservationId, input.reservationId))
+    .limit(1);
+  if (!existing) throw new Error("credit finalization obligation conflict lookup failed");
+  if (existing.deliveryReference !== input.deliveryReference) {
+    throw new Error("credit finalization delivery reference conflict");
+  }
+  return existing;
 }
 
 export async function completeCreditFinalization(
   database: DatabaseClient,
-  input: { readonly reservationId: string; readonly now?: Date },
+  input: CreditFinalizationObligation & { readonly now?: Date },
 ): Promise<void> {
   const [completed] = await database
     .update(creditFinalizationJobs)
     .set({ state: "completed", completedAt: input.now ?? new Date() })
     .where(
       and(
+        eq(creditFinalizationJobs.id, input.id),
         eq(creditFinalizationJobs.reservationId, input.reservationId),
+        eq(creditFinalizationJobs.deliveryReference, input.deliveryReference),
         eq(creditFinalizationJobs.state, "pending"),
       ),
     )
@@ -58,20 +87,20 @@ export async function withCreditReservation<T>(
     throw error;
   }
 
-  const delivery = await database.transaction(async (tx) => {
+  const persisted = await database.transaction(async (tx) => {
     const stored = await callbacks.persistDelivery(result, reservation, tx);
-    await enqueueCreditFinalization(tx, {
+    const obligation = await enqueueCreditFinalization(tx, {
       reservationId: reservation.id,
       deliveryReference: stored.deliveryReference,
     });
-    return stored;
+    return { delivery: stored, obligation };
   });
   try {
     await commitReservation(database, {
       reservationId: reservation.id,
-      correlationId: `delivery:${delivery.deliveryReference}`,
+      correlationId: `delivery:${persisted.delivery.deliveryReference}`,
     });
-    await completeCreditFinalization(database, { reservationId: reservation.id });
+    await completeCreditFinalization(database, persisted.obligation);
     return { result, finalizationPending: false };
   } catch {
     return { result, finalizationPending: true };

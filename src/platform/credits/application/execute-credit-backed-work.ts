@@ -42,31 +42,31 @@ export async function executeCreditBackedWork<T>(
     throw error;
   }
 
-  const delivery = await database.transaction(async (tx) => {
+  const persisted = await database.transaction(async (tx) => {
     const stored = await callbacks.persistDelivery(result, reservation, tx);
-    await enqueueCreditFinalization(tx, {
+    const obligation = await enqueueCreditFinalization(tx, {
       reservationId: reservation.id,
       deliveryReference: stored.deliveryReference,
     });
-    return stored;
+    return { delivery: stored, obligation };
   });
-  const correlationId = `delivery:${delivery.deliveryReference}`;
+  const correlationId = `delivery:${persisted.delivery.deliveryReference}`;
   try {
     if (callbacks.finalize) {
       await callbacks.finalize({ reservationId: reservation.id, correlationId });
     } else {
       await commitReservation(database, { reservationId: reservation.id, correlationId });
     }
-    await completeCreditFinalization(database, { reservationId: reservation.id });
+    await completeCreditFinalization(database, persisted.obligation);
     return {
       result,
-      deliveryReference: delivery.deliveryReference,
+      deliveryReference: persisted.delivery.deliveryReference,
       finalizationPending: false,
     };
   } catch {
     return {
       result,
-      deliveryReference: delivery.deliveryReference,
+      deliveryReference: persisted.delivery.deliveryReference,
       finalizationPending: true,
     };
   }
