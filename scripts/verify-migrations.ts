@@ -58,6 +58,17 @@ async function assertLatestSchema(label: string): Promise<void> {
     throw new Error(`${label}: commerce_products.billing_interval is missing`);
   }
 
+  const finalizationLeaseToken = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'credit_finalization_jobs'
+      and column_name = 'lease_token'
+  `);
+  if (finalizationLeaseToken.length !== 1) {
+    throw new Error(`${label}: credit_finalization_jobs.lease_token is missing`);
+  }
+
   const triggerFunctions = await database.db.execute(sql<{ function_name: string }>`
     select p.proname as function_name
     from pg_proc p
