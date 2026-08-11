@@ -293,10 +293,14 @@ describe("Waffo Pancake 0.16 contract", () => {
   });
 
   it.each([
-    ["merchant reference", { merchantOrderReference: "", externalPaymentId: paymentId }],
-    ["payment id", { merchantOrderReference, externalPaymentId: "" }],
+    ["empty merchant reference", { merchantOrderReference: "", externalPaymentId: paymentId }],
+    ["blank merchant reference", { merchantOrderReference: "   ", externalPaymentId: paymentId }],
+    ["empty payment id", { merchantOrderReference, externalPaymentId: "" }],
+    ["blank payment id", { merchantOrderReference, externalPaymentId: "   " }],
+    ["empty provider order id", { merchantOrderReference, externalOrderId: "" }],
+    ["blank provider order id", { merchantOrderReference, externalOrderId: "   " }],
   ])(
-    "rejects an explicitly empty %s instead of dropping it from a combined lookup",
+    "rejects an explicitly %s instead of dropping it from payment lookup validation",
     async (_name, lookup) => {
       const provider = paymentQueryProvider({
         response: { data: { payments: [validPayment()], paymentsCount: 1 } },
