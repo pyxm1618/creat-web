@@ -5,11 +5,11 @@ import {
   requireActiveAccountSubject,
 } from "@/platform/accounts/account-subject-commerce-fence";
 import type { DatabaseClient } from "@/platform/database/client";
-import { orders } from "@/platform/database/commerce-schema";
+import { commerceReconciliationRuns, orders } from "@/platform/database/commerce-schema";
 
 import { runFencedCheckout } from "./fenced-checkout";
 import type { ProductCatalog } from "./product-catalog";
-import type { PaymentProvider } from "./payment-provider";
+import type { CreatedCheckout, PaymentProvider } from "./payment-provider";
 import { ensureCommerceProduct } from "./sync-product-catalog";
 import type { CommerceEnvironment } from "../domain/product";
 
@@ -58,6 +58,7 @@ export async function createCheckout(
 
   const leaseToken = crypto.randomUUID();
   const leaseExpiresAt = new Date(now.getTime() + CHECKOUT_LEASE_MS);
+  let providerCheckout: CreatedCheckout | undefined;
 
   return runFencedCheckout({
     claimWhileSubjectActive: () =>
@@ -138,6 +139,7 @@ export async function createCheckout(
         successUrl,
         cancelUrl,
       });
+      providerCheckout = checkout;
       const target = new URL(checkout.checkoutUrl);
       if (target.protocol !== "https:") throw new Error("provider checkout URL must use HTTPS");
       return checkout;
@@ -160,6 +162,43 @@ export async function createCheckout(
         return { orderId: order.id, checkoutUrl: checkout.checkoutUrl, reused };
       }),
     failClaim: async ({ order }) => {
+      const abandonedCheckout = providerCheckout;
+      if (abandonedCheckout) {
+        await database.transaction(async (transaction) => {
+          const [failed] = await transaction
+            .update(orders)
+            .set({
+              checkoutState: "failed",
+              checkoutLeaseToken: null,
+              checkoutLeaseExpiresAt: null,
+              externalCheckoutSessionId: abandonedCheckout.externalCheckoutSessionId,
+              ...(abandonedCheckout.externalOrderId
+                ? { externalOrderId: abandonedCheckout.externalOrderId }
+                : {}),
+            })
+            .where(and(eq(orders.id, order.id), eq(orders.checkoutLeaseToken, leaseToken)))
+            .returning({ id: orders.id });
+          await transaction.insert(commerceReconciliationRuns).values({
+            targetType: "checkout_session",
+            targetId: abandonedCheckout.externalCheckoutSessionId,
+            actorType: "application",
+            beforeJson: {
+              orderId: order.id,
+              subjectId: input.subjectId,
+              checkoutState: "creating",
+            },
+            afterJson: {
+              externalCheckoutSessionId: abandonedCheckout.externalCheckoutSessionId,
+              externalOrderId: abandonedCheckout.externalOrderId ?? null,
+              checkoutUrlReturned: false,
+              localCheckoutState: "failed",
+              orderIdentifiersPersisted: Boolean(failed),
+            },
+            result: "operator_review_required",
+          });
+        });
+        return;
+      }
       await database
         .update(orders)
         .set({ checkoutState: "failed", checkoutLeaseToken: null, checkoutLeaseExpiresAt: null })

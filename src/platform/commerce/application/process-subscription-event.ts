@@ -39,6 +39,12 @@ type SubscriptionEvent = Extract<
 
 type CommerceTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 
+const RESURRECTION_EVENT_TYPES = new Set<SubscriptionEvent["type"]>([
+  "subscription_activated",
+  "subscription_payment_succeeded",
+  "subscription_uncanceled",
+]);
+
 function parseOrderStatus(value: string): OrderStatus {
   if (
     value === "pending" ||
@@ -188,6 +194,7 @@ export async function processSubscriptionEvent(
   const subject = await lockAccountSubject(tx, discoveredOrder.subjectId);
   const order = await lockOrder(tx, event);
   if (order.subjectId !== subject.id) throw new Error("subscription order subject changed");
+  const resurrectionEvent = RESURRECTION_EVENT_TYPES.has(event.type);
 
   await guardSubscriptionEventForSubject({
     subject,
@@ -205,10 +212,10 @@ export async function processSubscriptionEvent(
           subjectStatus: subject.status,
         },
         afterJson: {
-          action: "ignored_resurrection_event",
+          action: resurrectionEvent ? "ignored_resurrection_event" : "ignored_nonterminal_event",
           subscriptionMutationApplied: false,
         },
-        result: "resurrection_blocked",
+        result: resurrectionEvent ? "resurrection_blocked" : "nonterminal_transition_blocked",
       });
     },
     apply: async () => {

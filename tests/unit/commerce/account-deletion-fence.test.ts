@@ -339,6 +339,18 @@ describe("account deletion Commerce fence", () => {
     expect(subscriptionEventDisposition("deletion_pending", "subscription_canceled")).toBe("apply");
   });
 
+  it("allows only cancellation convergence events after account deletion starts", () => {
+    for (const eventType of ["subscription_canceling", "subscription_canceled"] as const) {
+      expect(subscriptionEventDisposition("deletion_pending", eventType)).toBe("apply");
+      expect(subscriptionEventDisposition("deleted", eventType)).toBe("apply");
+    }
+    for (const eventType of ["subscription_past_due", "subscription_updated"] as const) {
+      expect(subscriptionEventDisposition("deletion_pending", eventType)).toBe("reconcile");
+      expect(subscriptionEventDisposition("deleted", eventType)).toBe("reconcile");
+      expect(subscriptionEventDisposition("active", eventType)).toBe("apply");
+    }
+  });
+
   it("records and consumes a late resurrection event without applying its projection", async () => {
     const outcomes: string[] = [];
 

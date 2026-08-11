@@ -6,6 +6,7 @@ import {
   enqueueRefundRequest,
   enqueueSubscriptionCommand,
 } from "@/platform/commerce/application/commerce-commands";
+import { createPlatformAccountDeletionCoordinator } from "@/platform/accounts/platform-account-deletion-coordinator";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
 import { createDatabaseClient } from "@/platform/database/client";
@@ -303,6 +304,93 @@ it("lets an uncancel holding the subject fence commit before deletion starts", a
       where: eq(subscriptions.id, subscription.id),
     }),
   ).toMatchObject({ status: "active" });
+});
+
+it("reconciles a past-due event racing the final deletion scan without retry", async () => {
+  const { subject, order } = await subscriptionFixture();
+  const subscription = await activateSubscription(order);
+  await database.db
+    .update(subscriptions)
+    .set({ status: "canceling", cancelAtPeriodEnd: true })
+    .where(eq(subscriptions.id, subscription.id));
+  await subjects.beginDeletion(subject.id);
+
+  const operationKey = crypto.randomUUID();
+  const coordinator = createPlatformAccountDeletionCoordinator({
+    database: database.db,
+    getCommerce: async () => ({ database: database.db }) as never,
+  });
+  await expect(coordinator.prepare({ subjectId: subject.id, operationKey })).rejects.toThrow(
+    "commerce account deletion preparation pending",
+  );
+  await database.db
+    .update(commerceCommandJobs)
+    .set({ state: "completed", completedAt: new Date() })
+    .where(eq(commerceCommandJobs.subjectId, subject.id));
+
+  let releaseSubscription!: () => void;
+  const subscriptionGate = new Promise<void>((resolve) => {
+    releaseSubscription = resolve;
+  });
+  let subscriptionLocked!: () => void;
+  const locked = new Promise<void>((resolve) => {
+    subscriptionLocked = resolve;
+  });
+  const blocker = database.db.transaction(async (transaction) => {
+    await transaction
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, subscription.id))
+      .for("update");
+    subscriptionLocked();
+    await subscriptionGate;
+  });
+  await locked;
+
+  const finalScan = coordinator.prepare({ subjectId: subject.id, operationKey });
+  await waitForBlockedDatabaseOperation();
+  const eventId = `evt-final-scan-past-due-${crypto.randomUUID()}`;
+  const event = processProviderEvent(
+    database.db,
+    {
+      type: "subscription_past_due",
+      eventId,
+      environment: "test",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      occurredAt: new Date("2026-09-12T00:00:00Z"),
+    },
+    "3".repeat(64),
+  );
+  expect(
+    await Promise.race([
+      event.then(() => "completed" as const),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 75)),
+    ]),
+  ).toBe("blocked");
+
+  releaseSubscription();
+  await blocker;
+  await expect(finalScan).resolves.toBeUndefined();
+  await expect(event).resolves.toBeUndefined();
+
+  expect(
+    await database.db.query.subscriptions.findFirst({
+      where: eq(subscriptions.id, subscription.id),
+    }),
+  ).toMatchObject({ status: "canceling", cancelAtPeriodEnd: true });
+  expect(
+    await database.db
+      .select()
+      .from(commerceAppliedEvents)
+      .where(eq(commerceAppliedEvents.providerEventId, eventId)),
+  ).toHaveLength(1);
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, order.externalOrderId!)),
+  ).toContainEqual(expect.objectContaining({ result: "nonterminal_transition_blocked" }));
 });
 
 it("does not extend the grace deadline when repeated past-due events arrive", async () => {

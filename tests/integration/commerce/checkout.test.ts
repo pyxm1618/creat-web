@@ -6,7 +6,7 @@ import { createCheckout } from "@/platform/commerce/application/create-checkout"
 import { createProductCatalog } from "@/platform/commerce/application/product-catalog";
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import { createDatabaseClient } from "@/platform/database/client";
-import { accountSubjects, orders } from "@/platform/database/schema";
+import { accountSubjects, commerceReconciliationRuns, orders } from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
@@ -194,6 +194,7 @@ it("does not return a provider checkout URL when deletion wins during the provid
     await providerGate;
     return {
       externalCheckoutSessionId: "session-deletion-race",
+      externalOrderId: "order-deletion-race",
       checkoutUrl: "https://checkout.example/session-deletion-race",
     };
   });
@@ -222,5 +223,25 @@ it("does not return a provider checkout URL when deletion wins during the provid
     .select()
     .from(orders)
     .where(eq(orders.checkoutIdempotencyKey, idempotencyKey));
-  expect(order?.checkoutState).toBe("failed");
+  expect(order).toMatchObject({
+    checkoutState: "failed",
+    externalCheckoutSessionId: "session-deletion-race",
+    externalOrderId: "order-deletion-race",
+  });
+  const reconciliations = await database.db
+    .select()
+    .from(commerceReconciliationRuns)
+    .where(eq(commerceReconciliationRuns.targetId, "session-deletion-race"));
+  expect(reconciliations).toHaveLength(1);
+  expect(reconciliations[0]).toMatchObject({
+    targetType: "checkout_session",
+    actorType: "application",
+    result: "operator_review_required",
+    afterJson: {
+      externalCheckoutSessionId: "session-deletion-race",
+      externalOrderId: "order-deletion-race",
+      checkoutUrlReturned: false,
+      localCheckoutState: "failed",
+    },
+  });
 });

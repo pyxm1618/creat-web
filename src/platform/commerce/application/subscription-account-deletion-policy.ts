@@ -7,17 +7,17 @@ type SubscriptionEventType = Extract<
   { type: `subscription_${string}` }
 >["type"];
 
-const RESURRECTION_EVENTS = new Set<SubscriptionEventType>([
-  "subscription_activated",
-  "subscription_payment_succeeded",
-  "subscription_uncanceled",
+const DELETION_CONVERGENCE_EVENTS = new Set<SubscriptionEventType>([
+  "subscription_canceling",
+  "subscription_canceled",
 ]);
 
 export function subscriptionEventDisposition(
   subjectStatus: AccountSubjectStatus,
   eventType: SubscriptionEventType,
 ): "apply" | "reconcile" {
-  return subjectStatus !== "active" && RESURRECTION_EVENTS.has(eventType) ? "reconcile" : "apply";
+  if (subjectStatus === "active") return "apply";
+  return DELETION_CONVERGENCE_EVENTS.has(eventType) ? "apply" : "reconcile";
 }
 
 export async function guardSubscriptionEventForSubject<T>(input: {
