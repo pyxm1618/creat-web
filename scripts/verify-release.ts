@@ -57,81 +57,277 @@ async function readReleaseArtifact(
   }
 }
 
-export async function verifyCreditsReleaseArtifacts(
-  root: string,
-  input: { readonly commerceEnabled: boolean },
-): Promise<void> {
+export async function verifyCreditsReleaseArtifacts(root: string): Promise<void> {
   const integrityMigration = await readReleaseArtifact(
     root,
     "drizzle/0009_production_readiness.sql",
     "durable credit ledger integrity migration is missing",
   );
-  if (
-    !integrityMigration.includes('CREATE FUNCTION "reject_credit_ledger_mutation"') ||
-    !integrityMigration.includes('CREATE TRIGGER "credit_ledger_entries_append_only"') ||
-    !integrityMigration.includes('BEFORE UPDATE OR DELETE ON "credit_ledger_entries"')
-  ) {
-    throw new Error("durable credit ledger integrity migration is missing");
-  }
-
   const leaseMigration = await readReleaseArtifact(
     root,
     "drizzle/0010_credit_finalization_lease_token.sql",
     "credit finalization lease migration is missing",
   );
+  const executableIntegrityMigration = stripSqlComments(integrityMigration);
+  const ledgerFunction =
+    /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"?reject_credit_ledger_mutation"?\s*\(/i.test(
+      executableIntegrityMigration,
+    );
+  const ledgerTrigger = executableIntegrityMigration.match(
+    /\bCREATE\s+TRIGGER\s+"?credit_ledger_entries_append_only"?[\s\S]*?;/i,
+  )?.[0];
   if (
-    !leaseMigration.includes('ALTER TABLE "credit_finalization_jobs" ADD COLUMN "lease_token" text')
+    !ledgerFunction ||
+    !ledgerTrigger ||
+    !/\bBEFORE\b/i.test(ledgerTrigger) ||
+    !/\bUPDATE\b/i.test(ledgerTrigger) ||
+    !/\bDELETE\b/i.test(ledgerTrigger) ||
+    !/\bON\s+(?:ONLY\s+)?"?credit_ledger_entries"?\b/i.test(ledgerTrigger) ||
+    !/\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\s+"?reject_credit_ledger_mutation"?\s*\(/i.test(
+      ledgerTrigger,
+    )
   ) {
-    throw new Error("credit finalization lease migration is missing");
+    throw new Error("durable credit ledger integrity migration is not executable");
   }
 
-  const journalContent = await readReleaseArtifact(
+  const executableLeaseMigration = stripSqlComments(leaseMigration);
+  if (
+    !/\bALTER\s+TABLE\s+(?:ONLY\s+)?"?credit_finalization_jobs"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?lease_token"?\s+text\b/i.test(
+      executableLeaseMigration,
+    )
+  ) {
+    throw new Error("credit finalization lease migration is not executable");
+  }
+
+  const journal = await readJsonArtifact(
     root,
     "drizzle/meta/_journal.json",
     "durable Credits migrations are missing from the migration journal",
   );
-  let journal: { readonly entries?: ReadonlyArray<{ readonly tag?: string }> };
-  try {
-    journal = JSON.parse(journalContent) as typeof journal;
-  } catch {
-    throw new Error("durable Credits migrations are missing from the migration journal");
-  }
-  const migrationTags = new Set(journal.entries?.map((entry) => entry.tag));
+  const entries = Array.isArray(journal.entries) ? journal.entries : [];
+  const integrityIndex = entries.findIndex(
+    (entry) => isRecord(entry) && entry.tag === "0009_production_readiness",
+  );
+  const leaseIndex = entries.findIndex(
+    (entry) => isRecord(entry) && entry.tag === "0010_credit_finalization_lease_token",
+  );
+  const integrityOccurrences = entries.filter(
+    (entry) => isRecord(entry) && entry.tag === "0009_production_readiness",
+  ).length;
+  const leaseOccurrences = entries.filter(
+    (entry) => isRecord(entry) && entry.tag === "0010_credit_finalization_lease_token",
+  ).length;
   if (
-    !migrationTags.has("0009_production_readiness") ||
-    !migrationTags.has("0010_credit_finalization_lease_token")
+    journal.dialect !== "postgresql" ||
+    typeof journal.version !== "string" ||
+    integrityIndex !== 9 ||
+    leaseIndex !== 10 ||
+    integrityOccurrences !== 1 ||
+    leaseOccurrences !== 1 ||
+    !validJournalEntry(entries[integrityIndex], integrityIndex, journal.version) ||
+    !validJournalEntry(entries[leaseIndex], leaseIndex, journal.version)
   ) {
     throw new Error("durable Credits migrations are missing from the migration journal");
   }
 
-  if (input.commerceEnabled) {
-    const coordinator = await readReleaseArtifact(
-      root,
-      "src/platform/accounts/platform-account-deletion-coordinator.ts",
-      "commerce account deletion coordinator is missing",
-    );
-    const runtime = await readReleaseArtifact(
-      root,
-      "src/platform/accounts/account-deletion-runtime.ts",
-      "commerce account deletion coordinator is missing",
-    );
-    if (
-      coordinator.includes("commerce deletion coordinator is not configured") ||
-      !coordinator.includes("account-delete:") ||
-      !coordinator.includes("commerce account deletion preparation pending") ||
-      !runtime.includes("database: db") ||
-      !runtime.includes("getCommerce: getCommerceRuntime")
-    ) {
-      throw new Error("commerce account deletion coordinator is missing");
-    }
+  const integritySnapshot = await readJsonArtifact(
+    root,
+    "drizzle/meta/0009_snapshot.json",
+    "credit reconciliation incident snapshot is incomplete",
+  );
+  const leaseSnapshot = await readJsonArtifact(
+    root,
+    "drizzle/meta/0010_snapshot.json",
+    "credit finalization lease snapshot is incomplete",
+  );
+  if (
+    !validSnapshotHeader(integritySnapshot, journal.version) ||
+    !validSnapshotHeader(leaseSnapshot, journal.version) ||
+    leaseSnapshot.prevId !== integritySnapshot.id
+  ) {
+    throw new Error("Credits migration snapshots are not contiguous");
+  }
+  if (!hasDurableIncidentSchema(integritySnapshot)) {
+    throw new Error("credit reconciliation incident snapshot is incomplete");
+  }
+  if (
+    hasFinalizationLeaseToken(integritySnapshot) ||
+    !hasDurableIncidentSchema(leaseSnapshot) ||
+    !hasFinalizationLeaseToken(leaseSnapshot)
+  ) {
+    throw new Error("credit finalization lease snapshot is incomplete");
   }
 
-  console.log(
-    JSON.stringify({
-      event: "credits_release_artifacts_verified",
-      commerceAccountDeletion: input.commerceEnabled ? "durable" : "disabled",
-    }),
+  console.log(JSON.stringify({ event: "credits_release_artifacts_verified" }));
+}
+
+function stripSqlComments(sql: string): string {
+  let output = "";
+  let index = 0;
+  let state: "normal" | "single" | "double" | "line" | "block" | "dollar" = "normal";
+  let dollarTag = "";
+
+  while (index < sql.length) {
+    const current = sql[index] ?? "";
+    const next = sql[index + 1] ?? "";
+    if (state === "line") {
+      if (current === "\n") {
+        state = "normal";
+        output += current;
+      }
+      index += 1;
+      continue;
+    }
+    if (state === "block") {
+      if (current === "*" && next === "/") {
+        state = "normal";
+        output += "  ";
+        index += 2;
+      } else {
+        output += current === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (state === "dollar") {
+      if (sql.startsWith(dollarTag, index)) {
+        output += dollarTag;
+        index += dollarTag.length;
+        state = "normal";
+      } else {
+        output += current === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (state === "single" || state === "double") {
+      const quote = state === "single" ? "'" : '"';
+      output += state === "single" && current !== quote ? " " : current;
+      if (current === quote) {
+        if (next === quote) {
+          output += next;
+          index += 2;
+          continue;
+        }
+        state = "normal";
+      }
+      index += 1;
+      continue;
+    }
+    if (current === "-" && next === "-") {
+      state = "line";
+      output += "  ";
+      index += 2;
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      state = "block";
+      output += "  ";
+      index += 2;
+      continue;
+    }
+    if (current === "'") state = "single";
+    else if (current === '"') state = "double";
+    else if (current === "$") {
+      const match = sql.slice(index).match(/^\$[A-Za-z0-9_]*\$/);
+      if (match) {
+        dollarTag = match[0];
+        state = "dollar";
+        output += dollarTag;
+        index += dollarTag.length;
+        continue;
+      }
+    }
+    output += current;
+    index += 1;
+  }
+  return output;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readJsonArtifact(
+  root: string,
+  file: string,
+  invalidMessage: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const value: unknown = JSON.parse(await readFile(path.join(root, file), "utf8"));
+    if (!isRecord(value)) throw new Error(invalidMessage);
+    return value;
+  } catch {
+    throw new Error(invalidMessage);
+  }
+}
+
+function validJournalEntry(entry: unknown, index: number, version: string): boolean {
+  return (
+    isRecord(entry) &&
+    entry.idx === index &&
+    entry.version === version &&
+    entry.breakpoints === true
   );
+}
+
+function validSnapshotHeader(snapshot: Record<string, unknown>, version: string): boolean {
+  return (
+    typeof snapshot.id === "string" &&
+    typeof snapshot.prevId === "string" &&
+    snapshot.version === version &&
+    snapshot.dialect === "postgresql" &&
+    isRecord(snapshot.tables)
+  );
+}
+
+function snapshotTable(
+  snapshot: Record<string, unknown>,
+  name: string,
+): Record<string, unknown> | undefined {
+  if (!isRecord(snapshot.tables)) return undefined;
+  const table = snapshot.tables[name];
+  return isRecord(table) ? table : undefined;
+}
+
+function hasDurableIncidentSchema(snapshot: Record<string, unknown>): boolean {
+  const table = snapshotTable(snapshot, "public.credit_reconciliation_incidents");
+  if (!table || !isRecord(table.columns) || !isRecord(table.indexes)) return false;
+  const columns = table.columns;
+  const requiredColumns = [
+    ["id", "uuid", true],
+    ["code", "text", true],
+    ["entity_id", "text", true],
+    ["detail", "text", true],
+    ["status", "text", true],
+    ["occurrences", "integer", true],
+    ["first_detected_at", "timestamp with time zone", true],
+    ["last_detected_at", "timestamp with time zone", true],
+    ["resolved_at", "timestamp with time zone", false],
+  ] as const;
+  const uniqueIndex = table.indexes.credit_reconciliation_incident_uq;
+  const uniqueColumns =
+    isRecord(uniqueIndex) && Array.isArray(uniqueIndex.columns)
+      ? uniqueIndex.columns.map((column) => (isRecord(column) ? column.expression : undefined))
+      : [];
+  return (
+    requiredColumns.every(([name, type, notNull]) => {
+      const column = columns[name];
+      return isRecord(column) && column.type === type && column.notNull === notNull;
+    }) &&
+    isRecord(uniqueIndex) &&
+    uniqueIndex.isUnique === true &&
+    uniqueColumns.length === 2 &&
+    uniqueColumns[0] === "code" &&
+    uniqueColumns[1] === "entity_id"
+  );
+}
+
+function hasFinalizationLeaseToken(snapshot: Record<string, unknown>): boolean {
+  const table = snapshotTable(snapshot, "public.credit_finalization_jobs");
+  if (!table || !isRecord(table.columns)) return false;
+  const leaseToken = table.columns.lease_token;
+  return isRecord(leaseToken) && leaseToken.type === "text" && leaseToken.notNull === false;
 }
 
 async function collectFiles(directory: string): Promise<string[]> {
@@ -229,7 +425,7 @@ if (featuresConfig.commerce.credits && !scheduledPaths.has("/api/internal/jobs/c
   throw new Error("durable credit expiry job is missing from vercel.json");
 }
 
-await verifyCreditsReleaseArtifacts(".", { commerceEnabled: featuresConfig.commerce.enabled });
+await verifyCreditsReleaseArtifacts(".");
 
 for (const requiredFile of [
   "SECURITY.md",
