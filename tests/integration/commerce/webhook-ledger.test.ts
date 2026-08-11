@@ -147,7 +147,7 @@ it("binds provider order to merchant reference and creates one payment and fulfi
   };
 
   await processProviderEvent(database.db, event, "a".repeat(64));
-  await processProviderEvent(database.db, event, "b".repeat(64));
+  await processProviderEvent(database.db, event, "a".repeat(64));
 
   const storedOrder = await database.db.query.orders.findFirst({ where: eq(orders.id, order.id) });
   expect(storedOrder).toMatchObject({ status: "paid", externalOrderId: event.externalOrderId });

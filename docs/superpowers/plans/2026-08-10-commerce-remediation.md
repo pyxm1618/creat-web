@@ -468,11 +468,11 @@ The SDK client for each lookup wraps the configured fetch with the request's com
 git commit -m "fix(commerce): validate Waffo payment queries"
 ```
 
-- [ ] **Checkpoint 2 / Step 1: Add failing durable reconciliation tests**
+- [x] **Checkpoint 2 / Step 1: Add failing durable reconciliation tests**
 
 Use real PostgreSQL for sequential and concurrent runs, webhook races, lease expiry/same-owner reclaim, provider I/O lock freedom, pending/transient backoff, poison isolation, starvation prevention, duplicate succeeded payments, identity/model/store/environment/amount failures, subscription quarantine, abort, and event-id collision.
 
-- [ ] **Checkpoint 2 / Step 2: Add the durable job and only one-time recovery**
+- [x] **Checkpoint 2 / Step 2: Add the durable job and only one-time recovery**
 
 ```graphql
 query ($reference: String!) {
@@ -488,7 +488,7 @@ query ($reference: String!) {
 
 Create durable reconciliation rows for stale checkout-created orders. Claim in a short transaction, perform provider I/O without a database lock/transaction, isolate each item, and fence every terminal result by this claim's lease token and terminal wall clock. One-time succeeded facts use the sole `processProviderEvent` mutation entry; duplicate succeeded facts or deterministic mismatches enter idempotent operator review. Pending/no-result/transient provider outcomes use bounded backoff; all failed/canceled terminal facts complete deterministically. Subscription facts enter operator review without payment/period/fulfillment/Credits mutations.
 
-- [ ] **Checkpoint 2 / Step 3: Harden provider-event replay identity**
+- [x] **Checkpoint 2 / Step 3: Harden provider-event replay identity**
 
 Identical `(environment,eventId,eventType,payloadHash)` replay remains a no-op. Reuse of the same `(environment,eventId)` with a different event type or canonical payload hash fails closed and writes a persistent reconciliation/audit record instead of silently accepting the conflict. Add a one-time handler product-model check as a second fail-closed defense.
 

@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { ProviderContractError } from "@/platform/commerce/application/errors";
@@ -9,13 +9,26 @@ import {
   operatorReviewPaymentReconciliationJob,
   retryPaymentReconciliationJob,
 } from "@/platform/commerce/application/job-leases";
+import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
+import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
+import {
+  reconcileStalePayments,
+  seedPaymentReconciliationJobs,
+} from "@/platform/commerce/application/reconcile-stale-payments";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   accountSubjects,
+  commerceAppliedEvents,
   commerceReconciliationRuns,
   commerceProducts,
+  creditGrants,
+  creditLedgerEntries,
+  fulfillmentJobs,
   orders,
   paymentReconciliationJobs,
+  payments,
+  subscriptionPeriods,
+  subscriptions,
 } from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -51,12 +64,37 @@ afterAll(async () => database.close());
 beforeEach(async () => {
   await database.db.delete(commerceReconciliationRuns);
   await database.db.delete(paymentReconciliationJobs);
+  await database.db.delete(fulfillmentJobs);
+  await database.db.delete(commerceAppliedEvents);
+  await database.db.delete(payments);
+  await database.db.delete(subscriptionPeriods);
+  await database.db.delete(subscriptions);
+  await database.db.delete(creditLedgerEntries);
+  await database.db.delete(creditGrants);
   await database.db.delete(orders);
   await database.db.delete(commerceProducts);
   await database.db.delete(accountSubjects);
 });
 
-async function seedOrder() {
+function paymentProvider(getPayment: PaymentProvider["getPayment"]): PaymentProvider {
+  const unsupported = async () => {
+    throw new Error("unexpected provider operation");
+  };
+  return {
+    name: "reconciliation-test-provider",
+    capabilities: { oneTime: true, subscriptions: true, partialRefunds: true },
+    createCheckout: unsupported,
+    createOneTimeCheckout: unsupported,
+    cancelSubscription: unsupported,
+    resumeSubscription: unsupported,
+    requestRefund: unsupported,
+    getPayment,
+    verifyAndNormalizeWebhook: unsupported,
+  };
+}
+
+async function seedOrder(input: { readonly model?: "one_time" | "subscription" } = {}) {
+  const model = input.model ?? "one_time";
   const [subject] = await database.db.insert(accountSubjects).values({}).returning();
   if (!subject) throw new Error("subject insert failed");
   const [product] = await database.db
@@ -64,7 +102,8 @@ async function seedOrder() {
     .values({
       key: `payment-reconciliation-${crypto.randomUUID()}`,
       version: 1,
-      model: "one_time",
+      model,
+      ...(model === "subscription" ? { billingInterval: "month" } : {}),
       environment: "test",
       providerProductId: `PROD_${crypto.randomUUID()}`,
       currency: "USD",
@@ -158,6 +197,1202 @@ it("installs due, reclaim, and per-order idempotency indexes", async () => {
     "state, next_attempt_at, created_at",
   );
   expect(indexes.get("payment_reconciliation_reclaim_idx")).toContain("state, lease_expires_at");
+});
+
+it("seeds only stale created pending orders with derived product facts exactly once", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const staleAt = new Date("2030-04-30T00:00:00.000Z");
+  const freshAt = new Date("2030-05-01T12:00:00.000Z");
+  const staleAfterMs = 24 * 60 * 60 * 1000;
+  const eligible = await seedOrder();
+  const fresh = await seedOrder();
+  const paid = await seedOrder();
+  const failedCheckout = await seedOrder();
+
+  await Promise.all([
+    database.db.update(orders).set({ createdAt: staleAt }).where(eq(orders.id, eligible.id)),
+    database.db.update(orders).set({ createdAt: freshAt }).where(eq(orders.id, fresh.id)),
+    database.db
+      .update(orders)
+      .set({ createdAt: staleAt, status: "paid" })
+      .where(eq(orders.id, paid.id)),
+    database.db
+      .update(orders)
+      .set({ createdAt: staleAt, checkoutState: "failed" })
+      .where(eq(orders.id, failedCheckout.id)),
+  ]);
+
+  const first = await seedPaymentReconciliationJobs(database.db, {
+    now,
+    staleAfterMs,
+    limit: 20,
+  });
+  const replay = await seedPaymentReconciliationJobs(database.db, {
+    now,
+    staleAfterMs,
+    limit: 20,
+  });
+
+  expect(first).toEqual({
+    scanned: 1,
+    seeded: 1,
+    jobs: [
+      {
+        orderId: eligible.id,
+        environment: "test",
+        externalOrderId: eligible.externalOrderId,
+        model: "one_time",
+        currency: "USD",
+        amountMinor: 2900n,
+        fulfillmentKey: "payment-reconciliation",
+      },
+    ],
+  });
+  expect(replay).toEqual({ scanned: 0, seeded: 0, jobs: [] });
+
+  const jobs = await database.db.select().from(paymentReconciliationJobs);
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]?.orderId).toBe(eligible.id);
+});
+
+it("does not hold an order row lock while a reconciliation job insert is blocked", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  let markTableLocked!: () => void;
+  let releaseTable!: () => void;
+  const tableLocked = new Promise<void>((resolve) => {
+    markTableLocked = resolve;
+  });
+  const tableRelease = new Promise<void>((resolve) => {
+    releaseTable = resolve;
+  });
+  const blocker = database.db.transaction(async (tx) => {
+    await tx.execute(sql.raw("lock table payment_reconciliation_jobs in access exclusive mode"));
+    markTableLocked();
+    await tableRelease;
+  });
+  await tableLocked;
+  const seeding = seedPaymentReconciliationJobs(database.db, {
+    now,
+    staleAfterMs: 24 * 60 * 60 * 1000,
+  });
+
+  let jobQueryBlocked = false;
+  for (let attempt = 0; attempt < 50 && !jobQueryBlocked; attempt += 1) {
+    const rows = await database.db.execute(sql<{ blocked: boolean }>`
+      select exists (
+        select 1
+        from pg_stat_activity
+        where datname = current_database()
+          and wait_event_type = 'Lock'
+          and query like '%payment_reconciliation_jobs%'
+          and query not like '%pg_stat_activity%'
+      ) as blocked
+    `);
+    jobQueryBlocked = Boolean(rows[0]?.blocked);
+    if (!jobQueryBlocked) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  let orderLockError: unknown;
+  try {
+    await database.db.transaction(async (tx) => {
+      await tx.execute(sql.raw("set local statement_timeout = '250ms'"));
+      await tx.select().from(orders).where(eq(orders.id, order.id)).for("update");
+    });
+  } catch (error) {
+    orderLockError = error;
+  } finally {
+    releaseTable();
+    await blocker;
+    await seeding;
+  }
+
+  expect(jobQueryBlocked).toBe(true);
+  expect(orderLockError).toBeUndefined();
+});
+
+it("does not let older terminal jobs consume the seeding limit", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const older = await seedOrder();
+  const unseeded = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-29T00:00:00.000Z") })
+    .where(eq(orders.id, older.id));
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, unseeded.id));
+  await database.db.insert(paymentReconciliationJobs).values({
+    orderId: older.id,
+    state: "completed",
+    completedAt: new Date("2030-05-01T00:00:00.000Z"),
+  });
+
+  expect(
+    await seedPaymentReconciliationJobs(database.db, {
+      now,
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 1,
+    }),
+  ).toEqual({
+    scanned: 1,
+    seeded: 1,
+    jobs: [
+      {
+        orderId: unseeded.id,
+        environment: "test",
+        externalOrderId: unseeded.externalOrderId,
+        model: "one_time",
+        currency: "USD",
+        amountMinor: 2900n,
+        fulfillmentKey: "payment-reconciliation",
+      },
+    ],
+  });
+});
+
+it("applies one recovered one-time success exactly once across a replay", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const externalPaymentId = `PAY_${crypto.randomUUID()}`;
+  const lookup = vi.fn<PaymentProvider["getPayment"]>().mockResolvedValue({
+    payments: [
+      {
+        environment: "test",
+        model: "one_time",
+        storeId: "STORE_TEST",
+        externalOrderId: order.externalOrderId!,
+        merchantOrderReference: order.id,
+        externalPaymentId,
+        status: "succeeded",
+        amount: { currency: "USD", minor: 2900n },
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+      },
+    ],
+    warnings: [],
+  });
+  const provider = paymentProvider(lookup);
+  const run = () =>
+    reconcileStalePayments(database.db, provider, {
+      owner: "payment-reconciliation-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 10,
+    });
+
+  expect(await run()).toEqual({ scanned: 1, applied: 1, retried: 0, operatorReview: 0 });
+  expect(await run()).toEqual({ scanned: 0, applied: 0, retried: 0, operatorReview: 0 });
+
+  const persistedOrder = await database.db.query.orders.findFirst({
+    where: eq(orders.id, order.id),
+  });
+  expect(persistedOrder).toMatchObject({
+    status: "paid",
+    paidAt: new Date("2030-05-01T23:59:00.000Z"),
+  });
+  expect(
+    await database.db
+      .select()
+      .from(payments)
+      .where(
+        and(eq(payments.environment, "test"), eq(payments.externalPaymentId, externalPaymentId)),
+      ),
+  ).toHaveLength(1);
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, externalPaymentId)),
+  ).toHaveLength(1);
+  const applications = await database.db.select().from(commerceAppliedEvents);
+  expect(applications).toHaveLength(1);
+  expect(applications[0]?.providerEventId).toBe(
+    `payment-reconciliation:test:${externalPaymentId}:succeeded`,
+  );
+  expect(applications[0]?.payloadHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    { orderId: order.id, state: "completed" },
+  ]);
+  expect(lookup).toHaveBeenCalledTimes(1);
+});
+
+it("durably audits allowlisted provider warnings on a successful recovery", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const warning = {
+    message: "provider result used a compatibility field",
+    layer: "payments",
+    aiHint: "verify provider rollout",
+    secretInternalDetail: "must not persist",
+  };
+  const provider = paymentProvider(async () => ({
+    payments: [
+      {
+        environment: "test",
+        model: "one_time",
+        storeId: "STORE_TEST",
+        externalOrderId: order.externalOrderId!,
+        merchantOrderReference: order.id,
+        externalPaymentId: `PAY_${crypto.randomUUID()}`,
+        status: "succeeded",
+        amount: { currency: "USD", minor: 2900n },
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+      },
+    ],
+    warnings: [warning],
+  }));
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: "payment-warning-success-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 1, retried: 0, operatorReview: 0 });
+
+  expect(await database.db.select().from(commerceReconciliationRuns)).toMatchObject([
+    {
+      targetType: "payment_reconciliation_job",
+      result: "applied_with_provider_warnings",
+      afterJson: {
+        state: "completed",
+        warnings: [
+          {
+            message: warning.message,
+            layer: warning.layer,
+            aiHint: warning.aiHint,
+          },
+        ],
+      },
+    },
+  ]);
+  expect(JSON.stringify(await database.db.select().from(commerceReconciliationRuns))).not.toContain(
+    "secretInternalDetail",
+  );
+});
+
+it("does not let a reclaimed worker apply provider results returned to the stale worker", async () => {
+  const claimNow = new Date("2030-05-02T00:00:00.000Z");
+  const reclaimNow = new Date("2030-05-02T00:05:00.000Z");
+  const reviewNow = new Date("2030-05-02T00:05:01.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const externalPaymentId = `PAY_${crypto.randomUUID()}`;
+  let markLookupStarted!: () => void;
+  let releaseLookup!: () => void;
+  const lookupStarted = new Promise<void>((resolve) => {
+    markLookupStarted = resolve;
+  });
+  const lookupRelease = new Promise<void>((resolve) => {
+    releaseLookup = resolve;
+  });
+  const provider = paymentProvider(async () => {
+    markLookupStarted();
+    await lookupRelease;
+    return {
+      payments: [
+        {
+          environment: "test",
+          model: "one_time",
+          storeId: "STORE_TEST",
+          externalOrderId: order.externalOrderId!,
+          merchantOrderReference: order.id,
+          externalPaymentId,
+          status: "succeeded",
+          amount: { currency: "USD", minor: 2900n },
+          occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        },
+      ],
+      warnings: [],
+    };
+  });
+  const staleRun = reconcileStalePayments(database.db, provider, {
+    owner: "stale-payment-worker",
+    expectedStoreId: "STORE_TEST",
+    now: claimNow,
+    terminalClock: () => new Date("2030-05-02T00:06:00.000Z"),
+    staleAfterMs: 24 * 60 * 60 * 1000,
+  });
+  await lookupStarted;
+
+  const [reclaimed] = await claimPaymentReconciliationJobs(database.db, {
+    owner: "replacement-payment-worker",
+    now: reclaimNow,
+  });
+  expect(reclaimed?.orderId).toBe(order.id);
+  if (!reclaimed?.leaseToken) throw new Error("replacement claim missing");
+  expect(
+    await operatorReviewPaymentReconciliationJob(database.db, {
+      id: reclaimed.id,
+      owner: "replacement-payment-worker",
+      leaseToken: reclaimed.leaseToken,
+      terminalNow: reviewNow,
+      reason: "replacement worker owns terminal decision",
+    }),
+  ).toBe(true);
+  releaseLookup();
+
+  expect(await staleRun).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 0 });
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+  expect(await database.db.select().from(commerceReconciliationRuns)).toMatchObject([
+    {
+      targetId: reclaimed.id,
+      result: "operator_review_required",
+      afterJson: {
+        state: "operator_review",
+        reason: "replacement worker owns terminal decision",
+        warnings: [],
+      },
+    },
+  ]);
+});
+
+it("commits a reconciliation event collision audit and quarantines the owned job", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const externalPaymentId = `PAY_${crypto.randomUUID()}`;
+  const eventId = `payment-reconciliation:test:${externalPaymentId}:succeeded`;
+  await database.db.insert(commerceAppliedEvents).values({
+    environment: "test",
+    providerEventId: eventId,
+    eventType: "one_time_payment_failed",
+    payloadHash: "d".repeat(64),
+  });
+  const provider = paymentProvider(async () => ({
+    payments: [
+      {
+        environment: "test",
+        model: "one_time",
+        storeId: "STORE_TEST",
+        externalOrderId: order.externalOrderId!,
+        merchantOrderReference: order.id,
+        externalPaymentId,
+        status: "succeeded",
+        amount: { currency: "USD", minor: 2900n },
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+      },
+    ],
+    warnings: [],
+  }));
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: "collision-payment-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 1 });
+
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    {
+      orderId: order.id,
+      state: "operator_review",
+      operatorReviewReason: "provider event identity conflict",
+    },
+  ]);
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, eventId)),
+  ).toMatchObject([
+    {
+      targetType: "provider_event_identity",
+      result: "operator_review_required",
+      beforeJson: {
+        eventType: "one_time_payment_failed",
+        payloadHash: "d".repeat(64),
+      },
+      afterJson: {
+        eventType: "one_time_payment_succeeded",
+        payloadHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    },
+  ]);
+});
+
+it.each(["empty", "pending"] as const)(
+  "schedules bounded retry for a %s provider result",
+  async (resultKind) => {
+    const now = new Date("2030-05-02T00:00:00.000Z");
+    const terminalNow = new Date("2030-05-02T00:00:01.000Z");
+    const order = await seedOrder();
+    await database.db
+      .update(orders)
+      .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+      .where(eq(orders.id, order.id));
+    const provider = paymentProvider(async () => ({
+      payments:
+        resultKind === "empty"
+          ? []
+          : [
+              {
+                environment: "test",
+                model: "one_time",
+                storeId: "STORE_TEST",
+                externalOrderId: order.externalOrderId!,
+                merchantOrderReference: order.id,
+                externalPaymentId: `PAY_${crypto.randomUUID()}`,
+                status: "pending",
+                amount: { currency: "USD", minor: 2900n },
+                occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+              },
+            ],
+      warnings: [{ message: "provider state is not terminal", layer: "payments" }],
+    }));
+
+    expect(
+      await reconcileStalePayments(database.db, provider, {
+        owner: `payment-${resultKind}-worker`,
+        expectedStoreId: "STORE_TEST",
+        now,
+        terminalClock: () => terminalNow,
+        staleAfterMs: 24 * 60 * 60 * 1000,
+      }),
+    ).toEqual({ scanned: 1, applied: 0, retried: 1, operatorReview: 0 });
+
+    expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+      {
+        orderId: order.id,
+        state: "pending",
+        attempts: 1,
+        leaseOwner: null,
+        leaseToken: null,
+        nextAttemptAt: new Date("2030-05-02T00:00:03.000Z"),
+        lastErrorCode: resultKind === "empty" ? "PAYMENT_NOT_FOUND" : "PAYMENT_PENDING",
+      },
+    ]);
+    expect(await database.db.select().from(payments)).toHaveLength(0);
+    expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  },
+);
+
+it("retries a provider failure and continues with the next job in the same batch", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const terminalNow = new Date("2030-05-02T00:00:01.000Z");
+  const poisonOrder = await seedOrder();
+  const healthyOrder = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-29T00:00:00.000Z") })
+    .where(eq(orders.id, poisonOrder.id));
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, healthyOrder.id));
+  const healthyPaymentId = `PAY_${crypto.randomUUID()}`;
+  const lookup = vi.fn<PaymentProvider["getPayment"]>(async (lookupInput) => {
+    if (lookupInput.merchantOrderReference === poisonOrder.id) {
+      throw new Error("provider timeout with secret detail");
+    }
+    return {
+      payments: [
+        {
+          environment: "test",
+          model: "one_time",
+          storeId: "STORE_TEST",
+          externalOrderId: healthyOrder.externalOrderId!,
+          merchantOrderReference: healthyOrder.id,
+          externalPaymentId: healthyPaymentId,
+          status: "succeeded",
+          amount: { currency: "USD", minor: 2900n },
+          occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        },
+      ],
+      warnings: [],
+    };
+  });
+
+  expect(
+    await reconcileStalePayments(database.db, paymentProvider(lookup), {
+      owner: "payment-poison-isolation-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => terminalNow,
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 10,
+    }),
+  ).toEqual({ scanned: 2, applied: 1, retried: 1, operatorReview: 0 });
+
+  const jobs = await database.db.select().from(paymentReconciliationJobs);
+  expect(jobs.find((job) => job.orderId === poisonOrder.id)).toMatchObject({
+    state: "pending",
+    attempts: 1,
+    lastErrorCode: "PROVIDER_LOOKUP_FAILED",
+  });
+  expect(jobs.find((job) => job.orderId === healthyOrder.id)).toMatchObject({
+    state: "completed",
+    attempts: 0,
+  });
+  expect(await database.db.select().from(payments)).toMatchObject([
+    { orderId: healthyOrder.id, externalPaymentId: healthyPaymentId },
+  ]);
+  expect(lookup).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  {
+    name: "failed",
+    terminals: (order: Awaited<ReturnType<typeof seedOrder>>) => [
+      {
+        externalPaymentId: `PAY_OLD_${crypto.randomUUID()}`,
+        status: "failed" as const,
+        occurredAt: new Date("2030-05-01T23:58:00.000Z"),
+        order,
+      },
+      {
+        externalPaymentId: `PAY_NEW_${crypto.randomUUID()}`,
+        status: "failed" as const,
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        order,
+      },
+    ],
+    expectedOrderStatus: "pending",
+    expectedEventType: "one_time_payment_failed",
+  },
+  {
+    name: "canceled",
+    terminals: (order: Awaited<ReturnType<typeof seedOrder>>) => [
+      {
+        externalPaymentId: `PAY_A_${crypto.randomUUID()}`,
+        status: "failed" as const,
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        order,
+      },
+      {
+        externalPaymentId: `PAY_Z_${crypto.randomUUID()}`,
+        status: "canceled" as const,
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        order,
+      },
+    ],
+    expectedOrderStatus: "canceled",
+    expectedEventType: "one_time_payment_canceled",
+  },
+] as const)("completes the latest stable $name terminal result", async (testCase) => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const terminals = testCase.terminals(order);
+  const provider = paymentProvider(async () => ({
+    payments: terminals.map((terminal) => ({
+      environment: "test" as const,
+      model: "one_time" as const,
+      storeId: "STORE_TEST",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      externalPaymentId: terminal.externalPaymentId,
+      status: terminal.status,
+      amount: { currency: "USD" as const, minor: 2900n },
+      occurredAt: terminal.occurredAt,
+    })),
+    warnings: [],
+  }));
+  const selected = terminals[terminals.length - 1]!;
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: `payment-terminal-${testCase.name}-worker`,
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 1, retried: 0, operatorReview: 0 });
+
+  expect(
+    await database.db.query.orders.findFirst({ where: eq(orders.id, order.id) }),
+  ).toMatchObject({ status: testCase.expectedOrderStatus });
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(commerceAppliedEvents)).toMatchObject([
+    {
+      providerEventId: `payment-reconciliation:test:${selected.externalPaymentId}:${selected.status}`,
+      eventType: testCase.expectedEventType,
+    },
+  ]);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    { orderId: order.id, state: "completed" },
+  ]);
+});
+
+it.each([
+  ["merchant identity", "provider payment facts mismatch"],
+  ["order identity", "provider payment facts mismatch"],
+  ["model", "payment-level period unavailable"],
+  ["store", "provider payment facts mismatch"],
+  ["environment", "provider payment facts mismatch"],
+  ["amount", "provider payment facts mismatch"],
+] as const)("quarantines a provider %s mismatch without mutation", async (mismatch, reason) => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const snapshot = {
+    environment: mismatch === "environment" ? ("production" as const) : ("test" as const),
+    model: mismatch === "model" ? ("subscription" as const) : ("one_time" as const),
+    storeId: mismatch === "store" ? "STORE_OTHER" : "STORE_TEST",
+    externalOrderId:
+      mismatch === "order identity" ? `ORD_${crypto.randomUUID()}` : order.externalOrderId!,
+    merchantOrderReference: mismatch === "merchant identity" ? crypto.randomUUID() : order.id,
+    externalPaymentId: `PAY_${crypto.randomUUID()}`,
+    status: "succeeded" as const,
+    amount: {
+      currency: "USD" as const,
+      minor: mismatch === "amount" ? 2901n : 2900n,
+    },
+    occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+  };
+  const provider = paymentProvider(async () => ({ payments: [snapshot], warnings: [] }));
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: `payment-mismatch-${mismatch}-worker`,
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 1 });
+
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    { orderId: order.id, state: "operator_review", operatorReviewReason: reason },
+  ]);
+});
+
+it.each(["return", "throw"] as const)(
+  "performs no post-abort mutation when the provider %s after abort",
+  async (providerOutcome) => {
+    const now = new Date("2030-05-02T00:00:00.000Z");
+    const order = await seedOrder();
+    await database.db
+      .update(orders)
+      .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+      .where(eq(orders.id, order.id));
+    const controller = new AbortController();
+    const provider = paymentProvider(async () => {
+      controller.abort(new DOMException("budget exhausted", "AbortError"));
+      if (providerOutcome === "throw") {
+        throw new DOMException("request aborted", "AbortError");
+      }
+      return {
+        payments: [
+          {
+            environment: "test",
+            model: "one_time",
+            storeId: "STORE_TEST",
+            externalOrderId: order.externalOrderId!,
+            merchantOrderReference: order.id,
+            externalPaymentId: `PAY_${crypto.randomUUID()}`,
+            status: "succeeded",
+            amount: { currency: "USD", minor: 2900n },
+            occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+          },
+        ],
+        warnings: [],
+      };
+    });
+
+    expect(
+      await reconcileStalePayments(database.db, provider, {
+        owner: `payment-abort-${providerOutcome}-worker`,
+        expectedStoreId: "STORE_TEST",
+        now,
+        terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+        staleAfterMs: 24 * 60 * 60 * 1000,
+        signal: controller.signal,
+      }),
+    ).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 0 });
+
+    expect(await database.db.select().from(payments)).toHaveLength(0);
+    expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+    expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+    expect(await database.db.select().from(commerceReconciliationRuns)).toHaveLength(0);
+    expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+      {
+        orderId: order.id,
+        state: "processing",
+        attempts: 0,
+        leaseOwner: `payment-abort-${providerOutcome}-worker`,
+      },
+    ]);
+  },
+);
+
+it("reports exact mixed counters and never exceeds the reconciliation limit", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const appliedOrder = await seedOrder();
+  const retryOrder = await seedOrder();
+  const reviewOrder = await seedOrder();
+  const unclaimedOrder = await seedOrder();
+  for (const [index, order] of [appliedOrder, retryOrder, reviewOrder, unclaimedOrder].entries()) {
+    await database.db
+      .update(orders)
+      .set({ createdAt: new Date(`2030-04-${26 + index}T00:00:00.000Z`) })
+      .where(eq(orders.id, order.id));
+  }
+  const lookup = vi.fn<PaymentProvider["getPayment"]>(async (lookupInput) => {
+    if (lookupInput.merchantOrderReference === retryOrder.id) {
+      return { payments: [], warnings: [] };
+    }
+    const order =
+      lookupInput.merchantOrderReference === appliedOrder.id ? appliedOrder : reviewOrder;
+    return {
+      payments: [
+        {
+          environment: "test",
+          model: "one_time",
+          storeId: order.id === reviewOrder.id ? "STORE_OTHER" : "STORE_TEST",
+          externalOrderId: order.externalOrderId!,
+          merchantOrderReference: order.id,
+          externalPaymentId: `PAY_${crypto.randomUUID()}`,
+          status: "succeeded",
+          amount: { currency: "USD", minor: 2900n },
+          occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        },
+      ],
+      warnings: [],
+    };
+  });
+
+  expect(
+    await reconcileStalePayments(database.db, paymentProvider(lookup), {
+      owner: "payment-mixed-counter-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 3,
+    }),
+  ).toEqual({ scanned: 3, applied: 1, retried: 1, operatorReview: 1 });
+
+  expect(lookup).toHaveBeenCalledTimes(3);
+  const jobs = await database.db.select().from(paymentReconciliationJobs);
+  expect(jobs).toHaveLength(3);
+  expect(jobs.find((job) => job.orderId === appliedOrder.id)?.state).toBe("completed");
+  expect(jobs.find((job) => job.orderId === retryOrder.id)?.state).toBe("pending");
+  expect(jobs.find((job) => job.orderId === reviewOrder.id)?.state).toBe("operator_review");
+  expect(jobs.find((job) => job.orderId === unclaimedOrder.id)).toBeUndefined();
+});
+
+it("quarantines duplicate succeeded provider payments without mutating the order", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const snapshot = {
+    environment: "test" as const,
+    model: "one_time" as const,
+    storeId: "STORE_TEST",
+    externalOrderId: order.externalOrderId!,
+    merchantOrderReference: order.id,
+    status: "succeeded" as const,
+    amount: { currency: "USD" as const, minor: 2900n },
+    occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+  };
+  const provider = paymentProvider(
+    vi.fn<PaymentProvider["getPayment"]>().mockResolvedValue({
+      payments: [
+        { ...snapshot, externalPaymentId: `PAY_${crypto.randomUUID()}` },
+        { ...snapshot, externalPaymentId: `PAY_${crypto.randomUUID()}` },
+      ],
+      warnings: [],
+    }),
+  );
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: "payment-duplicate-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 1 });
+
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+  expect(
+    await database.db.query.orders.findFirst({ where: eq(orders.id, order.id) }),
+  ).toMatchObject({ status: "pending", paidAt: null });
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    {
+      orderId: order.id,
+      state: "operator_review",
+      operatorReviewReason: "multiple succeeded provider payments returned",
+    },
+  ]);
+  expect(await database.db.select().from(commerceReconciliationRuns)).toMatchObject([
+    { result: "operator_review_required" },
+  ]);
+});
+
+it("recovers the unique succeeded attempt among pending failed and canceled attempts", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const base = {
+    environment: "test" as const,
+    model: "one_time" as const,
+    storeId: "STORE_TEST",
+    externalOrderId: order.externalOrderId!,
+    merchantOrderReference: order.id,
+    amount: { currency: "USD" as const, minor: 2900n },
+    occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+  };
+  const succeededPaymentId = `PAY_${crypto.randomUUID()}`;
+  const provider = paymentProvider(
+    vi.fn<PaymentProvider["getPayment"]>().mockResolvedValue({
+      payments: [
+        { ...base, externalPaymentId: `PAY_${crypto.randomUUID()}`, status: "pending" },
+        { ...base, externalPaymentId: `PAY_${crypto.randomUUID()}`, status: "failed" },
+        { ...base, externalPaymentId: succeededPaymentId, status: "succeeded" },
+        { ...base, externalPaymentId: `PAY_${crypto.randomUUID()}`, status: "canceled" },
+      ],
+      warnings: [],
+    }),
+  );
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: "payment-mixed-attempt-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 1, retried: 0, operatorReview: 0 });
+  expect(await database.db.select().from(payments)).toMatchObject([
+    { externalPaymentId: succeededPaymentId, status: "succeeded" },
+  ]);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(1);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    { orderId: order.id, state: "completed" },
+  ]);
+});
+
+it("does not fulfill a distinct succeeded payment for an already paid one-time order", async () => {
+  const order = await seedOrder();
+  const firstPaymentId = `PAY_${crypto.randomUUID()}`;
+  const secondPaymentId = `PAY_${crypto.randomUUID()}`;
+  const event = (eventId: string, externalPaymentId: string) => ({
+    type: "one_time_payment_succeeded" as const,
+    eventId,
+    environment: "test" as const,
+    externalOrderId: order.externalOrderId!,
+    merchantOrderReference: order.id,
+    externalPaymentId,
+    amount: { currency: "USD" as const, minor: 2900n },
+    occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+    storeId: "STORE_TEST",
+  });
+
+  await processProviderEvent(
+    database.db,
+    event(`EVT_${crypto.randomUUID()}`, firstPaymentId),
+    "a".repeat(64),
+  );
+  const secondEvent = event(`EVT_${crypto.randomUUID()}`, secondPaymentId);
+  await processProviderEvent(database.db, secondEvent, "b".repeat(64));
+  await processProviderEvent(database.db, secondEvent, "b".repeat(64));
+
+  expect(await database.db.select().from(payments)).toMatchObject([
+    { orderId: order.id, externalPaymentId: firstPaymentId, status: "succeeded" },
+  ]);
+  expect(await database.db.select().from(fulfillmentJobs)).toMatchObject([
+    { sourceId: firstPaymentId },
+  ]);
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, order.id)),
+  ).toMatchObject([
+    {
+      targetType: "one_time_payment",
+      result: "operator_review_required",
+      afterJson: {
+        reason: "distinct_succeeded_payment_for_paid_order",
+        existingExternalPaymentId: firstPaymentId,
+        conflictingExternalPaymentId: secondPaymentId,
+      },
+    },
+  ]);
+});
+
+it("quarantines a reconciliation job when a distinct payment already fulfilled the order", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  await database.db.insert(paymentReconciliationJobs).values({
+    orderId: order.id,
+    nextAttemptAt: now,
+  });
+  const firstPaymentId = `PAY_${crypto.randomUUID()}`;
+  await processProviderEvent(
+    database.db,
+    {
+      type: "one_time_payment_succeeded",
+      eventId: `EVT_${crypto.randomUUID()}`,
+      environment: "test",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      externalPaymentId: firstPaymentId,
+      amount: { currency: "USD", minor: 2900n },
+      occurredAt: new Date("2030-05-01T23:58:00.000Z"),
+      storeId: "STORE_TEST",
+    },
+    "a".repeat(64),
+  );
+  const secondPaymentId = `PAY_${crypto.randomUUID()}`;
+  const provider = paymentProvider(async () => ({
+    payments: [
+      {
+        environment: "test",
+        model: "one_time",
+        storeId: "STORE_TEST",
+        externalOrderId: order.externalOrderId!,
+        merchantOrderReference: order.id,
+        externalPaymentId: secondPaymentId,
+        status: "succeeded",
+        amount: { currency: "USD", minor: 2900n },
+        occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+      },
+    ],
+    warnings: [],
+  }));
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: "payment-distinct-reconciliation-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 1 });
+
+  expect(await database.db.select().from(payments)).toMatchObject([
+    { orderId: order.id, externalPaymentId: firstPaymentId },
+  ]);
+  expect(await database.db.select().from(fulfillmentJobs)).toMatchObject([
+    { sourceId: firstPaymentId },
+  ]);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    {
+      orderId: order.id,
+      state: "operator_review",
+      operatorReviewReason: "distinct succeeded payment already fulfilled order",
+    },
+  ]);
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, order.id)),
+  ).toHaveLength(1);
+});
+
+it("fails closed and persistently audits an event id reused with different identity", async () => {
+  const order = await seedOrder();
+  const eventId = `EVT_${crypto.randomUUID()}`;
+  const failedEvent = {
+    type: "one_time_payment_failed" as const,
+    eventId,
+    environment: "test" as const,
+    externalOrderId: order.externalOrderId!,
+    merchantOrderReference: order.id,
+    occurredAt: new Date("2030-05-01T23:58:00.000Z"),
+  };
+  const conflictingEvent = {
+    ...failedEvent,
+    type: "one_time_payment_canceled" as const,
+    occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+  };
+
+  await processProviderEvent(database.db, failedEvent, "a".repeat(64));
+  await expect(processProviderEvent(database.db, conflictingEvent, "b".repeat(64))).rejects.toThrow(
+    "provider event identity conflict",
+  );
+  await expect(processProviderEvent(database.db, conflictingEvent, "b".repeat(64))).rejects.toThrow(
+    "provider event identity conflict",
+  );
+
+  expect(
+    await database.db.query.orders.findFirst({ where: eq(orders.id, order.id) }),
+  ).toMatchObject({ status: "pending", canceledAt: null });
+  expect(
+    await database.db
+      .select()
+      .from(commerceAppliedEvents)
+      .where(
+        and(
+          eq(commerceAppliedEvents.environment, "test"),
+          eq(commerceAppliedEvents.providerEventId, eventId),
+        ),
+      ),
+  ).toMatchObject([{ eventType: "one_time_payment_failed", payloadHash: "a".repeat(64) }]);
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, eventId)),
+  ).toMatchObject([
+    {
+      targetType: "provider_event_identity",
+      result: "operator_review_required",
+      beforeJson: {
+        eventType: "one_time_payment_failed",
+        payloadHash: "a".repeat(64),
+      },
+      afterJson: {
+        eventType: "one_time_payment_canceled",
+        payloadHash: "b".repeat(64),
+      },
+    },
+  ]);
+});
+
+it.each(["succeeded", "failed", "canceled"] as const)(
+  "rejects a one-time %s event targeting a subscription product before any mutation",
+  async (status) => {
+    const order = await seedOrder({ model: "subscription" });
+    const eventId = `EVT_${crypto.randomUUID()}`;
+    const common = {
+      eventId,
+      environment: "test" as const,
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      externalPaymentId: `PAY_${crypto.randomUUID()}`,
+      occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+      storeId: "STORE_TEST",
+    };
+    const event =
+      status === "succeeded"
+        ? {
+            ...common,
+            type: "one_time_payment_succeeded" as const,
+            amount: { currency: "USD" as const, minor: 2900n },
+          }
+        : status === "failed"
+          ? { ...common, type: "one_time_payment_failed" as const }
+          : { ...common, type: "one_time_payment_canceled" as const };
+
+    await expect(processProviderEvent(database.db, event, "c".repeat(64))).rejects.toThrow(
+      "one-time payment event product model mismatch",
+    );
+
+    expect(
+      await database.db.query.orders.findFirst({ where: eq(orders.id, order.id) }),
+    ).toMatchObject({ status: "pending", paidAt: null });
+    expect(await database.db.select().from(payments)).toHaveLength(0);
+    expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+    expect(
+      await database.db
+        .select()
+        .from(commerceAppliedEvents)
+        .where(eq(commerceAppliedEvents.providerEventId, eventId)),
+    ).toHaveLength(0);
+  },
+);
+
+it("quarantines every subscription payment without manufacturing a historical period", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder({ model: "subscription" });
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const provider = paymentProvider(
+    vi.fn<PaymentProvider["getPayment"]>().mockResolvedValue({
+      payments: [
+        {
+          environment: "test",
+          model: "subscription",
+          storeId: "STORE_TEST",
+          externalOrderId: order.externalOrderId!,
+          merchantOrderReference: order.id,
+          externalPaymentId: `PAY_${crypto.randomUUID()}`,
+          status: "succeeded",
+          amount: { currency: "USD", minor: 2900n },
+          occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+        },
+      ],
+      warnings: [],
+    }),
+  );
+
+  expect(
+    await reconcileStalePayments(database.db, provider, {
+      owner: "payment-subscription-worker",
+      expectedStoreId: "STORE_TEST",
+      now,
+      terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    }),
+  ).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 1 });
+
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(subscriptionPeriods)).toHaveLength(0);
+  expect(await database.db.select().from(subscriptions)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(creditGrants)).toHaveLength(0);
+  expect(await database.db.select().from(creditLedgerEntries)).toHaveLength(0);
+  expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    {
+      orderId: order.id,
+      state: "operator_review",
+      operatorReviewReason: "payment-level period unavailable",
+    },
+  ]);
 });
 
 it("installs a persistent idempotency key for operator audit", async () => {

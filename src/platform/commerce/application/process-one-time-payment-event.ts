@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
+  commerceReconciliationRuns,
   commerceProducts,
   fulfillmentJobs,
   orders,
@@ -71,25 +72,68 @@ async function lockOrderForProviderEvent(tx: CommerceTransaction, event: OneTime
   return order;
 }
 
+async function requireOneTimeProduct(tx: CommerceTransaction, productId: string) {
+  const [product] = await tx
+    .select({
+      model: commerceProducts.model,
+      fulfillmentKey: commerceProducts.fulfillmentKey,
+    })
+    .from(commerceProducts)
+    .where(eq(commerceProducts.id, productId))
+    .limit(1);
+  if (!product) throw new Error("order product not found");
+  if (product.model !== "one_time") {
+    throw new Error("one-time payment event product model mismatch");
+  }
+  return product;
+}
+
 export async function processOneTimePaymentEvent(
   tx: CommerceTransaction,
   event: OneTimePaymentEvent,
   payloadHash: string,
-): Promise<void> {
+): Promise<"applied" | "operator_review"> {
   if (event.type === "one_time_payment_succeeded") {
     const order = await lockOrderForProviderEvent(tx, event);
+    const product = await requireOneTimeProduct(tx, order.productId);
     const expected = {
       currency: order.expectedCurrency as SupportedCurrency,
       minor: order.expectedMinor,
     };
     if (!equalMoney(expected, event.amount)) throw new Error("provider amount mismatch");
 
-    const [product] = await tx
-      .select({ fulfillmentKey: commerceProducts.fulfillmentKey })
-      .from(commerceProducts)
-      .where(eq(commerceProducts.id, order.productId))
-      .limit(1);
-    if (!product) throw new Error("order product not found");
+    const [succeededOrderPayment] = await tx
+      .select()
+      .from(payments)
+      .where(and(eq(payments.orderId, order.id), eq(payments.status, "succeeded")))
+      .orderBy(payments.createdAt, payments.id)
+      .limit(1)
+      .for("update");
+    if (
+      succeededOrderPayment &&
+      succeededOrderPayment.externalPaymentId !== event.externalPaymentId
+    ) {
+      await tx
+        .insert(commerceReconciliationRuns)
+        .values({
+          dedupKey: `one-time-payment:${event.environment}:${order.id}:${event.externalPaymentId}:duplicate-succeeded`,
+          targetType: "one_time_payment",
+          targetId: order.id,
+          actorType: "provider_event",
+          beforeJson: {
+            orderStatus: order.status,
+            existingExternalPaymentId: succeededOrderPayment.externalPaymentId,
+          },
+          afterJson: {
+            reason: "distinct_succeeded_payment_for_paid_order",
+            existingExternalPaymentId: succeededOrderPayment.externalPaymentId,
+            conflictingExternalPaymentId: event.externalPaymentId,
+          },
+          result: "operator_review_required",
+        })
+        .onConflictDoNothing();
+      return "operator_review";
+    }
 
     const [existingPayment] = await tx
       .select()
@@ -149,10 +193,11 @@ export async function processOneTimePaymentEvent(
         idempotencyKey: `payment:${event.environment}:${event.externalPaymentId}:${operation}`,
       })
       .onConflictDoNothing({ target: fulfillmentJobs.idempotencyKey });
-    return;
+    return "applied";
   }
 
   const order = await lockOrderForProviderEvent(tx, event);
+  await requireOneTimeProduct(tx, order.productId);
   if (event.type === "one_time_payment_canceled") {
     await tx
       .update(orders)
@@ -163,4 +208,5 @@ export async function processOneTimePaymentEvent(
       })
       .where(eq(orders.id, order.id));
   }
+  return "applied";
 }

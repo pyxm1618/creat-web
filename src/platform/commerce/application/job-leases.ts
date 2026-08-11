@@ -1,6 +1,6 @@
 import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
-import type { DatabaseClient } from "@/platform/database/client";
+import type { DatabaseClient, DatabaseTransaction } from "@/platform/database/client";
 import {
   commerceReconciliationRuns,
   fulfillmentJobs,
@@ -215,7 +215,7 @@ function ownedLivePaymentReconciliationClaim(input: PaymentReconciliationClaim) 
 }
 
 export async function completePaymentReconciliationJob(
-  database: DatabaseClient,
+  database: DatabaseClient | DatabaseTransaction,
   input: PaymentReconciliationClaim,
 ): Promise<boolean> {
   const [completed] = await database
@@ -300,65 +300,74 @@ export async function retryPaymentReconciliationJob(
   });
 }
 
-export async function operatorReviewPaymentReconciliationJob(
-  database: DatabaseClient,
-  input: PaymentReconciliationClaim & {
-    readonly reason: string;
-    readonly warnings?: readonly PaymentReconciliationWarning[];
-  },
+type PaymentReconciliationOperatorReviewInput = PaymentReconciliationClaim & {
+  readonly reason: string;
+  readonly warnings?: readonly PaymentReconciliationWarning[];
+};
+
+export async function operatorReviewPaymentReconciliationJobInTransaction(
+  tx: DatabaseTransaction,
+  input: PaymentReconciliationOperatorReviewInput,
 ): Promise<boolean> {
   const reason = input.reason.trim();
   if (!reason) throw new Error("payment reconciliation operator-review reason is required");
 
-  return database.transaction(async (tx) => {
-    const [owned] = await tx
-      .select({
-        attempts: paymentReconciliationJobs.attempts,
-        orderId: paymentReconciliationJobs.orderId,
-      })
-      .from(paymentReconciliationJobs)
-      .where(ownedLivePaymentReconciliationClaim(input))
-      .for("update");
-    if (!owned) return false;
+  const [owned] = await tx
+    .select({
+      attempts: paymentReconciliationJobs.attempts,
+      orderId: paymentReconciliationJobs.orderId,
+    })
+    .from(paymentReconciliationJobs)
+    .where(ownedLivePaymentReconciliationClaim(input))
+    .for("update");
+  if (!owned) return false;
 
-    const [reviewed] = await tx
-      .update(paymentReconciliationJobs)
-      .set({
+  const [reviewed] = await tx
+    .update(paymentReconciliationJobs)
+    .set({
+      state: "operator_review",
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastErrorCode: null,
+      operatorReviewReason: reason,
+      completedAt: input.terminalNow,
+      updatedAt: input.terminalNow,
+    })
+    .where(ownedLivePaymentReconciliationClaim(input))
+    .returning({ id: paymentReconciliationJobs.id });
+  if (!reviewed) return false;
+
+  await tx
+    .insert(commerceReconciliationRuns)
+    .values({
+      dedupKey: `payment-reconciliation:${input.id}:${input.leaseToken}:operator-review`,
+      targetType: "payment_reconciliation_job",
+      targetId: input.id,
+      actorType: "worker",
+      beforeJson: {
+        state: "processing",
+        orderId: owned.orderId,
+        attempts: owned.attempts,
+      },
+      afterJson: {
         state: "operator_review",
-        leaseOwner: null,
-        leaseToken: null,
-        leaseExpiresAt: null,
-        lastErrorCode: null,
-        operatorReviewReason: reason,
-        completedAt: input.terminalNow,
-        updatedAt: input.terminalNow,
-      })
-      .where(ownedLivePaymentReconciliationClaim(input))
-      .returning({ id: paymentReconciliationJobs.id });
-    if (!reviewed) return false;
+        reason,
+        warnings: allowlistedWarnings(input.warnings),
+      },
+      result: "operator_review_required",
+      createdAt: input.terminalNow,
+    })
+    .onConflictDoNothing();
+  return true;
+}
 
-    await tx
-      .insert(commerceReconciliationRuns)
-      .values({
-        dedupKey: `payment-reconciliation:${input.id}:${input.leaseToken}:operator-review`,
-        targetType: "payment_reconciliation_job",
-        targetId: input.id,
-        actorType: "worker",
-        beforeJson: {
-          state: "processing",
-          orderId: owned.orderId,
-          attempts: owned.attempts,
-        },
-        afterJson: {
-          state: "operator_review",
-          reason,
-          warnings: allowlistedWarnings(input.warnings),
-        },
-        result: "operator_review_required",
-        createdAt: input.terminalNow,
-      })
-      .onConflictDoNothing();
-    return true;
+export async function operatorReviewPaymentReconciliationJob(
+  database: DatabaseClient,
+  input: PaymentReconciliationOperatorReviewInput,
+): Promise<boolean> {
+  return database.transaction(async (tx) => {
+    return operatorReviewPaymentReconciliationJobInTransaction(tx, input);
   });
 }
 
