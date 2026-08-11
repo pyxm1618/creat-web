@@ -325,17 +325,22 @@ it("normalizes refund inputs and separates subscription actions", () => {
   );
 });
 
-it("keeps the same subscription request key across network and 5xx retries, then rotates", async () => {
+it("classifies subscription failures before reusing or rotating the request key", async () => {
   const fetchMock = vi
     .fn()
     .mockRejectedValueOnce(new Error("network response lost"))
+    .mockResolvedValueOnce(response(false, 408))
+    .mockResolvedValueOnce(response(false, 425))
+    .mockResolvedValueOnce(response(false, 429))
     .mockResolvedValueOnce(response(false, 503))
+    .mockResolvedValueOnce(response(false, 409))
     .mockResolvedValueOnce(response(true, 202, { status: "pending" }))
     .mockResolvedValueOnce(response(true, 202, { status: "pending" }));
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(globalThis.crypto, "randomUUID")
     .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
-    .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000002")
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000003");
   const component = render(() =>
     billingActions.SubscriptionAction({ subscriptionId: "sub-1", action: "cancel" }),
   );
@@ -347,20 +352,26 @@ it("keeps the same subscription request key across network and 5xx retries, then
   await click();
   await click();
   await click();
+  await click();
+  await click();
+  expect(hookRuntime.states[0]).toBe("error");
+  await click();
+  await click();
 
-  expect(fetchMock).toHaveBeenCalledTimes(4);
+  expect(fetchMock).toHaveBeenCalledTimes(8);
   expect(fetchMock.mock.calls.map(requestKey)).toEqual([
     "00000000-0000-4000-8000-000000000001",
     "00000000-0000-4000-8000-000000000001",
     "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000001",
     "00000000-0000-4000-8000-000000000002",
+    "00000000-0000-4000-8000-000000000003",
   ]);
-  expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-    "/api/commerce/subscription/cancel",
-    "/api/commerce/subscription/cancel",
-    "/api/commerce/subscription/cancel",
-    "/api/commerce/subscription/cancel",
-  ]);
+  expect(
+    fetchMock.mock.calls.every((call) => call[0] === "/api/commerce/subscription/cancel"),
+  ).toBe(true);
 });
 
 it("gives an edited refund request a new key through the actual component command path", async () => {
@@ -425,6 +436,46 @@ it("gives an edited refund request a new key through the actual component comman
       currency: "USD",
       reason: "duplicate charge",
     },
+  ]);
+});
+
+it("rotates the refund request key after a deterministic 409 rejection", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(response(false, 409))
+    .mockResolvedValueOnce(response(true, 202, { status: "pending" }));
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(globalThis.crypto, "randomUUID")
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000021")
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000022");
+
+  let component = render(() =>
+    billingActions.RefundAction({
+      paymentId: "payment-1",
+      currency: "USD",
+      refundableAmount: "10.00",
+    }),
+  );
+  const reason = elements(component).filter((element) => element.type === "input")[1];
+  eventHandler(reason!, "onChange")({ target: { value: "duplicate charge" } });
+  component = render(() =>
+    billingActions.RefundAction({
+      paymentId: "payment-1",
+      currency: "USD",
+      refundableAmount: "10.00",
+    }),
+  );
+  const button = elements(component).find((element) => element.type === "button");
+  if (!button) throw new Error("refund button not found");
+  const click = eventHandler(button, "onClick");
+
+  await click();
+  expect(hookRuntime.states[2]).toBe("error");
+  await click();
+
+  expect(fetchMock.mock.calls.map(requestKey)).toEqual([
+    "00000000-0000-4000-8000-000000000021",
+    "00000000-0000-4000-8000-000000000022",
   ]);
 });
 

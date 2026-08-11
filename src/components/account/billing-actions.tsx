@@ -11,13 +11,31 @@ import {
   type OperationKeyState,
 } from "./operation-key";
 
+const RETRYABLE_CLIENT_HTTP_STATUSES = new Set([408, 425, 429]);
+
+class BillingCommandHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`request failed (${status})`);
+    this.name = "BillingCommandHttpError";
+  }
+}
+
+function isTerminalBillingCommandError(error: unknown): boolean {
+  return (
+    error instanceof BillingCommandHttpError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    !RETRYABLE_CLIENT_HTTP_STATUSES.has(error.status)
+  );
+}
+
 async function command(url: string, body: Record<string, unknown>, idempotencyKey: string) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": idempotencyKey },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`request failed (${response.status})`);
+  if (!response.ok) throw new BillingCommandHttpError(response.status);
   return (await response.json()) as unknown;
 }
 
@@ -42,7 +60,12 @@ function useKeyedOperation(scopeParts: readonly string[]) {
       stateRef.current.state,
       digestOperationFingerprint(fingerprintParts),
     ]);
-    return runKeyedOperation(state, fingerprint, operation);
+    try {
+      return await runKeyedOperation(state, fingerprint, operation);
+    } catch (error) {
+      if (isTerminalBillingCommandError(error)) state.complete(fingerprint);
+      throw error;
+    }
   };
 }
 
