@@ -124,7 +124,7 @@ async function assertLatestSchema(label: string): Promise<void> {
     select indexname, indexdef
     from pg_indexes
     where schemaname = 'public'
-      and indexname in ('payment_reconciliation_order_uq','payment_reconciliation_due_idx','payment_reconciliation_reclaim_idx','commerce_reconciliation_run_dedup_uq')
+      and indexname in ('payment_reconciliation_order_uq','payment_reconciliation_due_idx','payment_reconciliation_reclaim_idx','commerce_reconciliation_run_dedup_uq','order_payment_reconciliation_stale_idx')
   `,
   );
   const actualReconciliationIndexes = new Set(reconciliationIndexes.map((row) => row.indexname));
@@ -133,6 +133,7 @@ async function assertLatestSchema(label: string): Promise<void> {
     "payment_reconciliation_due_idx",
     "payment_reconciliation_reclaim_idx",
     "commerce_reconciliation_run_dedup_uq",
+    "order_payment_reconciliation_stale_idx",
   ]) {
     if (!actualReconciliationIndexes.has(index)) {
       throw new Error(`${label}: missing payment reconciliation index ${index}`);
@@ -144,6 +145,17 @@ async function assertLatestSchema(label: string): Promise<void> {
   );
   if (!orderIndex.endsWith("(order_id)") || orderIndex.includes("environment")) {
     throw new Error(`${label}: payment reconciliation order index is not globally unique`);
+  }
+  const staleOrderIndex = String(
+    reconciliationIndexes.find((row) => row.indexname === "order_payment_reconciliation_stale_idx")
+      ?.indexdef ?? "",
+  );
+  if (
+    !staleOrderIndex.includes("(created_at, id)") ||
+    !staleOrderIndex.includes("checkout_state = 'created'::text") ||
+    !staleOrderIndex.includes("status = 'pending'::text")
+  ) {
+    throw new Error(`${label}: stale payment reconciliation order index is malformed`);
   }
 
   const reconciliationDedupKey = await database.db.execute(sql<{ column_name: string }>`

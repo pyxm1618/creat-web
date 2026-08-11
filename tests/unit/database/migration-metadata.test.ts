@@ -25,20 +25,20 @@ async function migrationFixture(): Promise<string> {
 
 it("rejects a journal entry whose snapshot is missing", async () => {
   const migrationsDirectory = await migrationFixture();
-  await rm(path.join(migrationsDirectory, "meta", "0011_snapshot.json"));
+  await rm(path.join(migrationsDirectory, "meta", "0012_snapshot.json"));
 
   await expect(verifyMigrationMetadata({ migrationsDirectory, schemaPath })).rejects.toThrow(
-    /missing snapshot.*0011/i,
+    /missing snapshot.*0012/i,
   );
 });
 
 it("rejects a coherent snapshot chain that has drifted from the current schema", async () => {
   const migrationsDirectory = await migrationFixture();
-  const snapshotPath = path.join(migrationsDirectory, "meta", "0011_snapshot.json");
+  const snapshotPath = path.join(migrationsDirectory, "meta", "0012_snapshot.json");
   const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as {
-    tables: Record<string, unknown>;
+    tables: Record<string, { indexes: Record<string, unknown> }>;
   };
-  delete snapshot.tables["public.payment_reconciliation_jobs"];
+  delete snapshot.tables["public.orders"]?.indexes["order_payment_reconciliation_stale_idx"];
   await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
 
   await expect(verifyMigrationMetadata({ migrationsDirectory, schemaPath })).rejects.toThrow(

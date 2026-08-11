@@ -63,6 +63,10 @@ function parseCurrency(value: string): SupportedCurrency {
   return value.toUpperCase() as SupportedCurrency;
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export async function seedPaymentReconciliationJobs(
   database: DatabaseClient,
   input: { readonly now?: Date; readonly staleAfterMs?: number; readonly limit?: number } = {},
@@ -159,7 +163,9 @@ export async function reconcileStalePayments(
     readonly signal?: AbortSignal;
   },
 ): Promise<PaymentReconciliationResult> {
+  input.signal?.throwIfAborted();
   const now = input.now ?? new Date();
+  const terminalSignal = input.signal ? { signal: input.signal } : {};
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
   await seedPaymentReconciliationJobs(database, {
     now,
@@ -176,7 +182,7 @@ export async function reconcileStalePayments(
   let retried = 0;
 
   for (const claim of claims) {
-    if (input.signal?.aborted) break;
+    input.signal?.throwIfAborted();
     if (!claim.leaseToken) throw new Error("payment reconciliation claim token missing");
     const leaseToken = claim.leaseToken;
     const [facts] = await database
@@ -205,8 +211,9 @@ export async function reconcileStalePayments(
         ...(facts.externalOrderId ? { externalOrderId: facts.externalOrderId } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
-    } catch {
-      if (input.signal?.aborted) break;
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      if (isAbortError(error)) throw error;
       const terminalNow = (input.terminalClock ?? (() => new Date()))();
       if (
         await retryPaymentReconciliationJob(database, {
@@ -215,13 +222,14 @@ export async function reconcileStalePayments(
           leaseToken,
           terminalNow,
           errorCode: "PROVIDER_LOOKUP_FAILED",
+          ...terminalSignal,
         })
       ) {
         retried += 1;
       }
       continue;
     }
-    if (input.signal?.aborted) break;
+    input.signal?.throwIfAborted();
     if (
       model === "subscription" ||
       lookup.payments.some((payment) => payment.model === "subscription")
@@ -235,6 +243,7 @@ export async function reconcileStalePayments(
           terminalNow,
           reason: "payment-level period unavailable",
           warnings: lookup.warnings,
+          ...terminalSignal,
         })
       ) {
         operatorReview += 1;
@@ -252,6 +261,7 @@ export async function reconcileStalePayments(
           terminalNow,
           reason: "multiple succeeded provider payments returned",
           warnings: lookup.warnings,
+          ...terminalSignal,
         })
       ) {
         operatorReview += 1;
@@ -272,6 +282,7 @@ export async function reconcileStalePayments(
           terminalNow,
           errorCode: lookup.payments.length === 0 ? "PAYMENT_NOT_FOUND" : "PAYMENT_PENDING",
           warnings: lookup.warnings,
+          ...terminalSignal,
         })
       ) {
         retried += 1;
@@ -306,6 +317,7 @@ export async function reconcileStalePayments(
           terminalNow,
           reason: "provider payment facts mismatch",
           warnings: lookup.warnings,
+          ...terminalSignal,
         })
       ) {
         operatorReview += 1;
@@ -361,70 +373,96 @@ export async function reconcileStalePayments(
               storeId: snapshot.storeId,
             };
     const terminalNow = (input.terminalClock ?? (() => new Date()))();
-    const claimOutcome = await database.transaction(async (tx) => {
-      const [owned] = await tx
-        .select({ id: paymentReconciliationJobs.id })
-        .from(paymentReconciliationJobs)
-        .where(
-          and(
-            eq(paymentReconciliationJobs.id, claim.id),
-            eq(paymentReconciliationJobs.state, "processing"),
-            eq(paymentReconciliationJobs.leaseOwner, input.owner),
-            eq(paymentReconciliationJobs.leaseToken, leaseToken),
-            gt(paymentReconciliationJobs.leaseExpiresAt, terminalNow),
-          ),
-        )
-        .limit(1)
-        .for("update");
-      if (!owned) return "stale" as const;
+    let claimOutcome: "applied" | "operator_review" | "stale";
+    try {
+      claimOutcome = await database.transaction(async (tx) => {
+        const [owned] = await tx
+          .select({ id: paymentReconciliationJobs.id })
+          .from(paymentReconciliationJobs)
+          .where(
+            and(
+              eq(paymentReconciliationJobs.id, claim.id),
+              eq(paymentReconciliationJobs.state, "processing"),
+              eq(paymentReconciliationJobs.leaseOwner, input.owner),
+              eq(paymentReconciliationJobs.leaseToken, leaseToken),
+              gt(paymentReconciliationJobs.leaseExpiresAt, terminalNow),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        if (!owned) return "stale" as const;
+        input.signal?.throwIfAborted();
 
-      const eventOutcome = await processProviderEventInTransaction(tx, event, payloadHash);
-      if (eventOutcome === "identity_conflict") {
-        const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, {
+        const eventOutcome = await processProviderEventInTransaction(tx, event, payloadHash);
+        input.signal?.throwIfAborted();
+        if (eventOutcome === "identity_conflict") {
+          const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, {
+            id: claim.id,
+            owner: input.owner,
+            leaseToken,
+            terminalNow,
+            reason: "provider event identity conflict",
+            warnings: lookup.warnings,
+            ...terminalSignal,
+          });
+          return reviewed ? ("operator_review" as const) : ("stale" as const);
+        }
+        if (eventOutcome === "operator_review") {
+          const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, {
+            id: claim.id,
+            owner: input.owner,
+            leaseToken,
+            terminalNow,
+            reason: "distinct succeeded payment already fulfilled order",
+            warnings: lookup.warnings,
+            ...terminalSignal,
+          });
+          return reviewed ? ("operator_review" as const) : ("stale" as const);
+        }
+        const completed = await completePaymentReconciliationJob(tx, {
           id: claim.id,
           owner: input.owner,
           leaseToken,
           terminalNow,
-          reason: "provider event identity conflict",
-          warnings: lookup.warnings,
         });
-        return reviewed ? ("operator_review" as const) : ("stale" as const);
-      }
-      if (eventOutcome === "operator_review") {
-        const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, {
-          id: claim.id,
-          owner: input.owner,
-          leaseToken,
-          terminalNow,
-          reason: "distinct succeeded payment already fulfilled order",
-          warnings: lookup.warnings,
-        });
-        return reviewed ? ("operator_review" as const) : ("stale" as const);
-      }
-      const completed = await completePaymentReconciliationJob(tx, {
-        id: claim.id,
-        owner: input.owner,
-        leaseToken,
-        terminalNow,
+        input.signal?.throwIfAborted();
+        const warnings = validateProviderQueryWarnings(lookup.warnings);
+        if (completed && warnings.length > 0) {
+          await tx
+            .insert(commerceReconciliationRuns)
+            .values({
+              dedupKey: `payment-reconciliation:${claim.id}:${leaseToken}:applied-warnings`,
+              targetType: "payment_reconciliation_job",
+              targetId: claim.id,
+              actorType: "worker",
+              beforeJson: { state: "processing", orderId: facts.orderId },
+              afterJson: { state: "completed", warnings },
+              result: "applied_with_provider_warnings",
+              createdAt: terminalNow,
+            })
+            .onConflictDoNothing();
+        }
+        input.signal?.throwIfAborted();
+        return completed ? ("applied" as const) : ("stale" as const);
       });
-      const warnings = validateProviderQueryWarnings(lookup.warnings);
-      if (completed && warnings.length > 0) {
-        await tx
-          .insert(commerceReconciliationRuns)
-          .values({
-            dedupKey: `payment-reconciliation:${claim.id}:${leaseToken}:applied-warnings`,
-            targetType: "payment_reconciliation_job",
-            targetId: claim.id,
-            actorType: "worker",
-            beforeJson: { state: "processing", orderId: facts.orderId },
-            afterJson: { state: "completed", warnings },
-            result: "applied_with_provider_warnings",
-            createdAt: terminalNow,
-          })
-          .onConflictDoNothing();
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      if (isAbortError(error)) throw error;
+      if (
+        await operatorReviewPaymentReconciliationJob(database, {
+          id: claim.id,
+          owner: input.owner,
+          leaseToken,
+          terminalNow,
+          reason: "provider event application failed",
+          warnings: lookup.warnings,
+          ...terminalSignal,
+        })
+      ) {
+        operatorReview += 1;
       }
-      return completed ? ("applied" as const) : ("stale" as const);
-    });
+      continue;
+    }
     if (claimOutcome === "applied") applied += 1;
     if (claimOutcome === "operator_review") operatorReview += 1;
   }

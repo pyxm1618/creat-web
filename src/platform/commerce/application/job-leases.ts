@@ -239,6 +239,7 @@ export async function retryPaymentReconciliationJob(
   input: PaymentReconciliationClaim & {
     readonly errorCode: string;
     readonly warnings?: readonly PaymentReconciliationWarning[];
+    readonly signal?: AbortSignal;
   },
 ): Promise<boolean> {
   return database.transaction(async (tx) => {
@@ -251,6 +252,7 @@ export async function retryPaymentReconciliationJob(
       .where(ownedLivePaymentReconciliationClaim(input))
       .for("update");
     if (!owned) return false;
+    input.signal?.throwIfAborted();
 
     const attempts = owned.attempts + 1;
     const dead = attempts >= PAYMENT_RECONCILIATION_MAX_ATTEMPTS;
@@ -274,6 +276,7 @@ export async function retryPaymentReconciliationJob(
       .where(ownedLivePaymentReconciliationClaim(input))
       .returning({ id: paymentReconciliationJobs.id });
     if (!retried) return false;
+    input.signal?.throwIfAborted();
 
     await tx
       .insert(commerceReconciliationRuns)
@@ -296,6 +299,7 @@ export async function retryPaymentReconciliationJob(
         createdAt: input.terminalNow,
       })
       .onConflictDoNothing();
+    input.signal?.throwIfAborted();
     return true;
   });
 }
@@ -303,6 +307,7 @@ export async function retryPaymentReconciliationJob(
 type PaymentReconciliationOperatorReviewInput = PaymentReconciliationClaim & {
   readonly reason: string;
   readonly warnings?: readonly PaymentReconciliationWarning[];
+  readonly signal?: AbortSignal;
 };
 
 export async function operatorReviewPaymentReconciliationJobInTransaction(
@@ -321,6 +326,7 @@ export async function operatorReviewPaymentReconciliationJobInTransaction(
     .where(ownedLivePaymentReconciliationClaim(input))
     .for("update");
   if (!owned) return false;
+  input.signal?.throwIfAborted();
 
   const [reviewed] = await tx
     .update(paymentReconciliationJobs)
@@ -337,6 +343,7 @@ export async function operatorReviewPaymentReconciliationJobInTransaction(
     .where(ownedLivePaymentReconciliationClaim(input))
     .returning({ id: paymentReconciliationJobs.id });
   if (!reviewed) return false;
+  input.signal?.throwIfAborted();
 
   await tx
     .insert(commerceReconciliationRuns)
@@ -359,6 +366,7 @@ export async function operatorReviewPaymentReconciliationJobInTransaction(
       createdAt: input.terminalNow,
     })
     .onConflictDoNothing();
+  input.signal?.throwIfAborted();
   return true;
 }
 

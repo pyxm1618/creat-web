@@ -91,6 +91,9 @@ export const orders = pgTable(
       .on(table.environment, table.externalOrderId)
       .where(sql`${table.externalOrderId} is not null`),
     index("order_subject_created_idx").on(table.subjectId, table.createdAt),
+    index("order_payment_reconciliation_stale_idx")
+      .on(table.createdAt, table.id)
+      .where(sql`${table.checkoutState} = 'created' and ${table.status} = 'pending'`),
     check("order_expected_minor_positive", sql`${table.expectedMinor} > 0`),
     check("order_environment_valid", sql`${table.environment} in ('test','production')`),
     check(

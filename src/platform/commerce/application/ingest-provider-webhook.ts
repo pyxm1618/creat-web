@@ -1,7 +1,10 @@
 import { sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
-import { paymentWebhookInbox } from "@/platform/database/commerce-schema";
+import {
+  commerceReconciliationRuns,
+  paymentWebhookInbox,
+} from "@/platform/database/commerce-schema";
 
 import { InvalidWebhookSignatureError } from "./errors";
 import { serializeNormalizedProviderEvent } from "./event-json";
@@ -32,6 +35,7 @@ export async function ingestProviderWebhook(input: {
 }): Promise<{
   readonly accepted: boolean;
   readonly duplicate: boolean;
+  readonly operatorReview?: boolean;
   readonly event?: NormalizedProviderEvent;
 }> {
   const now = input.now ?? new Date();
@@ -112,28 +116,70 @@ export async function ingestProviderWebhook(input: {
     rawPayloadExpiresAt = retentionExpiry("unresolved_encrypted", now);
   }
 
-  const inserted = await input.database
-    .insert(paymentWebhookInbox)
-    .values({
-      environment: input.environment,
-      providerEventId: event.eventId,
-      dedupHash: hash,
-      eventType: event.type,
-      signatureValid: true,
-      normalizedPayloadJson: serializeNormalizedProviderEvent(event),
-      payloadHash: hash,
-      payloadSizeBytes: size,
-      ...(rawPayloadCiphertext ? { rawPayloadCiphertext } : {}),
-      ...(input.retention.keyId && rawPayloadCiphertext
-        ? { rawPayloadKeyId: input.retention.keyId }
-        : {}),
-      ...(rawPayloadExpiresAt ? { rawPayloadExpiresAt } : {}),
-      retentionClass,
-      state: unsupported ? "unsupported" : "pending",
-      nextAttemptAt: now,
-    })
-    .onConflictDoNothing()
-    .returning({ id: paymentWebhookInbox.id });
+  const ingressOutcome = await input.database.transaction(async (tx) => {
+    const identityLock = `provider-webhook:${input.environment}:${event.eventId}`;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${identityLock}, 0))`);
+    const [inserted] = await tx
+      .insert(paymentWebhookInbox)
+      .values({
+        environment: input.environment,
+        providerEventId: event.eventId,
+        dedupHash: hash,
+        eventType: event.type,
+        signatureValid: true,
+        normalizedPayloadJson: serializeNormalizedProviderEvent(event),
+        payloadHash: hash,
+        payloadSizeBytes: size,
+        ...(rawPayloadCiphertext ? { rawPayloadCiphertext } : {}),
+        ...(input.retention.keyId && rawPayloadCiphertext
+          ? { rawPayloadKeyId: input.retention.keyId }
+          : {}),
+        ...(rawPayloadExpiresAt ? { rawPayloadExpiresAt } : {}),
+        retentionClass,
+        state: unsupported ? "unsupported" : "pending",
+        nextAttemptAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: paymentWebhookInbox.id });
+    if (inserted) return "inserted" as const;
 
-  return { accepted: true, duplicate: inserted.length === 0, event };
+    const [existing] = await tx
+      .select({
+        eventType: paymentWebhookInbox.eventType,
+        payloadHash: paymentWebhookInbox.payloadHash,
+      })
+      .from(paymentWebhookInbox)
+      .where(
+        sql`${paymentWebhookInbox.environment} = ${input.environment} and ${paymentWebhookInbox.providerEventId} = ${event.eventId}`,
+      )
+      .limit(1)
+      .for("update");
+    if (!existing) throw new Error("webhook dedup hash identity conflict");
+    if (existing.eventType === event.type && existing.payloadHash === hash) {
+      return "duplicate" as const;
+    }
+
+    await tx
+      .insert(commerceReconciliationRuns)
+      .values({
+        dedupKey: `provider-event-identity:${input.environment}:${event.eventId}`,
+        targetType: "provider_event_identity",
+        targetId: event.eventId,
+        actorType: "provider_webhook_ingress",
+        beforeJson: {
+          eventType: existing.eventType,
+          payloadHash: existing.payloadHash,
+        },
+        afterJson: { eventType: event.type, payloadHash: hash },
+        result: "operator_review_required",
+        createdAt: now,
+      })
+      .onConflictDoNothing();
+    return "operator_review" as const;
+  });
+
+  if (ingressOutcome === "operator_review") {
+    return { accepted: true, duplicate: false, operatorReview: true };
+  }
+  return { accepted: true, duplicate: ingressOutcome === "duplicate", event };
 }
