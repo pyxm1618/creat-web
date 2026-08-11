@@ -165,6 +165,7 @@ function stripSqlComments(sql: string): string {
   let output = "";
   let index = 0;
   let state: "normal" | "single" | "double" | "line" | "block" | "dollar" = "normal";
+  let blockDepth = 0;
   let dollarTag = "";
 
   while (index < sql.length) {
@@ -179,8 +180,13 @@ function stripSqlComments(sql: string): string {
       continue;
     }
     if (state === "block") {
-      if (current === "*" && next === "/") {
-        state = "normal";
+      if (current === "/" && next === "*") {
+        blockDepth += 1;
+        output += "  ";
+        index += 2;
+      } else if (current === "*" && next === "/") {
+        blockDepth -= 1;
+        if (blockDepth === 0) state = "normal";
         output += "  ";
         index += 2;
       } else {
@@ -222,6 +228,7 @@ function stripSqlComments(sql: string): string {
     }
     if (current === "/" && next === "*") {
       state = "block";
+      blockDepth = 1;
       output += "  ";
       index += 2;
       continue;

@@ -67,6 +67,23 @@ describe("findPotentialSecrets", () => {
     ]);
   });
 
+  it("detects colon and equals assignments inside YAML sequence items", () => {
+    const secret = ["yaml-sequence", "-secret-value"].join("");
+    const content = [
+      `- API_KEY: ${secret}`,
+      `- AUTH_SECRET=${secret}`,
+      `- "CLIENT_SECRET": "${secret}"`,
+      `- PRIVATE_KEY='${secret}'`,
+    ].join("\n");
+
+    expect(findPotentialSecrets("config.yaml", content)).toEqual([
+      expect.objectContaining({ kind: "nonempty_secret_assignment", line: 1 }),
+      expect.objectContaining({ kind: "nonempty_secret_assignment", line: 2 }),
+      expect.objectContaining({ kind: "nonempty_secret_assignment", line: 3 }),
+      expect.objectContaining({ kind: "nonempty_secret_assignment", line: 4 }),
+    ]);
+  });
+
   it("allows documented empty placeholders", () => {
     expect(
       findPotentialSecrets(
@@ -79,13 +96,19 @@ describe("findPotentialSecrets", () => {
   it("allows only exact repository fixture values", () => {
     expect(
       findPotentialSecrets(
-        "scripts/release-fixture.ts",
-        ['RESEND_API_KEY: "re_release_fixture"', 'AUTH_SECRET: "secret-scan-fixture"'].join("\n"),
+        "scripts/release-fixture.yaml",
+        ['- RESEND_API_KEY: "re_release_fixture"', "- AUTH_SECRET='secret-scan-fixture'"].join(
+          "\n",
+        ),
         { allowedAssignmentValues: ["re_release_fixture", "secret-scan-fixture"] },
       ),
     ).toEqual([]);
     expect(
-      findPotentialSecrets("scripts/release-fixture.ts", 'AUTH_SECRET: "secret-scan-fixture-x"'),
+      findPotentialSecrets(
+        "scripts/release-fixture.yaml",
+        '- AUTH_SECRET: "secret-scan-fixture-x"',
+        { allowedAssignmentValues: ["secret-scan-fixture"] },
+      ),
     ).toEqual([expect.objectContaining({ kind: "nonempty_secret_assignment" })]);
   });
 });
@@ -365,6 +388,30 @@ describe("Credits release artifacts", () => {
         .split("\n")
         .map((line) => `-- ${line}`)
         .join("\n"),
+      "utf8",
+    );
+
+    const result = runArtifactVerifier(root);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "durable credit ledger integrity migration is not executable",
+    );
+  });
+
+  it("rejects ledger signatures hidden after a nested block comment closes", async () => {
+    const root = await createArtifactRoot();
+    await writeFile(
+      path.join(root, "drizzle/0009_production_readiness.sql"),
+      [
+        "/* outer PostgreSQL block comment",
+        "   /* nested block comment */",
+        '   CREATE FUNCTION "reject_credit_ledger_mutation"() RETURNS trigger;',
+        '   CREATE TRIGGER "credit_ledger_entries_append_only"',
+        '   BEFORE UPDATE OR DELETE ON "credit_ledger_entries"',
+        '   EXECUTE FUNCTION "reject_credit_ledger_mutation"();',
+        "*/",
+      ].join("\n"),
       "utf8",
     );
 

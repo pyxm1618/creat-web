@@ -19,7 +19,7 @@ type SecretPattern = {
 };
 
 const SENSITIVE_ASSIGNMENT =
-  /^\s*(?:export\s+)?(?:(?:const|let|var)\s+)?["']?(?<key>[A-Za-z0-9_-]*(?:client[_-]?secret|api[_-]?key|private[_-]?key|webhook[_-]?secret|auth[_-]?secret))["']?\s*(?:=|:)\s*(?<value>.*?)\s*$/i;
+  /^\s*(?:-\s+)?(?:export\s+)?(?:(?:const|let|var)\s+)?["']?(?<key>[A-Za-z0-9_-]*(?:client[_-]?secret|api[_-]?key|private[_-]?key|webhook[_-]?secret|auth[_-]?secret))["']?\s*(?:=|:)\s*(?<value>.*?)\s*$/i;
 const CODE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/i;
 
 const SECRET_PATTERNS: readonly SecretPattern[] = [
