@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { findPotentialSecrets } from "@/platform/security/secret-scan";
 
-const SCAN_ROOTS = ["src", "scripts", ".github"] as const;
+const SCAN_ROOTS = ["src", "scripts", ".github", "tests", "docs", "drizzle"] as const;
 const ROOT_FILES = [
   ".env.example",
   "drizzle.config.ts",
@@ -22,7 +22,7 @@ const EXCLUDED_FILES = new Set([
   "scripts/verify-secrets.ts",
 ]);
 
-const TEXT_EXTENSION = /\.(?:ts|tsx|js|mjs|cjs|json|yml|yaml|env|example)$/;
+const TEXT_EXTENSION = /\.(?:ts|tsx|js|mjs|cjs|json|yml|yaml|env|example|md|mdx|sql|sh)$/;
 
 async function collectFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });

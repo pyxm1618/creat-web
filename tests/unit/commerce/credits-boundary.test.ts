@@ -1,12 +1,91 @@
-import { existsSync, readFileSync } from "node:fs";
+import { ESLint } from "eslint";
+import { describe, expect, it } from "vitest";
 
-import { expect, it } from "vitest";
+const eslint = new ESLint();
 
-it("keeps the Commerce runtime wired to a Credits integration adapter", () => {
-  const runtime = readFileSync("src/platform/commerce/commerce-runtime.ts", "utf8");
+async function restrictedImportMessages(source: string, filePath: string) {
+  const [result] = await eslint.lintText(source, { filePath });
+  return result?.messages.filter(
+    (message) =>
+      message.ruleId === "no-restricted-imports" || message.ruleId === "no-restricted-syntax",
+  );
+}
 
-  expect(runtime).toContain("@/platform/credits/integration/commerce/credit-fulfillment");
-  expect(existsSync("src/platform/credits/integration/commerce/credit-fulfillment.ts")).toBe(true);
-  expect(existsSync("src/platform/commerce/fulfillment/credit-order-fulfillment.ts")).toBe(false);
-  expect(runtime).not.toContain("@/platform/credits/application/commerce-handlers");
+describe("Commerce to Credits architecture boundary", () => {
+  it.each([
+    "src/platform/commerce/application/future-handler.ts",
+    "src/platform/commerce/domain/future-rule.ts",
+    "src/platform/commerce/providers/future-provider.ts",
+    "src/platform/commerce/providers/future/nested-provider.ts",
+  ])("rejects a future runtime import from %s", async (filePath) => {
+    const messages = await restrictedImportMessages(
+      'import { grantCredits } from "@/platform/credits/application/credit-service";',
+      filePath,
+    );
+
+    expect(messages).toHaveLength(1);
+  });
+
+  it("rejects a relative import that bypasses the platform alias", async () => {
+    const messages = await restrictedImportMessages(
+      'import { grantCredits } from "../../credits/application/credit-service";',
+      "src/platform/commerce/application/future-handler.ts",
+    );
+
+    expect(messages).toHaveLength(1);
+  });
+
+  it("rejects a dynamic Credits implementation import from Commerce core", async () => {
+    const messages = await restrictedImportMessages(
+      'async function loadCredits() { return import("@/platform/credits/application/credit-service"); }',
+      "src/platform/commerce/application/future-handler.ts",
+    );
+
+    expect(messages).toHaveLength(1);
+  });
+
+  it("rejects a CommonJS Credits implementation import from Commerce core", async () => {
+    const messages = await restrictedImportMessages(
+      'const credits = require("@/platform/credits/application/credit-service");',
+      "src/platform/commerce/providers/future-provider.ts",
+    );
+
+    expect(messages).toHaveLength(1);
+  });
+
+  it("retains the platform-to-product module restriction in Commerce core", async () => {
+    const messages = await restrictedImportMessages(
+      'import { productAction } from "@/modules/future-product/application/action";',
+      "src/platform/commerce/application/future-handler.ts",
+    );
+
+    expect(messages).toHaveLength(1);
+  });
+
+  it("allows an explicit type-only Credits dependency", async () => {
+    const messages = await restrictedImportMessages(
+      'import type { CreditReservation } from "@/platform/credits/domain/types";',
+      "src/platform/commerce/application/future-handler.ts",
+    );
+
+    expect(messages).toEqual([]);
+  });
+
+  it("allows the Commerce composition root to wire the Credits adapter", async () => {
+    const messages = await restrictedImportMessages(
+      'const adapter = import("@/platform/credits/integration/commerce/credit-fulfillment");',
+      "src/platform/commerce/commerce-runtime.ts",
+    );
+
+    expect(messages).toEqual([]);
+  });
+
+  it("allows the Credits integration adapter to depend on a Commerce port", async () => {
+    const messages = await restrictedImportMessages(
+      'import type { OrderFulfillment } from "@/platform/commerce/application/order-fulfillment";',
+      "src/platform/credits/integration/commerce/future-adapter.ts",
+    );
+
+    expect(messages).toEqual([]);
+  });
 });

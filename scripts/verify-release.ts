@@ -45,6 +45,95 @@ validateLegalConfig({
 
 const forbidden = [/quick[ -]?i[ -]?ching/i, /ichingcoin/i, /hexagram/i, /casting/i];
 
+async function readReleaseArtifact(
+  root: string,
+  file: string,
+  missingMessage: string,
+): Promise<string> {
+  try {
+    return await readFile(path.join(root, file), "utf8");
+  } catch {
+    throw new Error(missingMessage);
+  }
+}
+
+export async function verifyCreditsReleaseArtifacts(
+  root: string,
+  input: { readonly commerceEnabled: boolean },
+): Promise<void> {
+  const integrityMigration = await readReleaseArtifact(
+    root,
+    "drizzle/0009_production_readiness.sql",
+    "durable credit ledger integrity migration is missing",
+  );
+  if (
+    !integrityMigration.includes('CREATE FUNCTION "reject_credit_ledger_mutation"') ||
+    !integrityMigration.includes('CREATE TRIGGER "credit_ledger_entries_append_only"') ||
+    !integrityMigration.includes('BEFORE UPDATE OR DELETE ON "credit_ledger_entries"')
+  ) {
+    throw new Error("durable credit ledger integrity migration is missing");
+  }
+
+  const leaseMigration = await readReleaseArtifact(
+    root,
+    "drizzle/0010_credit_finalization_lease_token.sql",
+    "credit finalization lease migration is missing",
+  );
+  if (
+    !leaseMigration.includes('ALTER TABLE "credit_finalization_jobs" ADD COLUMN "lease_token" text')
+  ) {
+    throw new Error("credit finalization lease migration is missing");
+  }
+
+  const journalContent = await readReleaseArtifact(
+    root,
+    "drizzle/meta/_journal.json",
+    "durable Credits migrations are missing from the migration journal",
+  );
+  let journal: { readonly entries?: ReadonlyArray<{ readonly tag?: string }> };
+  try {
+    journal = JSON.parse(journalContent) as typeof journal;
+  } catch {
+    throw new Error("durable Credits migrations are missing from the migration journal");
+  }
+  const migrationTags = new Set(journal.entries?.map((entry) => entry.tag));
+  if (
+    !migrationTags.has("0009_production_readiness") ||
+    !migrationTags.has("0010_credit_finalization_lease_token")
+  ) {
+    throw new Error("durable Credits migrations are missing from the migration journal");
+  }
+
+  if (input.commerceEnabled) {
+    const coordinator = await readReleaseArtifact(
+      root,
+      "src/platform/accounts/platform-account-deletion-coordinator.ts",
+      "commerce account deletion coordinator is missing",
+    );
+    const runtime = await readReleaseArtifact(
+      root,
+      "src/platform/accounts/account-deletion-runtime.ts",
+      "commerce account deletion coordinator is missing",
+    );
+    if (
+      coordinator.includes("commerce deletion coordinator is not configured") ||
+      !coordinator.includes("account-delete:") ||
+      !coordinator.includes("commerce account deletion preparation pending") ||
+      !runtime.includes("database: db") ||
+      !runtime.includes("getCommerce: getCommerceRuntime")
+    ) {
+      throw new Error("commerce account deletion coordinator is missing");
+    }
+  }
+
+  console.log(
+    JSON.stringify({
+      event: "credits_release_artifacts_verified",
+      commerceAccountDeletion: input.commerceEnabled ? "durable" : "disabled",
+    }),
+  );
+}
+
 async function collectFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files: string[] = [];
@@ -139,6 +228,8 @@ if (featuresConfig.commerce.enabled && !scheduledPaths.has("/api/internal/jobs/c
 if (featuresConfig.commerce.credits && !scheduledPaths.has("/api/internal/jobs/credit-expiry")) {
   throw new Error("durable credit expiry job is missing from vercel.json");
 }
+
+await verifyCreditsReleaseArtifacts(".", { commerceEnabled: featuresConfig.commerce.enabled });
 
 for (const requiredFile of [
   "SECURITY.md",
