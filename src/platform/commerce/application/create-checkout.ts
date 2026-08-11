@@ -1,8 +1,13 @@
 import { and, eq, lt, or } from "drizzle-orm";
 
+import {
+  lockAccountSubject,
+  requireActiveAccountSubject,
+} from "@/platform/accounts/account-subject-commerce-fence";
 import type { DatabaseClient } from "@/platform/database/client";
 import { orders } from "@/platform/database/commerce-schema";
 
+import { runFencedCheckout } from "./fenced-checkout";
 import type { ProductCatalog } from "./product-catalog";
 import type { PaymentProvider } from "./payment-provider";
 import { ensureCommerceProduct } from "./sync-product-catalog";
@@ -53,107 +58,112 @@ export async function createCheckout(
 
   const leaseToken = crypto.randomUUID();
   const leaseExpiresAt = new Date(now.getTime() + CHECKOUT_LEASE_MS);
-  const [inserted] = await database
-    .insert(orders)
-    .values({
-      subjectId: input.subjectId,
-      productId: product.id,
-      environment: input.environment,
-      expectedCurrency: snapshot.expected.currency,
-      expectedMinor: snapshot.expected.minor,
-      checkoutIdempotencyKey: input.idempotencyKey,
-      checkoutState: "creating",
-      checkoutLeaseToken: leaseToken,
-      checkoutLeaseExpiresAt: leaseExpiresAt,
-    })
-    .onConflictDoNothing({ target: orders.checkoutIdempotencyKey })
-    .returning();
 
-  let order = inserted;
-  let reused = false;
-  if (!order) {
-    const existing = await database.query.orders.findFirst({
-      where: eq(orders.checkoutIdempotencyKey, input.idempotencyKey),
-    });
-    if (!existing) throw new Error("checkout idempotency resolution failed");
-    if (existing.subjectId !== input.subjectId) throw new Error("checkout idempotency collision");
-    if (existing.productId !== product.id || existing.environment !== input.environment) {
-      throw new Error("checkout idempotency key reused for different product");
-    }
-    if (existing.checkoutState === "created") throw new Error("checkout already created");
-    if (
-      existing.checkoutState === "creating" &&
-      existing.checkoutLeaseExpiresAt &&
-      existing.checkoutLeaseExpiresAt > now
-    ) {
-      throw new Error("checkout initialization in progress");
-    }
+  return runFencedCheckout({
+    claimWhileSubjectActive: () =>
+      database.transaction(async (transaction) => {
+        requireActiveAccountSubject(await lockAccountSubject(transaction, input.subjectId));
+        const [inserted] = await transaction
+          .insert(orders)
+          .values({
+            subjectId: input.subjectId,
+            productId: product.id,
+            environment: input.environment,
+            expectedCurrency: snapshot.expected.currency,
+            expectedMinor: snapshot.expected.minor,
+            checkoutIdempotencyKey: input.idempotencyKey,
+            checkoutState: "creating",
+            checkoutLeaseToken: leaseToken,
+            checkoutLeaseExpiresAt: leaseExpiresAt,
+          })
+          .onConflictDoNothing({ target: orders.checkoutIdempotencyKey })
+          .returning();
+        if (inserted) return { order: inserted, reused: false };
 
-    const [claimed] = await database
-      .update(orders)
-      .set({
-        checkoutState: "creating",
-        checkoutLeaseToken: leaseToken,
-        checkoutLeaseExpiresAt: leaseExpiresAt,
-      })
-      .where(
-        and(
-          eq(orders.id, existing.id),
-          or(
-            eq(orders.checkoutState, "failed"),
-            and(eq(orders.checkoutState, "creating"), lt(orders.checkoutLeaseExpiresAt, now)),
-          ),
-        ),
-      )
-      .returning();
-    if (!claimed) throw new Error("checkout initialization in progress");
-    order = claimed;
-    reused = true;
-  }
+        const existing = await transaction.query.orders.findFirst({
+          where: eq(orders.checkoutIdempotencyKey, input.idempotencyKey),
+        });
+        if (!existing) throw new Error("checkout idempotency resolution failed");
+        if (existing.subjectId !== input.subjectId)
+          throw new Error("checkout idempotency collision");
+        if (existing.productId !== product.id || existing.environment !== input.environment) {
+          throw new Error("checkout idempotency key reused for different product");
+        }
+        if (existing.checkoutState === "created") throw new Error("checkout already created");
+        if (
+          existing.checkoutState === "creating" &&
+          existing.checkoutLeaseExpiresAt &&
+          existing.checkoutLeaseExpiresAt > now
+        ) {
+          throw new Error("checkout initialization in progress");
+        }
 
-  const successUrl = new URL(
-    `/checkout/return?order=${encodeURIComponent(order.id)}`,
-    input.appOrigin,
-  ).toString();
-  const cancelUrl = new URL(
-    `/checkout/return?order=${encodeURIComponent(order.id)}&canceled=1`,
-    input.appOrigin,
-  ).toString();
-
-  try {
-    const checkout = await provider.createCheckout({
-      model: snapshot.commercialModel,
-      localOrderId: order.id,
-      providerProductId: snapshot.providerProductId,
-      expectedDisplayAmount: snapshot.expectedDisplayAmount,
-      currency: snapshot.expected.currency,
-      buyerIdentity: input.buyerIdentity,
-      ...(input.buyerEmail ? { buyerEmail: input.buyerEmail } : {}),
-      successUrl,
-      cancelUrl,
-    });
-    const target = new URL(checkout.checkoutUrl);
-    if (target.protocol !== "https:") throw new Error("provider checkout URL must use HTTPS");
-
-    const [committed] = await database
-      .update(orders)
-      .set({
-        checkoutState: "created",
-        checkoutLeaseToken: null,
-        checkoutLeaseExpiresAt: null,
-        externalCheckoutSessionId: checkout.externalCheckoutSessionId,
-        ...(checkout.externalOrderId ? { externalOrderId: checkout.externalOrderId } : {}),
-      })
-      .where(and(eq(orders.id, order.id), eq(orders.checkoutLeaseToken, leaseToken)))
-      .returning({ id: orders.id });
-    if (!committed) throw new Error("checkout lease lost before commit");
-
-    return { orderId: order.id, checkoutUrl: checkout.checkoutUrl, reused };
-  } catch (error) {
-    await database
-      .update(orders)
-      .set({ checkoutState: "failed", checkoutLeaseToken: null, checkoutLeaseExpiresAt: null })
-      .where(and(eq(orders.id, order.id), eq(orders.checkoutLeaseToken, leaseToken)));
-    throw error;
-  }
+        const [claimed] = await transaction
+          .update(orders)
+          .set({
+            checkoutState: "creating",
+            checkoutLeaseToken: leaseToken,
+            checkoutLeaseExpiresAt: leaseExpiresAt,
+          })
+          .where(
+            and(
+              eq(orders.id, existing.id),
+              or(
+                eq(orders.checkoutState, "failed"),
+                and(eq(orders.checkoutState, "creating"), lt(orders.checkoutLeaseExpiresAt, now)),
+              ),
+            ),
+          )
+          .returning();
+        if (!claimed) throw new Error("checkout initialization in progress");
+        return { order: claimed, reused: true };
+      }),
+    callProvider: async ({ order }) => {
+      const successUrl = new URL(
+        `/checkout/return?order=${encodeURIComponent(order.id)}`,
+        input.appOrigin,
+      ).toString();
+      const cancelUrl = new URL(
+        `/checkout/return?order=${encodeURIComponent(order.id)}&canceled=1`,
+        input.appOrigin,
+      ).toString();
+      const checkout = await provider.createCheckout({
+        model: snapshot.commercialModel,
+        localOrderId: order.id,
+        providerProductId: snapshot.providerProductId,
+        expectedDisplayAmount: snapshot.expectedDisplayAmount,
+        currency: snapshot.expected.currency,
+        buyerIdentity: input.buyerIdentity,
+        ...(input.buyerEmail ? { buyerEmail: input.buyerEmail } : {}),
+        successUrl,
+        cancelUrl,
+      });
+      const target = new URL(checkout.checkoutUrl);
+      if (target.protocol !== "https:") throw new Error("provider checkout URL must use HTTPS");
+      return checkout;
+    },
+    commitWhileSubjectActive: ({ order, reused }, checkout) =>
+      database.transaction(async (transaction) => {
+        requireActiveAccountSubject(await lockAccountSubject(transaction, input.subjectId));
+        const [committed] = await transaction
+          .update(orders)
+          .set({
+            checkoutState: "created",
+            checkoutLeaseToken: null,
+            checkoutLeaseExpiresAt: null,
+            externalCheckoutSessionId: checkout.externalCheckoutSessionId,
+            ...(checkout.externalOrderId ? { externalOrderId: checkout.externalOrderId } : {}),
+          })
+          .where(and(eq(orders.id, order.id), eq(orders.checkoutLeaseToken, leaseToken)))
+          .returning({ id: orders.id });
+        if (!committed) throw new Error("checkout lease lost before commit");
+        return { orderId: order.id, checkoutUrl: checkout.checkoutUrl, reused };
+      }),
+    failClaim: async ({ order }) => {
+      await database
+        .update(orders)
+        .set({ checkoutState: "failed", checkoutLeaseToken: null, checkoutLeaseExpiresAt: null })
+        .where(and(eq(orders.id, order.id), eq(orders.checkoutLeaseToken, leaseToken)));
+    },
+  });
 }

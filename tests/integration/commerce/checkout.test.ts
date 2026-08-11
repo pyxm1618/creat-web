@@ -147,3 +147,80 @@ it("reuses the local order after provider failure without creating a duplicate r
     .where(eq(orders.checkoutIdempotencyKey, input.idempotencyKey));
   expect(rows).toHaveLength(1);
 });
+
+it("rejects a checkout before the provider call when account deletion has started", async () => {
+  const subject = await subjectId();
+  await database.db
+    .update(accountSubjects)
+    .set({ status: "deletion_pending", deletionRequestedAt: new Date() })
+    .where(eq(accountSubjects.id, subject));
+  let calls = 0;
+  const fake = provider(async () => {
+    calls += 1;
+    return {
+      externalCheckoutSessionId: "session-forbidden",
+      checkoutUrl: "https://checkout.example/session-forbidden",
+    };
+  });
+
+  await expect(
+    createCheckout(
+      {
+        subjectId: subject,
+        buyerIdentity: subject,
+        productKey: "one-time-test",
+        environment: "test",
+        idempotencyKey: `checkout:${crypto.randomUUID()}`,
+        appOrigin: "https://app.example.com",
+      },
+      { database: database.db, catalog, provider: fake },
+    ),
+  ).rejects.toThrow("account subject is not active");
+  expect(calls).toBe(0);
+});
+
+it("does not return a provider checkout URL when deletion wins during the provider call", async () => {
+  const subject = await subjectId();
+  let providerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
+  let releaseProvider!: () => void;
+  const providerGate = new Promise<void>((resolve) => {
+    releaseProvider = resolve;
+  });
+  const fake = provider(async () => {
+    providerStarted();
+    await providerGate;
+    return {
+      externalCheckoutSessionId: "session-deletion-race",
+      checkoutUrl: "https://checkout.example/session-deletion-race",
+    };
+  });
+  const idempotencyKey = `checkout:${crypto.randomUUID()}`;
+
+  const checkout = createCheckout(
+    {
+      subjectId: subject,
+      buyerIdentity: subject,
+      productKey: "one-time-test",
+      environment: "test",
+      idempotencyKey,
+      appOrigin: "https://app.example.com",
+    },
+    { database: database.db, catalog, provider: fake },
+  );
+  await started;
+  await database.db
+    .update(accountSubjects)
+    .set({ status: "deletion_pending", deletionRequestedAt: new Date() })
+    .where(eq(accountSubjects.id, subject));
+  releaseProvider();
+
+  await expect(checkout).rejects.toThrow("account subject is not active");
+  const [order] = await database.db
+    .select()
+    .from(orders)
+    .where(eq(orders.checkoutIdempotencyKey, idempotencyKey));
+  expect(order?.checkoutState).toBe("failed");
+});

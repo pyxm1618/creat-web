@@ -7,12 +7,14 @@ import {
   enqueueSubscriptionCommand,
 } from "@/platform/commerce/application/commerce-commands";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
+import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   accountSubjects,
   commerceAppliedEvents,
   commerceCommandJobs,
   commerceProducts,
+  commerceReconciliationRuns,
   fulfillmentJobs,
   orders,
   payments,
@@ -24,6 +26,7 @@ import {
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
 const database = createDatabaseClient(databaseUrl);
+const subjects = createPostgresAccountSubjectRepository(database.db);
 
 beforeAll(async () => {
   await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS public CASCADE"));
@@ -155,6 +158,152 @@ async function activateSubscription(
   if (!subscription) throw new Error("subscription projection missing");
   return subscription;
 }
+
+async function waitForBlockedDatabaseOperation(): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const [row] = await database.db.execute(
+      sql<{ waiting: number }>`select count(*)::int as waiting from pg_locks where not granted`,
+    );
+    if (Number(row?.waiting ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("database operation did not reach the expected lock barrier");
+}
+
+it("consumes a late activation after deletion without creating an active subscription", async () => {
+  const { subject, order } = await subscriptionFixture();
+  await subjects.beginDeletion(subject.id);
+  const eventId = `evt-late-activate-${crypto.randomUUID()}`;
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "subscription_activated",
+      eventId,
+      environment: "test",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      externalPaymentId: `PAY_${crypto.randomUUID()}`,
+      amount: { currency: "USD", minor: 1900n },
+      currentPeriodStart: new Date("2026-10-01T00:00:00Z"),
+      currentPeriodEnd: new Date("2026-11-01T00:00:00Z"),
+      occurredAt: new Date("2026-10-01T00:00:05Z"),
+    },
+    "f".repeat(64),
+  );
+
+  expect(
+    await database.db.select().from(subscriptions).where(eq(subscriptions.orderId, order.id)),
+  ).toEqual([]);
+  expect(
+    await database.db
+      .select()
+      .from(commerceAppliedEvents)
+      .where(eq(commerceAppliedEvents.providerEventId, eventId)),
+  ).toHaveLength(1);
+  const reconciliations = await database.db
+    .select()
+    .from(commerceReconciliationRuns)
+    .where(eq(commerceReconciliationRuns.targetId, order.externalOrderId!));
+  expect(reconciliations).toHaveLength(1);
+  expect(reconciliations[0]).toMatchObject({ result: "resurrection_blocked" });
+});
+
+it("consumes a late uncancel after deletion without restoring active state", async () => {
+  const { subject, order } = await subscriptionFixture();
+  const subscription = await activateSubscription(order);
+  await database.db
+    .update(subscriptions)
+    .set({ status: "canceling", cancelAtPeriodEnd: true })
+    .where(eq(subscriptions.id, subscription.id));
+  await subjects.beginDeletion(subject.id);
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "subscription_uncanceled",
+      eventId: `evt-late-uncancel-${crypto.randomUUID()}`,
+      environment: "test",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      occurredAt: new Date("2026-09-10T00:00:00Z"),
+    },
+    "1".repeat(64),
+  );
+
+  const retained = await database.db.query.subscriptions.findFirst({
+    where: eq(subscriptions.id, subscription.id),
+  });
+  expect(retained).toMatchObject({ status: "canceling", cancelAtPeriodEnd: true });
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, order.externalOrderId!)),
+  ).toHaveLength(1);
+});
+
+it("lets an uncancel holding the subject fence commit before deletion starts", async () => {
+  const { subject, order } = await subscriptionFixture();
+  const subscription = await activateSubscription(order);
+  await database.db
+    .update(subscriptions)
+    .set({ status: "canceling", cancelAtPeriodEnd: true })
+    .where(eq(subscriptions.id, subscription.id));
+  let releaseSubscription!: () => void;
+  const subscriptionGate = new Promise<void>((resolve) => {
+    releaseSubscription = resolve;
+  });
+  let subscriptionLocked!: () => void;
+  const locked = new Promise<void>((resolve) => {
+    subscriptionLocked = resolve;
+  });
+  const blocker = database.db.transaction(async (transaction) => {
+    await transaction
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, subscription.id))
+      .for("update");
+    subscriptionLocked();
+    await subscriptionGate;
+  });
+  await locked;
+
+  const event = processProviderEvent(
+    database.db,
+    {
+      type: "subscription_uncanceled",
+      eventId: `evt-barrier-uncancel-${crypto.randomUUID()}`,
+      environment: "test",
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      occurredAt: new Date("2026-09-11T00:00:00Z"),
+    },
+    "2".repeat(64),
+  );
+  await waitForBlockedDatabaseOperation();
+  const deletion = subjects.beginDeletion(subject.id);
+  const deletionBeforeRelease = await Promise.race([
+    deletion.then(() => "completed" as const),
+    new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 75)),
+  ]);
+  expect(deletionBeforeRelease).toBe("blocked");
+
+  releaseSubscription();
+  await blocker;
+  await event;
+  await deletion;
+  expect(
+    await database.db.query.accountSubjects.findFirst({
+      where: eq(accountSubjects.id, subject.id),
+    }),
+  ).toMatchObject({ status: "deletion_pending" });
+  expect(
+    await database.db.query.subscriptions.findFirst({
+      where: eq(subscriptions.id, subscription.id),
+    }),
+  ).toMatchObject({ status: "active" });
+});
 
 it("does not extend the grace deadline when repeated past-due events arrive", async () => {
   const { order } = await subscriptionFixture();

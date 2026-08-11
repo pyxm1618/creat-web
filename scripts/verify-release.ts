@@ -10,6 +10,8 @@ import { loadRuntimeEnv } from "@/platform/config/load-runtime-config";
 import { validateProductConfig } from "@/platform/config/validate-config";
 import { validateLegalConfig } from "@/platform/legal/validate-legal-config";
 
+import { probeCommerceAccountDeletionCoordinator } from "./account-deletion-release-probe";
+
 const modeArgument = process.argv.find((argument) => argument.startsWith("--mode="))?.slice(7);
 if (modeArgument && !["test", "staging", "production"].includes(modeArgument)) {
   throw new Error("--mode must be test, staging, or production");
@@ -165,6 +167,7 @@ if (
 ) {
   throw new Error("commerce-enabled account deletion coordinator must be wired");
 }
+await probeCommerceAccountDeletionCoordinator();
 
 console.log(
   JSON.stringify({

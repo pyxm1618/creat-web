@@ -10,6 +10,7 @@ import {
 } from "@/platform/database/schema";
 
 import type { AccountSubjectRepository } from "./account-subject-repository";
+import { deleteIdentityBeforeDetach } from "./account-deletion-identity";
 import type { IdentityDeletion } from "./better-auth-identity-deletion";
 
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
@@ -169,15 +170,26 @@ export function createAccountDeletionService(input: {
       }
 
       if (current.step === "downstream_prepared") {
-        if (!current.authUserId) throw new Error("deletion identity is unavailable");
-        await input.subjects.detachAuthIdentity(current.subjectId, current.authUserId);
-        current = await advance(current.id, leaseToken, "identity_detached");
+        const authUserId = current.authUserId;
+        await deleteIdentityBeforeDetach({
+          authUserId,
+          deleteUser: (userId) => input.identityDeletion.deleteUser(userId),
+          confirmDetached: async () => {
+            await input.subjects.detachAuthIdentity(current.subjectId, authUserId);
+          },
+        });
+        current = await advance(current.id, leaseToken, "identity_deleted");
       }
 
       if (current.step === "identity_detached") {
-        if (current.authUserId) {
-          await input.identityDeletion.deleteUser(current.authUserId);
-        }
+        const authUserId = current.authUserId;
+        await deleteIdentityBeforeDetach({
+          authUserId,
+          deleteUser: (userId) => input.identityDeletion.deleteUser(userId),
+          confirmDetached: async () => {
+            await input.subjects.detachAuthIdentity(current.subjectId, authUserId);
+          },
+        });
         current = await advance(current.id, leaseToken, "identity_deleted");
       }
 

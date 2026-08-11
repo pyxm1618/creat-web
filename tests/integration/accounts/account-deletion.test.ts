@@ -382,11 +382,81 @@ describe("account deletion workflow", () => {
       .select()
       .from(accountDeletionRequests)
       .where(eq(accountDeletionRequests.id, request.id));
-    expect(failed[0]).toMatchObject({ status: "failed", step: "identity_detached" });
+    expect(failed[0]).toMatchObject({ status: "failed", step: "downstream_prepared" });
+    expect(
+      await database.db.select().from(user).where(eq(user.id, "delete_identity_retry")),
+    ).toHaveLength(1);
+    expect(
+      await database.db.select().from(accountSubjects).where(eq(accountSubjects.id, subject.id)),
+    ).toMatchObject([
+      {
+        id: subject.id,
+        authUserId: "delete_identity_retry",
+        status: "deletion_pending",
+      },
+    ]);
+    const reprovisioned = await subjects.ensureForAuthUser("delete_identity_retry");
+    expect(reprovisioned).toMatchObject({ id: subject.id, status: "deletion_pending" });
 
     const completed = await service.run(request.id);
     expect(completed.status).toBe("completed");
     expect(prepareCalls).toBe(1);
     expect(deleteCalls).toBe(2);
+  });
+
+  it("resumes a legacy identity-detached request by deleting the remaining auth identity", async () => {
+    const subject = await seedIdentity("delete_legacy_detached");
+    const service = createAccountDeletionService({
+      database: database.db,
+      subjects,
+      coordinator: { prepare: async () => undefined },
+      identityDeletion: databaseIdentityDeletion(),
+    });
+    const request = await service.request({
+      subjectId: subject.id,
+      authUserId: "delete_legacy_detached",
+    });
+    await subjects.beginDeletion(subject.id);
+    await subjects.detachAuthIdentity(subject.id, "delete_legacy_detached");
+    await database.db
+      .update(accountDeletionRequests)
+      .set({ status: "failed", step: "identity_detached", nextAttemptAt: new Date(0) })
+      .where(eq(accountDeletionRequests.id, request.id));
+
+    await expect(service.run(request.id)).resolves.toMatchObject({
+      status: "completed",
+      step: "completed",
+    });
+    expect(
+      await database.db.select().from(user).where(eq(user.id, "delete_legacy_detached")),
+    ).toEqual([]);
+  });
+
+  it("resumes downstream preparation after a prior delete already nulled both FKs", async () => {
+    const subject = await seedIdentity("delete_legacy_fk_null");
+    const service = createAccountDeletionService({
+      database: database.db,
+      subjects,
+      coordinator: { prepare: async () => undefined },
+      identityDeletion: databaseIdentityDeletion(),
+    });
+    const request = await service.request({
+      subjectId: subject.id,
+      authUserId: "delete_legacy_fk_null",
+    });
+    await subjects.beginDeletion(subject.id);
+    await database.db.delete(user).where(eq(user.id, "delete_legacy_fk_null"));
+    await database.db
+      .update(accountDeletionRequests)
+      .set({ status: "failed", step: "downstream_prepared", nextAttemptAt: new Date(0) })
+      .where(eq(accountDeletionRequests.id, request.id));
+
+    await expect(service.run(request.id)).resolves.toMatchObject({
+      status: "completed",
+      step: "completed",
+    });
+    expect(
+      await database.db.select().from(accountSubjects).where(eq(accountSubjects.id, subject.id)),
+    ).toMatchObject([{ status: "deleted", authUserId: null }]);
   });
 });

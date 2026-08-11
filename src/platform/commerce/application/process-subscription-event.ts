@@ -1,9 +1,11 @@
 import { and, eq } from "drizzle-orm";
 
 import { subscriptionsConfig } from "@/config/subscriptions.config";
+import { lockAccountSubject } from "@/platform/accounts/account-subject-commerce-fence";
 import type { DatabaseClient } from "@/platform/database/client";
 import {
   commerceProducts,
+  commerceReconciliationRuns,
   fulfillmentJobs,
   orders,
   payments,
@@ -19,6 +21,7 @@ import {
   type SubscriptionStatus,
   type SubscriptionTransition,
 } from "../domain/subscription";
+import { guardSubscriptionEventForSubject } from "./subscription-account-deletion-policy";
 
 type SubscriptionEvent = Extract<
   NormalizedProviderEvent,
@@ -116,6 +119,35 @@ function transitionFor(event: SubscriptionEvent): SubscriptionTransition | undef
   }
 }
 
+async function findOrder(tx: CommerceTransaction, event: SubscriptionEvent) {
+  if (event.merchantOrderReference) {
+    const [order] = await tx
+      .select()
+      .from(orders)
+      .where(
+        and(eq(orders.id, event.merchantOrderReference), eq(orders.environment, event.environment)),
+      )
+      .limit(1);
+    if (!order) throw new Error("subscription order not found for merchant reference");
+    if (order.externalOrderId && order.externalOrderId !== event.externalOrderId) {
+      throw new Error("subscription provider order id mismatch");
+    }
+    return order;
+  }
+  const [order] = await tx
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.environment, event.environment),
+        eq(orders.externalOrderId, event.externalOrderId),
+      ),
+    )
+    .limit(1);
+  if (!order) throw new Error("subscription order not found for provider event");
+  return order;
+}
+
 async function lockOrder(tx: CommerceTransaction, event: SubscriptionEvent) {
   if (event.merchantOrderReference) {
     const [order] = await tx
@@ -152,150 +184,183 @@ export async function processSubscriptionEvent(
   event: SubscriptionEvent,
   payloadHash: string,
 ): Promise<void> {
+  const discoveredOrder = await findOrder(tx, event);
+  const subject = await lockAccountSubject(tx, discoveredOrder.subjectId);
   const order = await lockOrder(tx, event);
-  const [product] = await tx
-    .select()
-    .from(commerceProducts)
-    .where(eq(commerceProducts.id, order.productId))
-    .limit(1);
-  if (!product || product.model !== "subscription") {
-    throw new Error("subscription event targets a non-subscription product");
-  }
+  if (order.subjectId !== subject.id) throw new Error("subscription order subject changed");
 
-  let [subscription] = await tx
-    .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.orderId, order.id))
-    .limit(1)
-    .for("update");
-
-  if (!subscription) {
-    [subscription] = await tx
-      .insert(subscriptions)
-      .values({
-        orderId: order.id,
-        subjectId: order.subjectId,
-        environment: event.environment,
-        externalOrderId: event.externalOrderId,
-        status: "pending",
-        providerUpdatedAt: event.occurredAt,
-      })
-      .returning();
-  }
-  if (!subscription) throw new Error("subscription projection insert failed");
-
-  const staleProjectionEvent = Boolean(
-    subscription.providerUpdatedAt && event.occurredAt < subscription.providerUpdatedAt,
-  );
-  if (!staleProjectionEvent) {
-    const transition = transitionFor(event);
-    let projection = persistedProjection(subscription);
-    if (transition) projection = applySubscriptionTransition(projection, transition);
-    if (event.type === "subscription_updated") {
-      projection = {
-        ...projection,
-        currentPeriodStart: event.currentPeriodStart ?? projection.currentPeriodStart,
-        currentPeriodEnd: event.currentPeriodEnd ?? projection.currentPeriodEnd,
-      };
-    }
-
-    await tx
-      .update(subscriptions)
-      .set({
-        status: projection.status,
-        cancelAtPeriodEnd: projection.cancelAtPeriodEnd,
-        currentPeriodStart: projection.currentPeriodStart,
-        currentPeriodEnd: projection.currentPeriodEnd,
-        pastDueStartedAt: projection.pastDueStartedAt,
-        pastDueGraceEndsAt: projection.pastDueGraceEndsAt,
-        gracePolicyVersion: projection.gracePolicyVersion,
-        providerUpdatedAt: event.occurredAt,
-        updatedAt: new Date(),
-      })
-      .where(eq(subscriptions.id, subscription.id));
-  }
-
-  if (event.type === "subscription_activated" || event.type === "subscription_payment_succeeded") {
-    await tx
-      .update(orders)
-      .set({
-        status: transitionOrder(parseOrderStatus(order.status), "payment_succeeded"),
-        externalOrderId: order.externalOrderId ?? event.externalOrderId,
-        paidAt: order.paidAt ?? event.occurredAt,
-      })
-      .where(eq(orders.id, order.id));
-  }
-
-  if (!event.externalPaymentId || !event.amount) return;
-  const expected = {
-    currency: order.expectedCurrency as SupportedCurrency,
-    minor: order.expectedMinor,
-  };
-  if (!equalMoney(expected, event.amount)) throw new Error("subscription payment amount mismatch");
-
-  let [payment] = await tx
-    .select()
-    .from(payments)
-    .where(
-      and(
-        eq(payments.environment, event.environment),
-        eq(payments.externalPaymentId, event.externalPaymentId),
-      ),
-    )
-    .limit(1)
-    .for("update");
-  if (!payment) {
-    [payment] = await tx
-      .insert(payments)
-      .values({
-        orderId: order.id,
-        environment: event.environment,
-        externalPaymentId: event.externalPaymentId,
-        status: "succeeded",
-        refundStatus: "none",
-        currency: event.amount.currency,
-        amountMinor: event.amount.minor,
-        refundedMinor: 0n,
-        providerCreatedAt: event.occurredAt,
-        rawPayloadHash: payloadHash,
-      })
-      .returning();
-  } else if (
-    payment.orderId !== order.id ||
-    payment.currency !== event.amount.currency ||
-    payment.amountMinor !== event.amount.minor
-  ) {
-    throw new Error("subscription payment identity mismatch");
-  }
-  if (!payment) throw new Error("subscription payment projection failed");
-
-  if (event.currentPeriodStart && event.currentPeriodEnd) {
-    await tx
-      .insert(subscriptionPeriods)
-      .values({
-        subscriptionId: subscription.id,
-        paymentId: payment.id,
-        periodStart: event.currentPeriodStart,
-        periodEnd: event.currentPeriodEnd,
-        state: "paid",
-      })
-      .onConflictDoNothing({
-        target: [
-          subscriptionPeriods.subscriptionId,
-          subscriptionPeriods.periodStart,
-          subscriptionPeriods.periodEnd,
-        ],
+  await guardSubscriptionEventForSubject({
+    subject,
+    eventType: event.type,
+    reconcile: async () => {
+      await tx.insert(commerceReconciliationRuns).values({
+        targetType: "subscription_account_deletion_fence",
+        targetId: event.externalOrderId,
+        actorType: "webhook",
+        beforeJson: {
+          eventId: event.eventId,
+          eventType: event.type,
+          orderId: order.id,
+          subjectId: subject.id,
+          subjectStatus: subject.status,
+        },
+        afterJson: {
+          action: "ignored_resurrection_event",
+          subscriptionMutationApplied: false,
+        },
+        result: "resurrection_blocked",
       });
-  }
+    },
+    apply: async () => {
+      const [product] = await tx
+        .select()
+        .from(commerceProducts)
+        .where(eq(commerceProducts.id, order.productId))
+        .limit(1);
+      if (!product || product.model !== "subscription") {
+        throw new Error("subscription event targets a non-subscription product");
+      }
 
-  const operation = `fulfill:${product.fulfillmentKey}`;
-  await tx
-    .insert(fulfillmentJobs)
-    .values({
-      sourceType: "subscription_payment",
-      sourceId: event.externalPaymentId,
-      operation,
-      idempotencyKey: `subscription-payment:${event.environment}:${event.externalPaymentId}:${operation}`,
-    })
-    .onConflictDoNothing({ target: fulfillmentJobs.idempotencyKey });
+      let [subscription] = await tx
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.orderId, order.id))
+        .limit(1)
+        .for("update");
+
+      if (!subscription) {
+        [subscription] = await tx
+          .insert(subscriptions)
+          .values({
+            orderId: order.id,
+            subjectId: order.subjectId,
+            environment: event.environment,
+            externalOrderId: event.externalOrderId,
+            status: "pending",
+            providerUpdatedAt: event.occurredAt,
+          })
+          .returning();
+      }
+      if (!subscription) throw new Error("subscription projection insert failed");
+
+      const staleProjectionEvent = Boolean(
+        subscription.providerUpdatedAt && event.occurredAt < subscription.providerUpdatedAt,
+      );
+      if (!staleProjectionEvent) {
+        const transition = transitionFor(event);
+        let projection = persistedProjection(subscription);
+        if (transition) projection = applySubscriptionTransition(projection, transition);
+        if (event.type === "subscription_updated") {
+          projection = {
+            ...projection,
+            currentPeriodStart: event.currentPeriodStart ?? projection.currentPeriodStart,
+            currentPeriodEnd: event.currentPeriodEnd ?? projection.currentPeriodEnd,
+          };
+        }
+
+        await tx
+          .update(subscriptions)
+          .set({
+            status: projection.status,
+            cancelAtPeriodEnd: projection.cancelAtPeriodEnd,
+            currentPeriodStart: projection.currentPeriodStart,
+            currentPeriodEnd: projection.currentPeriodEnd,
+            pastDueStartedAt: projection.pastDueStartedAt,
+            pastDueGraceEndsAt: projection.pastDueGraceEndsAt,
+            gracePolicyVersion: projection.gracePolicyVersion,
+            providerUpdatedAt: event.occurredAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(subscriptions.id, subscription.id));
+      }
+
+      if (
+        event.type === "subscription_activated" ||
+        event.type === "subscription_payment_succeeded"
+      ) {
+        await tx
+          .update(orders)
+          .set({
+            status: transitionOrder(parseOrderStatus(order.status), "payment_succeeded"),
+            externalOrderId: order.externalOrderId ?? event.externalOrderId,
+            paidAt: order.paidAt ?? event.occurredAt,
+          })
+          .where(eq(orders.id, order.id));
+      }
+
+      if (!event.externalPaymentId || !event.amount) return;
+      const expected = {
+        currency: order.expectedCurrency as SupportedCurrency,
+        minor: order.expectedMinor,
+      };
+      if (!equalMoney(expected, event.amount))
+        throw new Error("subscription payment amount mismatch");
+
+      let [payment] = await tx
+        .select()
+        .from(payments)
+        .where(
+          and(
+            eq(payments.environment, event.environment),
+            eq(payments.externalPaymentId, event.externalPaymentId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (!payment) {
+        [payment] = await tx
+          .insert(payments)
+          .values({
+            orderId: order.id,
+            environment: event.environment,
+            externalPaymentId: event.externalPaymentId,
+            status: "succeeded",
+            refundStatus: "none",
+            currency: event.amount.currency,
+            amountMinor: event.amount.minor,
+            refundedMinor: 0n,
+            providerCreatedAt: event.occurredAt,
+            rawPayloadHash: payloadHash,
+          })
+          .returning();
+      } else if (
+        payment.orderId !== order.id ||
+        payment.currency !== event.amount.currency ||
+        payment.amountMinor !== event.amount.minor
+      ) {
+        throw new Error("subscription payment identity mismatch");
+      }
+      if (!payment) throw new Error("subscription payment projection failed");
+
+      if (event.currentPeriodStart && event.currentPeriodEnd) {
+        await tx
+          .insert(subscriptionPeriods)
+          .values({
+            subscriptionId: subscription.id,
+            paymentId: payment.id,
+            periodStart: event.currentPeriodStart,
+            periodEnd: event.currentPeriodEnd,
+            state: "paid",
+          })
+          .onConflictDoNothing({
+            target: [
+              subscriptionPeriods.subscriptionId,
+              subscriptionPeriods.periodStart,
+              subscriptionPeriods.periodEnd,
+            ],
+          });
+      }
+
+      const operation = `fulfill:${product.fulfillmentKey}`;
+      await tx
+        .insert(fulfillmentJobs)
+        .values({
+          sourceType: "subscription_payment",
+          sourceId: event.externalPaymentId,
+          operation,
+          idempotencyKey: `subscription-payment:${event.environment}:${event.externalPaymentId}:${operation}`,
+        })
+        .onConflictDoNothing({ target: fulfillmentJobs.idempotencyKey });
+    },
+  });
 }

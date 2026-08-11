@@ -1,5 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import { lockAccountSubject } from "@/platform/accounts/account-subject-commerce-fence";
 import type { DatabaseClient } from "@/platform/database/client";
 import { orders, payments } from "@/platform/database/commerce-schema";
 import {
@@ -11,82 +12,114 @@ import {
 import type { Money } from "../domain/money";
 import type { CommerceEnvironment } from "../domain/product";
 
+type CommerceTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
+
 function validateIdempotencyKey(value: string): void {
   if (!/^[A-Za-z0-9:_-]{16,128}$/.test(value)) {
     throw new Error("invalid commerce idempotency key");
   }
 }
 
-export async function enqueueSubscriptionCommand(
-  database: DatabaseClient,
-  input: {
-    readonly subjectId: string;
-    readonly subscriptionId: string;
-    readonly command: "subscription_cancel" | "subscription_resume";
-    readonly idempotencyKey: string;
-  },
-) {
-  validateIdempotencyKey(input.idempotencyKey);
-  return database.transaction(async (tx) => {
-    const [subscription] = await tx
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.id, input.subscriptionId))
-      .limit(1)
-      .for("update");
-    if (!subscription || subscription.subjectId !== input.subjectId) {
-      throw new Error("subscription not found");
+export function assertSubscriptionCommandAllowed(input: {
+  readonly subjectStatus: string;
+  readonly subscriptionStatus: string;
+  readonly command: "subscription_cancel" | "subscription_resume";
+}): void {
+  if (input.command === "subscription_resume") {
+    if (input.subjectStatus !== "active") {
+      throw new Error("account deletion prevents subscription resume");
     }
-
-    const existing = await tx.query.commerceCommandJobs.findFirst({
-      where: eq(commerceCommandJobs.idempotencyKey, input.idempotencyKey),
-    });
-    if (existing) {
-      if (
-        existing.subjectId !== input.subjectId ||
-        existing.commandType !== input.command ||
-        existing.targetId !== subscription.id
-      ) {
-        throw new Error("commerce command idempotency collision");
-      }
-      return existing;
-    }
-
-    if (
-      input.command === "subscription_cancel" &&
-      !["active", "past_due", "canceling"].includes(subscription.status)
-    ) {
-      throw new Error("subscription cannot be canceled from current state");
-    }
-    if (input.command === "subscription_resume" && subscription.status !== "canceling") {
+    if (input.subscriptionStatus !== "canceling") {
       throw new Error("subscription cannot be resumed from current state");
     }
+    return;
+  }
 
-    const [inserted] = await tx
-      .insert(commerceCommandJobs)
-      .values({
-        subjectId: input.subjectId,
-        commandType: input.command,
-        targetId: subscription.id,
-        idempotencyKey: input.idempotencyKey,
-      })
-      .onConflictDoNothing({ target: commerceCommandJobs.idempotencyKey })
-      .returning();
-    if (inserted) return inserted;
+  if (!["pending", "active", "past_due", "canceling"].includes(input.subscriptionStatus)) {
+    throw new Error("subscription cannot be canceled from current state");
+  }
+}
 
-    const raced = await tx.query.commerceCommandJobs.findFirst({
-      where: eq(commerceCommandJobs.idempotencyKey, input.idempotencyKey),
-    });
+export async function enqueueSubscriptionCommand(
+  database: DatabaseClient,
+  input: SubscriptionCommandInput,
+) {
+  validateIdempotencyKey(input.idempotencyKey);
+  return database.transaction((transaction) =>
+    enqueueSubscriptionCommandInTransaction(transaction, input),
+  );
+}
+
+type SubscriptionCommandInput = {
+  readonly subjectId: string;
+  readonly subscriptionId: string;
+  readonly command: "subscription_cancel" | "subscription_resume";
+  readonly idempotencyKey: string;
+};
+
+export async function enqueueSubscriptionCommandInTransaction(
+  tx: CommerceTransaction,
+  input: SubscriptionCommandInput,
+) {
+  validateIdempotencyKey(input.idempotencyKey);
+  const subject = await lockAccountSubject(tx, input.subjectId);
+  const [subscription] = await tx
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.id, input.subscriptionId))
+    .limit(1)
+    .for("update");
+  if (!subscription || subscription.subjectId !== input.subjectId) {
+    throw new Error("subscription not found");
+  }
+
+  const existing = await tx.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.idempotencyKey, input.idempotencyKey),
+  });
+  if (existing) {
     if (
-      !raced ||
-      raced.subjectId !== input.subjectId ||
-      raced.commandType !== input.command ||
-      raced.targetId !== subscription.id
+      existing.subjectId !== input.subjectId ||
+      existing.commandType !== input.command ||
+      existing.targetId !== subscription.id
     ) {
       throw new Error("commerce command idempotency collision");
     }
-    return raced;
+    if (input.command === "subscription_resume" && subject.status !== "active") {
+      throw new Error("account deletion prevents subscription resume");
+    }
+    return existing;
+  }
+
+  assertSubscriptionCommandAllowed({
+    subjectStatus: subject.status,
+    subscriptionStatus: subscription.status,
+    command: input.command,
   });
+
+  const [inserted] = await tx
+    .insert(commerceCommandJobs)
+    .values({
+      subjectId: input.subjectId,
+      commandType: input.command,
+      targetId: subscription.id,
+      idempotencyKey: input.idempotencyKey,
+    })
+    .onConflictDoNothing({ target: commerceCommandJobs.idempotencyKey })
+    .returning();
+  if (inserted) return inserted;
+
+  const raced = await tx.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.idempotencyKey, input.idempotencyKey),
+  });
+  if (
+    !raced ||
+    raced.subjectId !== input.subjectId ||
+    raced.commandType !== input.command ||
+    raced.targetId !== subscription.id
+  ) {
+    throw new Error("commerce command idempotency collision");
+  }
+  return raced;
 }
 
 export async function enqueueRefundRequest(

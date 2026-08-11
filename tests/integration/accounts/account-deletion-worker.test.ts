@@ -7,6 +7,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createAccountDeletionService } from "@/platform/accounts/account-deletion-service";
 import { createPlatformAccountDeletionCoordinator } from "@/platform/accounts/platform-account-deletion-coordinator";
 import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
+import { enqueueSubscriptionCommand } from "@/platform/commerce/application/commerce-commands";
 import type { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
@@ -116,6 +117,7 @@ describe("durable account deletion worker", () => {
 
   it("enqueues one deterministic cancel command and waits until preparation completes", async () => {
     const { subject, subscription } = await seedActiveSubscription("coordinator_pending_user");
+    await subjects.beginDeletion(subject.id);
     const operationKey = randomUUID();
     const idempotencyKey = `account-delete:${operationKey}:${subscription.id}`;
     const coordinator = createPlatformAccountDeletionCoordinator({
@@ -166,6 +168,7 @@ describe("durable account deletion worker", () => {
   it("enqueues every active subscription before reporting preparation pending", async () => {
     const { subject, subscription } = await seedActiveSubscription("coordinator_many_user");
     const secondSubscription = await seedSubscription(subject.id, "coordinator_many_second");
+    await subjects.beginDeletion(subject.id);
     const operationKey = randomUUID();
     const coordinator = createPlatformAccountDeletionCoordinator({
       database: database.db,
@@ -191,6 +194,7 @@ describe("durable account deletion worker", () => {
 
   it("requires operator review when a cancellation command is dead-lettered", async () => {
     const { subject, subscription } = await seedActiveSubscription("coordinator_dead_letter_user");
+    await subjects.beginDeletion(subject.id);
     const operationKey = randomUUID();
     const idempotencyKey = `account-delete:${operationKey}:${subscription.id}`;
     const coordinator = createPlatformAccountDeletionCoordinator({
@@ -209,6 +213,96 @@ describe("durable account deletion worker", () => {
     await expect(coordinator.prepare({ subjectId: subject.id, operationKey })).rejects.toThrow(
       "commerce account deletion requires operator review",
     );
+  });
+
+  it("creates a durable cancellation command for a pending subscription", async () => {
+    const { subject, subscription } = await seedActiveSubscription("coordinator_pending_state");
+    await database.db
+      .update(subscriptions)
+      .set({ status: "pending" })
+      .where(eq(subscriptions.id, subscription.id));
+    await subjects.beginDeletion(subject.id);
+    const operationKey = randomUUID();
+    const coordinator = createPlatformAccountDeletionCoordinator({
+      database: database.db,
+      getCommerce: availableCommerceRuntime(),
+    });
+
+    await expect(coordinator.prepare({ subjectId: subject.id, operationKey })).rejects.toThrow(
+      "commerce account deletion preparation pending",
+    );
+    const commands = await database.db
+      .select()
+      .from(commerceCommandJobs)
+      .where(
+        eq(commerceCommandJobs.idempotencyKey, `account-delete:${operationKey}:${subscription.id}`),
+      );
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ commandType: "subscription_cancel", state: "pending" });
+  });
+
+  it("holds the subject fence through the final scan and rejects a racing resume", async () => {
+    const { subject, subscription } = await seedActiveSubscription("coordinator_final_scan");
+    await subjects.beginDeletion(subject.id);
+    const operationKey = randomUUID();
+    const idempotencyKey = `account-delete:${operationKey}:${subscription.id}`;
+    const coordinator = createPlatformAccountDeletionCoordinator({
+      database: database.db,
+      getCommerce: availableCommerceRuntime(),
+    });
+    await expect(coordinator.prepare({ subjectId: subject.id, operationKey })).rejects.toThrow(
+      "commerce account deletion preparation pending",
+    );
+    await database.db
+      .update(commerceCommandJobs)
+      .set({ state: "completed", completedAt: new Date() })
+      .where(eq(commerceCommandJobs.idempotencyKey, idempotencyKey));
+    await database.db
+      .update(subscriptions)
+      .set({ status: "canceling", cancelAtPeriodEnd: true })
+      .where(eq(subscriptions.id, subscription.id));
+
+    let releaseSubscription!: () => void;
+    const subscriptionGate = new Promise<void>((resolve) => {
+      releaseSubscription = resolve;
+    });
+    let subscriptionLocked!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      subscriptionLocked = resolve;
+    });
+    const blocker = database.db.transaction(async (transaction) => {
+      await transaction
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.id, subscription.id))
+        .for("update");
+      subscriptionLocked();
+      await subscriptionGate;
+    });
+    await locked;
+
+    const finalScan = coordinator.prepare({ subjectId: subject.id, operationKey });
+    const scanBeforeRelease = await Promise.race([
+      finalScan.then(() => "completed" as const),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 75)),
+    ]);
+    expect(scanBeforeRelease).toBe("blocked");
+    const resume = enqueueSubscriptionCommand(database.db, {
+      subjectId: subject.id,
+      subscriptionId: subscription.id,
+      command: "subscription_resume",
+      idempotencyKey: `resume:${randomUUID()}`,
+    });
+
+    releaseSubscription();
+    await blocker;
+    await expect(finalScan).resolves.toBeUndefined();
+    await expect(resume).rejects.toThrow("account deletion prevents subscription resume");
+    expect(
+      await database.db.query.subscriptions.findFirst({
+        where: eq(subscriptions.id, subscription.id),
+      }),
+    ).toMatchObject({ status: "canceling" });
   });
 
   it("claims a failed due job and completes it without another user request", async () => {
