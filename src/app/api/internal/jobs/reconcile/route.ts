@@ -40,7 +40,7 @@ function isPaymentSliceAbort(error: unknown, signal: AbortSignal): boolean {
   return (
     signal.aborted &&
     signal.reason instanceof JobRuntimeBudgetExceededError &&
-    error instanceof JobRuntimeBudgetExceededError
+    error === signal.reason
   );
 }
 
@@ -74,6 +74,7 @@ export async function GET(request: Request): Promise<Response> {
       } finally {
         clearTimeout(paymentTimeoutId);
       }
+      job.signal.throwIfAborted();
 
       let remaining = job.batchLimit;
       const staleRefundsReconciled = await reconcileStaleRefunds(commerce.database, {

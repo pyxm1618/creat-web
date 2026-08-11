@@ -69,8 +69,13 @@ describe("internal job security", () => {
       },
     });
 
-    await expect(run).rejects.toBeInstanceOf(JobRuntimeBudgetExceededError);
+    const timeoutError = await run.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(timeoutError).toBeInstanceOf(JobRuntimeBudgetExceededError);
     expect(signal?.reason).toBeInstanceOf(JobRuntimeBudgetExceededError);
+    expect(timeoutError).toBe(signal?.reason);
     expect((signal?.reason as Error).message).toBe("job runtime budget exhausted");
     expect(Date.now() - startedAt).toBeLessThan(1_800);
   });

@@ -11,15 +11,21 @@ const state = vi.hoisted(() => {
 
   return {
     BudgetError: TestJobRuntimeBudgetExceededError,
-    scenario: "slice_abort" as "slice_abort" | "ordinary_error_after_slice" | "commit_after_slice",
+    scenario: "slice_abort" as
+      | "slice_abort"
+      | "distinct_slice_error"
+      | "ordinary_error_after_slice"
+      | "commit_after_slice",
     boundedCalls: 0,
     runtimeEnabled: true,
     runtimeCalls: 0,
     paymentCalls: 0,
     outerAtSlice: false,
+    outerTimeoutMs: undefined as number | undefined,
     paymentSignal: undefined as AbortSignal | undefined,
     serviceSettled: false,
     serviceObservedAbort: false,
+    serviceError: undefined as Error | undefined,
     resolveService: undefined as
       | ((result: {
           scanned: number;
@@ -29,13 +35,17 @@ const state = vi.hoisted(() => {
         }) => void)
       | undefined,
     refundCalls: 0,
+    purgeCalls: 0,
+    creditCalls: 0,
+    snapshotCalls: 0,
+    alertCalls: 0,
     maintenanceBeforeServiceSettled: false,
   };
 });
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/config/features.config", () => ({
-  featuresConfig: { commerce: { enabled: true, credits: false } },
+  featuresConfig: { commerce: { enabled: true, credits: true } },
 }));
 vi.mock("@/platform/config/env", () => ({
   env: { cronSecret: "route-secret", waffoStoreId: "STORE_ROUTE" },
@@ -75,6 +85,9 @@ vi.mock("@/platform/commerce/application/reconcile-stale-payments", () => ({
           state.serviceObservedAbort = true;
           if (state.scenario === "slice_abort") {
             reject(input.signal!.reason);
+          } else if (state.scenario === "distinct_slice_error") {
+            state.serviceError = new state.BudgetError();
+            reject(state.serviceError);
           } else if (state.scenario === "ordinary_error_after_slice") {
             reject(new Error("payment database unavailable"));
           }
@@ -95,7 +108,10 @@ vi.mock("@/platform/commerce/application/reconcile-stale-refunds", () => ({
   },
 }));
 vi.mock("@/platform/commerce/application/purge-webhook-payloads", () => ({
-  purgeExpiredWebhookPayloads: async () => 0,
+  purgeExpiredWebhookPayloads: async () => {
+    state.purgeCalls += 1;
+    return 0;
+  },
 }));
 vi.mock("@/platform/commerce/application/webhook-retention-metrics", () => ({
   getWebhookRetentionMetrics: async () => ({
@@ -104,23 +120,31 @@ vi.mock("@/platform/commerce/application/webhook-retention-metrics", () => ({
   }),
 }));
 vi.mock("@/platform/credits/application/reconcile-credit-ledger", () => ({
-  reconcileCreditLedgerBatch: async () => ({ processed: 0, issues: [], cycleComplete: true }),
+  reconcileCreditLedgerBatch: async () => {
+    state.creditCalls += 1;
+    return { processed: 0, issues: [], cycleComplete: true };
+  },
 }));
 vi.mock("@/platform/observability/operational-snapshot", () => ({
-  collectOperationalAlertSnapshot: async () => ({
-    deadLettersCreated: 0,
-    magicLinkRequests5m: 0,
-    invalidWebhookSignatures5m: 0,
-    reconciliationMismatches: 0,
-    jobBacklog: 0,
-    oldestJobAgeSeconds: 0,
-    providerFailures5m: 0,
-  }),
+  collectOperationalAlertSnapshot: async () => {
+    state.snapshotCalls += 1;
+    return {
+      deadLettersCreated: 0,
+      magicLinkRequests5m: 0,
+      invalidWebhookSignatures5m: 0,
+      reconciliationMismatches: 0,
+      jobBacklog: 0,
+      oldestJobAgeSeconds: 0,
+      providerFailures5m: 0,
+    };
+  },
 }));
 vi.mock("@/platform/observability/metrics", () => ({ emitMetric: () => undefined }));
 vi.mock("@/platform/observability/alerts", () => ({
   evaluateOperationalAlerts: () => [],
-  emitOperationalAlerts: () => undefined,
+  emitOperationalAlerts: () => {
+    state.alertCalls += 1;
+  },
 }));
 vi.mock("@/platform/operations/run-bounded-job", () => ({
   JobRuntimeBudgetExceededError: state.BudgetError,
@@ -138,11 +162,15 @@ vi.mock("@/platform/operations/run-bounded-job", () => ({
     const callNumber = state.boundedCalls;
     const controller = new AbortController();
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutMs = callNumber === 1 && state.outerAtSlice ? 5_000 : input.maxRuntimeMs;
+    const controlledOuterTimeout =
+      callNumber === 1
+        ? (state.outerTimeoutMs ?? (state.outerAtSlice ? 5_000 : undefined))
+        : undefined;
+    const timeoutMs = controlledOuterTimeout ?? input.maxRuntimeMs;
     const timeout = new Promise<never>((_resolve, reject) => {
       timeoutId = setTimeout(() => {
         const error =
-          callNumber === 1 && state.outerAtSlice
+          controlledOuterTimeout !== undefined
             ? new DOMException("outer runtime exhausted", "AbortError")
             : new state.BudgetError();
         controller.abort(error);
@@ -183,11 +211,17 @@ beforeEach(() => {
   state.runtimeCalls = 0;
   state.paymentCalls = 0;
   state.outerAtSlice = false;
+  state.outerTimeoutMs = undefined;
   state.paymentSignal = undefined;
   state.serviceSettled = false;
   state.serviceObservedAbort = false;
+  state.serviceError = undefined;
   state.resolveService = undefined;
   state.refundCalls = 0;
+  state.purgeCalls = 0;
+  state.creditCalls = 0;
+  state.snapshotCalls = 0;
+  state.alertCalls = 0;
   state.maintenanceBeforeServiceSettled = false;
 });
 
@@ -254,6 +288,28 @@ it("rethrows an ordinary database error even when the slice is already aborted",
   expect(state.refundCalls).toBe(0);
 });
 
+it("rethrows a distinct typed error instead of treating it as the slice reason", async () => {
+  state.scenario = "distinct_slice_error";
+  const responsePromise = GET(authorizedRequest());
+  const outcome = responsePromise.then(
+    (response) => ({ kind: "resolved" as const, response }),
+    (error: unknown) => ({ kind: "rejected" as const, error }),
+  );
+
+  await vi.advanceTimersByTimeAsync(5_000);
+
+  const result = await outcome;
+  expect(result).toMatchObject({ kind: "rejected" });
+  if (result.kind !== "rejected") throw new Error("expected route rejection");
+  expect(result.error).toBe(state.serviceError);
+  expect(result.error).not.toBe(state.paymentSignal?.reason);
+  expect(state.refundCalls).toBe(0);
+  expect(state.purgeCalls).toBe(0);
+  expect(state.creditCalls).toBe(0);
+  expect(state.snapshotCalls).toBe(0);
+  expect(state.alertCalls).toBe(0);
+});
+
 it("awaits a terminal commit past the cancellation cutover and returns its real counters", async () => {
   state.scenario = "commit_after_slice";
   let responseSettled = false;
@@ -275,6 +331,34 @@ it("awaits a terminal commit past the cancellation cutover and returns its real 
   expect(await response.json()).toMatchObject({ paymentScanned: 1, paymentApplied: 1 });
   expect(state.serviceSettled).toBe(true);
   expect(state.refundCalls).toBe(1);
+});
+
+it("keeps an outer abort authoritative after terminal cutover and before maintenance", async () => {
+  state.scenario = "commit_after_slice";
+  state.outerTimeoutMs = 4_000;
+  const responsePromise = GET(authorizedRequest());
+  const outcome = responsePromise.then(
+    (response) => ({ kind: "resolved" as const, response }),
+    (error: unknown) => ({ kind: "rejected" as const, error }),
+  );
+
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(await outcome).toMatchObject({
+    kind: "rejected",
+    error: { name: "AbortError", message: "outer runtime exhausted" },
+  });
+  expect(state.serviceObservedAbort).toBe(true);
+  expect(state.serviceSettled).toBe(false);
+
+  state.resolveService?.({ scanned: 1, applied: 1, retried: 0, operatorReview: 0 });
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(state.serviceSettled).toBe(true);
+  expect(state.refundCalls).toBe(0);
+  expect(state.purgeCalls).toBe(0);
+  expect(state.creditCalls).toBe(0);
+  expect(state.snapshotCalls).toBe(0);
+  expect(state.alertCalls).toBe(0);
 });
 
 it("keeps an outer abort authoritative when outer and slice deadlines coincide", async () => {
