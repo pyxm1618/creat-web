@@ -315,6 +315,13 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       };
     },
     async getPayment(input): Promise<PaymentLookupResult> {
+      if (
+        (input.merchantOrderReference !== undefined &&
+          input.merchantOrderReference.trim().length === 0) ||
+        (input.externalPaymentId !== undefined && input.externalPaymentId.trim().length === 0)
+      ) {
+        throw new ProviderContractError("payment lookup identities must be non-empty");
+      }
       if (!input.merchantOrderReference && !input.externalPaymentId) {
         throw new ProviderContractError(
           "payment lookup requires merchant order reference or payment id",

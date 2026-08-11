@@ -293,6 +293,22 @@ describe("Waffo Pancake 0.16 contract", () => {
   });
 
   it.each([
+    ["merchant reference", { merchantOrderReference: "", externalPaymentId: paymentId }],
+    ["payment id", { merchantOrderReference, externalPaymentId: "" }],
+  ])(
+    "rejects an explicitly empty %s instead of dropping it from a combined lookup",
+    async (_name, lookup) => {
+      const provider = paymentQueryProvider({
+        response: { data: { payments: [validPayment()], paymentsCount: 1 } },
+      });
+
+      await expect(provider.getPayment({ environment: "test", ...lookup })).rejects.toBeInstanceOf(
+        ProviderContractError,
+      );
+    },
+  );
+
+  it.each([
     [
       "partial data with GraphQL errors",
       { data: { payments: [validPayment()], paymentsCount: 1 }, errors: [{ message: "partial" }] },
@@ -407,6 +423,51 @@ describe("Waffo Pancake 0.16 contract", () => {
         merchantOrderReference,
       }),
     ).rejects.toBeInstanceOf(ProviderContractError);
+  });
+
+  it("normalizes a subscription-only payment without requiring undocumented period or environment facts", async () => {
+    const provider = paymentQueryProvider({
+      response: {
+        data: {
+          payments: [
+            validPayment({
+              onetimeOrder: null,
+              subscriptionOrder: {
+                id: orderId,
+                store: { id: storeId },
+                currentPeriodStart: "2026-08-01T00:00:00.000Z",
+                currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+              },
+            }),
+          ],
+          paymentsCount: 1,
+        },
+      },
+    });
+
+    const result = await provider.getPayment({
+      environment: "test",
+      merchantOrderReference,
+    });
+
+    expect(result).toEqual({
+      payments: [
+        {
+          environment: "test",
+          model: "subscription",
+          storeId,
+          externalOrderId: orderId,
+          merchantOrderReference,
+          externalPaymentId: paymentId,
+          status: "succeeded",
+          amount: { currency: "USD", minor: 2900n },
+          occurredAt: new Date("2026-08-08T04:00:00.000Z"),
+        },
+      ],
+      warnings: [],
+    });
+    expect(result.payments[0]).not.toHaveProperty("currentPeriodStart");
+    expect(result.payments[0]).not.toHaveProperty("currentPeriodEnd");
   });
 
   it("passes the caller abort signal through the request-scoped SDK fetch", async () => {

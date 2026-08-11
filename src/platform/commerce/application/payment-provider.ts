@@ -57,6 +57,22 @@ export type PaymentLookupResult = {
   readonly warnings: readonly ProviderQueryWarning[];
 };
 
+export type PaymentLookupInput = {
+  readonly environment: CommerceEnvironment;
+  readonly externalOrderId?: string;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+} & (
+  | {
+      readonly merchantOrderReference: string;
+      readonly externalPaymentId?: string;
+    }
+  | {
+      readonly merchantOrderReference?: never;
+      readonly externalPaymentId: string;
+    }
+);
+
 export interface PaymentProvider {
   readonly name: PaymentProviderId;
   readonly capabilities: {
@@ -80,14 +96,7 @@ export interface PaymentProvider {
     readonly externalRefundReference: string;
     readonly status: "pending" | "processing" | "succeeded" | "failed";
   }>;
-  getPayment(input: {
-    readonly environment: CommerceEnvironment;
-    readonly merchantOrderReference?: string;
-    readonly externalOrderId?: string;
-    readonly externalPaymentId?: string;
-    readonly signal?: AbortSignal;
-    readonly timeoutMs?: number;
-  }): Promise<PaymentLookupResult>;
+  getPayment(input: PaymentLookupInput): Promise<PaymentLookupResult>;
   verifyAndNormalizeWebhook(input: {
     readonly rawBody: Uint8Array;
     readonly signature: string;

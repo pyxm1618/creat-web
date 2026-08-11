@@ -145,4 +145,15 @@ The repository currently has no connected Waffo account/tool that can prove merc
 7. Refund and, when enabled, subscription event shapes match the captured SDK contract.
 8. Replay of the same delivery is deduplicated.
 
-Only after those checks should `WAFFO_CONTRACT_VERIFIED=1` be set for deployed commerce. The runtime rejects deployed commerce when this gate is not set.
+## Mandatory live payment-query activation gate
+
+This gate is additional to the eight live-resource checks above. The operator must complete and retain evidence for all of the following against authenticated Waffo Test merchant resources:
+
+1. Run authenticated merchant GraphQL introspection and confirm the payment filter and selected relation fields exist with the expected scalar/object shapes.
+2. Execute test queries proving merchant reference and payment ID use `String!` variables, including a request that supplies both identities.
+3. Confirm the payment list and `paymentsCount` use an identical list/count filter, the list has an explicit limit, and bounded list and count completeness holds without truncation, mismatch, or duplicate IDs.
+4. Inspect a real payment and confirm its one-time relation, `testMode`, store, amount, currency, and `createdAt` map exactly to the local Test order.
+5. Capture a representative one-time payment snapshot and reconcile it against the local order reference, provider order/payment IDs, product model, amount, currency, store, environment, and provider-created time.
+6. Do not enable subscription recovery until the live schema or retained historical event proves a payment-level immutable subscription period for that exact payment. Until then, subscription automatic recovery remains **NO-GO**.
+
+`WAFFO_CONTRACT_VERIFIED=1` must not be set until both the original live-resource checklist and this payment-query gate pass. The runtime rejects deployed commerce when the flag is not set, but the flag itself is not evidence that either checklist was completed.
