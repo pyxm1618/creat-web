@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, eq, isNull, lte } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
@@ -13,8 +13,9 @@ import {
 import { currencyExponent, type SupportedCurrency } from "../domain/money";
 import type { CommerceEnvironment, CommercialModel } from "../domain/product";
 import {
+  acquirePaymentReconciliationFence,
   claimPaymentReconciliationJobs,
-  completePaymentReconciliationJob,
+  completePaymentReconciliationJobInTransaction,
   operatorReviewPaymentReconciliationJob,
   operatorReviewPaymentReconciliationJobInTransaction,
   retryPaymentReconciliationJob,
@@ -165,6 +166,7 @@ export async function reconcileStalePayments(
 ): Promise<PaymentReconciliationResult> {
   input.signal?.throwIfAborted();
   const now = input.now ?? new Date();
+  const terminalClock = input.terminalClock ?? (() => new Date());
   const terminalSignal = input.signal ? { signal: input.signal } : {};
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
   await seedPaymentReconciliationJobs(database, {
@@ -214,13 +216,12 @@ export async function reconcileStalePayments(
     } catch (error) {
       input.signal?.throwIfAborted();
       if (isAbortError(error)) throw error;
-      const terminalNow = (input.terminalClock ?? (() => new Date()))();
       if (
         await retryPaymentReconciliationJob(database, {
           id: claim.id,
           owner: input.owner,
           leaseToken,
-          terminalNow,
+          terminalClock,
           errorCode: "PROVIDER_LOOKUP_FAILED",
           ...terminalSignal,
         })
@@ -234,13 +235,12 @@ export async function reconcileStalePayments(
       model === "subscription" ||
       lookup.payments.some((payment) => payment.model === "subscription")
     ) {
-      const terminalNow = (input.terminalClock ?? (() => new Date()))();
       if (
         await operatorReviewPaymentReconciliationJob(database, {
           id: claim.id,
           owner: input.owner,
           leaseToken,
-          terminalNow,
+          terminalClock,
           reason: "payment-level period unavailable",
           warnings: lookup.warnings,
           ...terminalSignal,
@@ -252,13 +252,12 @@ export async function reconcileStalePayments(
     }
     const succeededPayments = lookup.payments.filter((payment) => payment.status === "succeeded");
     if (succeededPayments.length > 1) {
-      const terminalNow = (input.terminalClock ?? (() => new Date()))();
       if (
         await operatorReviewPaymentReconciliationJob(database, {
           id: claim.id,
           owner: input.owner,
           leaseToken,
-          terminalNow,
+          terminalClock,
           reason: "multiple succeeded provider payments returned",
           warnings: lookup.warnings,
           ...terminalSignal,
@@ -273,13 +272,12 @@ export async function reconcileStalePayments(
       (lookup.payments.length === 0 ||
         lookup.payments.some((payment) => payment.status === "pending"))
     ) {
-      const terminalNow = (input.terminalClock ?? (() => new Date()))();
       if (
         await retryPaymentReconciliationJob(database, {
           id: claim.id,
           owner: input.owner,
           leaseToken,
-          terminalNow,
+          terminalClock,
           errorCode: lookup.payments.length === 0 ? "PAYMENT_NOT_FOUND" : "PAYMENT_PENDING",
           warnings: lookup.warnings,
           ...terminalSignal,
@@ -308,13 +306,12 @@ export async function reconcileStalePayments(
       snapshot.amount.currency !== currency ||
       snapshot.amount.minor !== facts.amountMinor
     ) {
-      const terminalNow = (input.terminalClock ?? (() => new Date()))();
       if (
         await operatorReviewPaymentReconciliationJob(database, {
           id: claim.id,
           owner: input.owner,
           leaseToken,
-          terminalNow,
+          terminalClock,
           reason: "provider payment facts mismatch",
           warnings: lookup.warnings,
           ...terminalSignal,
@@ -372,60 +369,36 @@ export async function reconcileStalePayments(
               occurredAt: snapshot.occurredAt,
               storeId: snapshot.storeId,
             };
-    const terminalNow = (input.terminalClock ?? (() => new Date()))();
     let claimOutcome: "applied" | "operator_review" | "stale";
     try {
       claimOutcome = await database.transaction(async (tx) => {
-        const [owned] = await tx
-          .select({ id: paymentReconciliationJobs.id })
-          .from(paymentReconciliationJobs)
-          .where(
-            and(
-              eq(paymentReconciliationJobs.id, claim.id),
-              eq(paymentReconciliationJobs.state, "processing"),
-              eq(paymentReconciliationJobs.leaseOwner, input.owner),
-              eq(paymentReconciliationJobs.leaseToken, leaseToken),
-              gt(paymentReconciliationJobs.leaseExpiresAt, terminalNow),
-            ),
-          )
-          .limit(1)
-          .for("update");
-        if (!owned) return "stale" as const;
-        input.signal?.throwIfAborted();
+        const fence = await acquirePaymentReconciliationFence(tx, {
+          id: claim.id,
+          owner: input.owner,
+          leaseToken,
+          terminalClock,
+          ...terminalSignal,
+        });
+        if (!fence) return "stale" as const;
 
         const eventOutcome = await processProviderEventInTransaction(tx, event, payloadHash);
-        input.signal?.throwIfAborted();
+        fence.signal?.throwIfAborted();
         if (eventOutcome === "identity_conflict") {
-          const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, {
-            id: claim.id,
-            owner: input.owner,
-            leaseToken,
-            terminalNow,
+          const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, fence, {
             reason: "provider event identity conflict",
             warnings: lookup.warnings,
-            ...terminalSignal,
           });
           return reviewed ? ("operator_review" as const) : ("stale" as const);
         }
         if (eventOutcome === "operator_review") {
-          const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, {
-            id: claim.id,
-            owner: input.owner,
-            leaseToken,
-            terminalNow,
+          const reviewed = await operatorReviewPaymentReconciliationJobInTransaction(tx, fence, {
             reason: "distinct succeeded payment already fulfilled order",
             warnings: lookup.warnings,
-            ...terminalSignal,
           });
           return reviewed ? ("operator_review" as const) : ("stale" as const);
         }
-        const completed = await completePaymentReconciliationJob(tx, {
-          id: claim.id,
-          owner: input.owner,
-          leaseToken,
-          terminalNow,
-        });
-        input.signal?.throwIfAborted();
+        const completed = await completePaymentReconciliationJobInTransaction(tx, fence);
+        fence.signal?.throwIfAborted();
         const warnings = validateProviderQueryWarnings(lookup.warnings);
         if (completed && warnings.length > 0) {
           await tx
@@ -438,11 +411,11 @@ export async function reconcileStalePayments(
               beforeJson: { state: "processing", orderId: facts.orderId },
               afterJson: { state: "completed", warnings },
               result: "applied_with_provider_warnings",
-              createdAt: terminalNow,
+              createdAt: fence.terminalNow,
             })
             .onConflictDoNothing();
         }
-        input.signal?.throwIfAborted();
+        fence.signal?.throwIfAborted();
         return completed ? ("applied" as const) : ("stale" as const);
       });
     } catch (error) {
@@ -453,7 +426,7 @@ export async function reconcileStalePayments(
           id: claim.id,
           owner: input.owner,
           leaseToken,
-          terminalNow,
+          terminalClock,
           reason: "provider event application failed",
           warnings: lookup.warnings,
           ...terminalSignal,

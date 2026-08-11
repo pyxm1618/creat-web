@@ -201,24 +201,77 @@ type PaymentReconciliationClaim = {
   readonly id: string;
   readonly owner: string;
   readonly leaseToken: string;
-  readonly terminalNow: Date;
 };
 
-function ownedLivePaymentReconciliationClaim(input: PaymentReconciliationClaim) {
+type PaymentReconciliationTerminalInput = PaymentReconciliationClaim & {
+  readonly terminalClock: () => Date;
+  readonly signal?: AbortSignal;
+};
+
+const paymentReconciliationFenceBrand: unique symbol = Symbol("paymentReconciliationFence");
+
+export type PaymentReconciliationFence = PaymentReconciliationClaim & {
+  readonly [paymentReconciliationFenceBrand]: true;
+  readonly terminalNow: Date;
+  readonly attempts: number;
+  readonly orderId: string;
+  readonly signal?: AbortSignal;
+};
+
+function ownedPaymentReconciliationClaim(input: PaymentReconciliationClaim) {
   return and(
     eq(paymentReconciliationJobs.id, input.id),
     eq(paymentReconciliationJobs.state, "processing"),
     eq(paymentReconciliationJobs.leaseOwner, input.owner),
     eq(paymentReconciliationJobs.leaseToken, input.leaseToken),
+  );
+}
+
+function ownedLivePaymentReconciliationFence(input: PaymentReconciliationFence) {
+  return and(
+    ownedPaymentReconciliationClaim(input),
     gt(paymentReconciliationJobs.leaseExpiresAt, input.terminalNow),
   );
 }
 
-export async function completePaymentReconciliationJob(
-  database: DatabaseClient | DatabaseTransaction,
-  input: PaymentReconciliationClaim,
+export async function acquirePaymentReconciliationFence(
+  tx: DatabaseTransaction,
+  input: PaymentReconciliationTerminalInput,
+): Promise<PaymentReconciliationFence | null> {
+  const [owned] = await tx
+    .select({
+      attempts: paymentReconciliationJobs.attempts,
+      orderId: paymentReconciliationJobs.orderId,
+      leaseExpiresAt: paymentReconciliationJobs.leaseExpiresAt,
+    })
+    .from(paymentReconciliationJobs)
+    .where(ownedPaymentReconciliationClaim(input))
+    .for("update");
+  if (!owned?.leaseExpiresAt) return null;
+  input.signal?.throwIfAborted();
+  const terminalNow = input.terminalClock();
+  input.signal?.throwIfAborted();
+  if (!Number.isFinite(terminalNow.getTime())) {
+    throw new Error("payment reconciliation terminal clock returned an invalid date");
+  }
+  if (owned.leaseExpiresAt <= terminalNow) return null;
+  return {
+    [paymentReconciliationFenceBrand]: true,
+    id: input.id,
+    owner: input.owner,
+    leaseToken: input.leaseToken,
+    terminalNow,
+    attempts: owned.attempts,
+    orderId: owned.orderId,
+    ...(input.signal ? { signal: input.signal } : {}),
+  };
+}
+
+export async function completePaymentReconciliationJobInTransaction(
+  tx: DatabaseTransaction,
+  fence: PaymentReconciliationFence,
 ): Promise<boolean> {
-  const [completed] = await database
+  const [completed] = await tx
     .update(paymentReconciliationJobs)
     .set({
       state: "completed",
@@ -226,107 +279,109 @@ export async function completePaymentReconciliationJob(
       leaseToken: null,
       leaseExpiresAt: null,
       lastErrorCode: null,
-      completedAt: input.terminalNow,
-      updatedAt: input.terminalNow,
+      completedAt: fence.terminalNow,
+      updatedAt: fence.terminalNow,
     })
-    .where(ownedLivePaymentReconciliationClaim(input))
+    .where(ownedLivePaymentReconciliationFence(fence))
     .returning({ id: paymentReconciliationJobs.id });
+  fence.signal?.throwIfAborted();
   return completed !== undefined;
+}
+
+export async function completePaymentReconciliationJob(
+  database: DatabaseClient,
+  input: PaymentReconciliationTerminalInput,
+): Promise<boolean> {
+  return database.transaction(async (tx) => {
+    const fence = await acquirePaymentReconciliationFence(tx, input);
+    if (!fence) return false;
+    return completePaymentReconciliationJobInTransaction(tx, fence);
+  });
+}
+
+async function retryPaymentReconciliationJobInTransaction(
+  tx: DatabaseTransaction,
+  fence: PaymentReconciliationFence,
+  input: {
+    readonly errorCode: string;
+    readonly warnings?: readonly PaymentReconciliationWarning[];
+  },
+): Promise<boolean> {
+  const attempts = fence.attempts + 1;
+  const dead = attempts >= PAYMENT_RECONCILIATION_MAX_ATTEMPTS;
+  const errorCode = input.errorCode.slice(0, 120);
+  const warnings = allowlistedWarnings(input.warnings);
+  const [retried] = await tx
+    .update(paymentReconciliationJobs)
+    .set({
+      state: dead ? "dead_letter" : "pending",
+      attempts,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      nextAttemptAt: dead
+        ? fence.terminalNow
+        : new Date(fence.terminalNow.getTime() + retryDelay(attempts)),
+      lastErrorCode: errorCode,
+      completedAt: dead ? fence.terminalNow : null,
+      updatedAt: fence.terminalNow,
+    })
+    .where(ownedLivePaymentReconciliationFence(fence))
+    .returning({ id: paymentReconciliationJobs.id });
+  if (!retried) return false;
+  fence.signal?.throwIfAborted();
+
+  await tx
+    .insert(commerceReconciliationRuns)
+    .values({
+      dedupKey: `payment-reconciliation:${fence.id}:${fence.leaseToken}:retry`,
+      targetType: "payment_reconciliation_job",
+      targetId: fence.id,
+      actorType: "worker",
+      beforeJson: {
+        state: "processing",
+        orderId: fence.orderId,
+        attempts: fence.attempts,
+      },
+      afterJson: {
+        state: dead ? "dead_letter" : "pending",
+        errorCode,
+        warnings,
+      },
+      result: dead ? "quarantined" : "retry_scheduled",
+      createdAt: fence.terminalNow,
+    })
+    .onConflictDoNothing();
+  fence.signal?.throwIfAborted();
+  return true;
 }
 
 export async function retryPaymentReconciliationJob(
   database: DatabaseClient,
-  input: PaymentReconciliationClaim & {
+  input: PaymentReconciliationTerminalInput & {
     readonly errorCode: string;
     readonly warnings?: readonly PaymentReconciliationWarning[];
-    readonly signal?: AbortSignal;
   },
 ): Promise<boolean> {
   return database.transaction(async (tx) => {
-    const [owned] = await tx
-      .select({
-        attempts: paymentReconciliationJobs.attempts,
-        orderId: paymentReconciliationJobs.orderId,
-      })
-      .from(paymentReconciliationJobs)
-      .where(ownedLivePaymentReconciliationClaim(input))
-      .for("update");
-    if (!owned) return false;
-    input.signal?.throwIfAborted();
-
-    const attempts = owned.attempts + 1;
-    const dead = attempts >= PAYMENT_RECONCILIATION_MAX_ATTEMPTS;
-    const errorCode = input.errorCode.slice(0, 120);
-    const warnings = allowlistedWarnings(input.warnings);
-    const [retried] = await tx
-      .update(paymentReconciliationJobs)
-      .set({
-        state: dead ? "dead_letter" : "pending",
-        attempts,
-        leaseOwner: null,
-        leaseToken: null,
-        leaseExpiresAt: null,
-        nextAttemptAt: dead
-          ? input.terminalNow
-          : new Date(input.terminalNow.getTime() + retryDelay(attempts)),
-        lastErrorCode: errorCode,
-        completedAt: dead ? input.terminalNow : null,
-        updatedAt: input.terminalNow,
-      })
-      .where(ownedLivePaymentReconciliationClaim(input))
-      .returning({ id: paymentReconciliationJobs.id });
-    if (!retried) return false;
-    input.signal?.throwIfAborted();
-
-    await tx
-      .insert(commerceReconciliationRuns)
-      .values({
-        dedupKey: `payment-reconciliation:${input.id}:${input.leaseToken}:retry`,
-        targetType: "payment_reconciliation_job",
-        targetId: input.id,
-        actorType: "worker",
-        beforeJson: {
-          state: "processing",
-          orderId: owned.orderId,
-          attempts: owned.attempts,
-        },
-        afterJson: {
-          state: dead ? "dead_letter" : "pending",
-          errorCode,
-          warnings,
-        },
-        result: dead ? "quarantined" : "retry_scheduled",
-        createdAt: input.terminalNow,
-      })
-      .onConflictDoNothing();
-    input.signal?.throwIfAborted();
-    return true;
+    const fence = await acquirePaymentReconciliationFence(tx, input);
+    if (!fence) return false;
+    return retryPaymentReconciliationJobInTransaction(tx, fence, input);
   });
 }
 
-type PaymentReconciliationOperatorReviewInput = PaymentReconciliationClaim & {
+type PaymentReconciliationOperatorReviewInput = PaymentReconciliationTerminalInput & {
   readonly reason: string;
   readonly warnings?: readonly PaymentReconciliationWarning[];
-  readonly signal?: AbortSignal;
 };
 
 export async function operatorReviewPaymentReconciliationJobInTransaction(
   tx: DatabaseTransaction,
-  input: PaymentReconciliationOperatorReviewInput,
+  fence: PaymentReconciliationFence,
+  input: Pick<PaymentReconciliationOperatorReviewInput, "reason" | "warnings">,
 ): Promise<boolean> {
   const reason = input.reason.trim();
   if (!reason) throw new Error("payment reconciliation operator-review reason is required");
-
-  const [owned] = await tx
-    .select({
-      attempts: paymentReconciliationJobs.attempts,
-      orderId: paymentReconciliationJobs.orderId,
-    })
-    .from(paymentReconciliationJobs)
-    .where(ownedLivePaymentReconciliationClaim(input))
-    .for("update");
-  if (!owned) return false;
-  input.signal?.throwIfAborted();
 
   const [reviewed] = await tx
     .update(paymentReconciliationJobs)
@@ -337,25 +392,25 @@ export async function operatorReviewPaymentReconciliationJobInTransaction(
       leaseExpiresAt: null,
       lastErrorCode: null,
       operatorReviewReason: reason,
-      completedAt: input.terminalNow,
-      updatedAt: input.terminalNow,
+      completedAt: fence.terminalNow,
+      updatedAt: fence.terminalNow,
     })
-    .where(ownedLivePaymentReconciliationClaim(input))
+    .where(ownedLivePaymentReconciliationFence(fence))
     .returning({ id: paymentReconciliationJobs.id });
   if (!reviewed) return false;
-  input.signal?.throwIfAborted();
+  fence.signal?.throwIfAborted();
 
   await tx
     .insert(commerceReconciliationRuns)
     .values({
-      dedupKey: `payment-reconciliation:${input.id}:${input.leaseToken}:operator-review`,
+      dedupKey: `payment-reconciliation:${fence.id}:${fence.leaseToken}:operator-review`,
       targetType: "payment_reconciliation_job",
-      targetId: input.id,
+      targetId: fence.id,
       actorType: "worker",
       beforeJson: {
         state: "processing",
-        orderId: owned.orderId,
-        attempts: owned.attempts,
+        orderId: fence.orderId,
+        attempts: fence.attempts,
       },
       afterJson: {
         state: "operator_review",
@@ -363,10 +418,10 @@ export async function operatorReviewPaymentReconciliationJobInTransaction(
         warnings: allowlistedWarnings(input.warnings),
       },
       result: "operator_review_required",
-      createdAt: input.terminalNow,
+      createdAt: fence.terminalNow,
     })
     .onConflictDoNothing();
-  input.signal?.throwIfAborted();
+  fence.signal?.throwIfAborted();
   return true;
 }
 
@@ -375,7 +430,9 @@ export async function operatorReviewPaymentReconciliationJob(
   input: PaymentReconciliationOperatorReviewInput,
 ): Promise<boolean> {
   return database.transaction(async (tx) => {
-    return operatorReviewPaymentReconciliationJobInTransaction(tx, input);
+    const fence = await acquirePaymentReconciliationFence(tx, input);
+    if (!fence) return false;
+    return operatorReviewPaymentReconciliationJobInTransaction(tx, fence, input);
   });
 }
 

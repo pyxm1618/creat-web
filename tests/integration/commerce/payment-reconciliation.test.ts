@@ -577,7 +577,7 @@ it("does not let a reclaimed worker apply provider results returned to the stale
       id: reclaimed.id,
       owner: "replacement-payment-worker",
       leaseToken: reclaimed.leaseToken,
-      terminalNow: reviewNow,
+      terminalClock: () => reviewNow,
       reason: "replacement worker owns terminal decision",
     }),
   ).toBe(true);
@@ -1360,6 +1360,121 @@ it.each(["retry", "operator_review"] as const)(
   },
 );
 
+it.each(["event_complete", "retry", "operator_review"] as const)(
+  "does not write a stale %s result after its lease expires while waiting for the job lock",
+  async (outcome) => {
+    const claimNow = new Date("2030-05-02T00:00:00.000Z");
+    const beforeExpiry = new Date("2030-05-02T00:04:59.000Z");
+    const afterExpiry = new Date("2030-05-02T00:06:00.000Z");
+    let terminalNow = beforeExpiry;
+    const order = await seedOrder();
+    await database.db
+      .update(orders)
+      .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+      .where(eq(orders.id, order.id));
+
+    let markLookupStarted!: () => void;
+    let releaseLookup!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookupStarted = resolve;
+    });
+    const lookupRelease = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const provider = paymentProvider(async () => {
+      markLookupStarted();
+      await lookupRelease;
+      if (outcome === "retry") return { payments: [], warnings: [] };
+      return {
+        payments: [
+          {
+            environment: "test",
+            model: "one_time",
+            storeId: outcome === "operator_review" ? "STORE_OTHER" : "STORE_TEST",
+            externalOrderId: order.externalOrderId!,
+            merchantOrderReference: order.id,
+            externalPaymentId: `PAY_${crypto.randomUUID()}`,
+            status: "succeeded",
+            amount: { currency: "USD", minor: 2900n },
+            occurredAt: new Date("2030-05-01T23:59:00.000Z"),
+          },
+        ],
+        warnings: [],
+      };
+    });
+    const run = reconcileStalePayments(database.db, provider, {
+      owner: `payment-fresh-clock-${outcome}-worker`,
+      expectedStoreId: "STORE_TEST",
+      now: claimNow,
+      terminalClock: () => terminalNow,
+      staleAfterMs: 24 * 60 * 60 * 1000,
+    });
+    await lookupStarted;
+    const job = await database.db.query.paymentReconciliationJobs.findFirst({
+      where: eq(paymentReconciliationJobs.orderId, order.id),
+    });
+    if (!job) throw new Error("claimed reconciliation job missing");
+    expect(job.leaseExpiresAt).toEqual(new Date("2030-05-02T00:05:00.000Z"));
+
+    let markJobLocked!: () => void;
+    let releaseJobLock!: () => void;
+    const jobLocked = new Promise<void>((resolve) => {
+      markJobLocked = resolve;
+    });
+    const jobLockRelease = new Promise<void>((resolve) => {
+      releaseJobLock = resolve;
+    });
+    const blocker = database.db.transaction(async (tx) => {
+      await tx
+        .select({ id: paymentReconciliationJobs.id })
+        .from(paymentReconciliationJobs)
+        .where(eq(paymentReconciliationJobs.id, job.id))
+        .for("update");
+      markJobLocked();
+      await jobLockRelease;
+    });
+    await jobLocked;
+    releaseLookup();
+
+    let workerWaiting = false;
+    for (let attempt = 0; attempt < 50 && !workerWaiting; attempt += 1) {
+      const rows = await database.db.execute(sql<{ waiting: boolean }>`
+        select exists (
+          select 1
+          from pg_stat_activity
+          where datname = current_database()
+            and wait_event_type = 'Lock'
+            and query like '%payment_reconciliation_jobs%'
+            and query not like '%pg_stat_activity%'
+        ) as waiting
+      `);
+      workerWaiting = Boolean(rows[0]?.waiting);
+      if (!workerWaiting) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(workerWaiting).toBe(true);
+    terminalNow = afterExpiry;
+    releaseJobLock();
+    await blocker;
+
+    expect(await run).toEqual({ scanned: 1, applied: 0, retried: 0, operatorReview: 0 });
+    expect(await database.db.select().from(payments)).toHaveLength(0);
+    expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+    expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+    expect(await database.db.select().from(commerceReconciliationRuns)).toHaveLength(0);
+    expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+      {
+        orderId: order.id,
+        state: "processing",
+        attempts: 0,
+        leaseOwner: `payment-fresh-clock-${outcome}-worker`,
+        leaseToken: job.leaseToken,
+        leaseExpiresAt: new Date("2030-05-02T00:05:00.000Z"),
+        completedAt: null,
+      },
+    ]);
+  },
+);
+
 it.each(["return", "throw"] as const)(
   "performs no post-abort mutation when the provider %s after abort",
   async (providerOutcome) => {
@@ -2001,7 +2116,7 @@ it("claims newly due jobs within one turn while an older poison job keeps retryi
       id: poison.id,
       owner: "poison-worker-0",
       leaseToken: poisonClaim.leaseToken,
-      terminalNow: start,
+      terminalClock: () => start,
       errorCode: "POISON",
     }),
   ).toBe(true);
@@ -2035,7 +2150,7 @@ it("claims newly due jobs within one turn while an older poison job keeps retryi
         id: normal.id,
         owner: `normal-worker-${round}`,
         leaseToken: normalClaim.leaseToken,
-        terminalNow: claimAt,
+        terminalClock: () => claimAt,
       }),
     ).toBe(true);
 
@@ -2051,7 +2166,7 @@ it("claims newly due jobs within one turn while an older poison job keeps retryi
         id: poison.id,
         owner: `poison-worker-${round}`,
         leaseToken: poisonClaim.leaseToken,
-        terminalNow: claimAt,
+        terminalClock: () => claimAt,
         errorCode: "POISON",
       }),
     ).toBe(true);
@@ -2103,7 +2218,7 @@ it("claims newly due jobs while an older crashed lease keeps expiring", async ()
         id: normal.id,
         owner: `normal-after-crash-${round}`,
         leaseToken: normalClaim.leaseToken,
-        terminalNow: claimAt,
+        terminalClock: () => claimAt,
       }),
     ).toBe(true);
 
@@ -2178,7 +2293,7 @@ it("does not let a stale token complete a same-owner reclaimed job", async () =>
     id: job.id,
     owner: "payment-shared-owner",
     leaseToken: first.leaseToken,
-    terminalNow,
+    terminalClock: () => terminalNow,
   });
 
   expect(completed).toBe(false);
@@ -2220,14 +2335,14 @@ it.each(["retry", "operator_review"] as const)(
             id: job.id,
             owner: "payment-shared-owner",
             leaseToken: first.leaseToken,
-            terminalNow,
+            terminalClock: () => terminalNow,
             errorCode: "STALE",
           })
         : await operatorReviewPaymentReconciliationJob(database.db, {
             id: job.id,
             owner: "payment-shared-owner",
             leaseToken: first.leaseToken,
-            terminalNow,
+            terminalClock: () => terminalNow,
             reason: "stale must not review",
           });
 
@@ -2268,7 +2383,7 @@ it("does not retry after the claimed lease naturally expires", async () => {
     id: job.id,
     owner: "payment-expired-owner",
     leaseToken: claimed.leaseToken,
-    terminalNow,
+    terminalClock: () => terminalNow,
     errorCode: "PROVIDER_TIMEOUT",
   });
 
@@ -2309,7 +2424,7 @@ it("does not write operator-review state or audit after the claimed lease expire
       id: job.id,
       owner: "payment-expired-review-owner",
       leaseToken: claimed.leaseToken,
-      terminalNow,
+      terminalClock: () => terminalNow,
       reason: "expired must not review",
     }),
   ).toBe(false);
@@ -2342,7 +2457,7 @@ it.each(invalidWarningCases)(
         id: job.id,
         owner: "payment-warning-retry-owner",
         leaseToken: claimed.leaseToken,
-        terminalNow: new Date("2030-05-01T00:01:00.000Z"),
+        terminalClock: () => new Date("2030-05-01T00:01:00.000Z"),
         errorCode: "INVALID_WARNING",
         warnings,
       }),
@@ -2386,7 +2501,7 @@ it.each(invalidWarningCases)(
         id: job.id,
         owner: "payment-warning-review-owner",
         leaseToken: claimed.leaseToken,
-        terminalNow: new Date("2030-05-01T00:01:00.000Z"),
+        terminalClock: () => new Date("2030-05-01T00:01:00.000Z"),
         reason: "warning contract invalid",
         warnings,
       }),
@@ -2435,7 +2550,7 @@ it("schedules retry backoff from terminal time and clears the live lease", async
     id: job.id,
     owner: "payment-retry-owner",
     leaseToken: claimed.leaseToken,
-    terminalNow,
+    terminalClock: () => terminalNow,
     errorCode: "PROVIDER_TIMEOUT",
     warnings,
   });
@@ -2502,7 +2617,7 @@ it("quarantines a transient failure after the bounded final attempt", async () =
     id: job.id,
     owner: "payment-final-owner",
     leaseToken: claimed.leaseToken,
-    terminalNow,
+    terminalClock: () => terminalNow,
     errorCode: "PROVIDER_TIMEOUT",
   });
 
@@ -2546,7 +2661,7 @@ it("writes one idempotent operator-review audit with allowlisted warnings", asyn
     id: job.id,
     owner: "payment-review-owner",
     leaseToken: claimed.leaseToken,
-    terminalNow,
+    terminalClock: () => terminalNow,
     reason: "payment-level period unavailable",
     warnings: [
       {
