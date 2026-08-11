@@ -492,11 +492,11 @@ Create durable reconciliation rows for stale checkout-created orders. Claim in a
 
 Identical `(environment,eventId,eventType,payloadHash)` replay remains a no-op. Reuse of the same `(environment,eventId)` with a different event type or canonical payload hash fails closed and writes a persistent reconciliation/audit record instead of silently accepting the conflict. Add a one-time handler product-model check as a second fail-closed defense.
 
-- [ ] **Checkpoint 2 / Step 4: Reserve route capacity and runtime**
+- [x] **Checkpoint 2 / Step 4: Reserve route capacity and runtime**
 
 Give payment reconciliation an independent small item quota and time slice. Pass the bounded-job signal through the provider lookup; after abort, no handler may write the database. Preserve separate refund, payload-purge, Credits, and alert opportunities. Return actual `scanned`, `applied`, `retried`, and `operatorReview` counters.
 
-- [ ] **Checkpoint 2 / Step 5: Run full gates and commit**
+- [x] **Checkpoint 2 / Step 5: Run full gates and commit**
 
 ```bash
 bunx vitest run --config vitest.contract.config.ts tests/contract/waffo-contract.test.ts
@@ -509,7 +509,7 @@ bun run typecheck
 
 Expected: all commands exit `0`. Code-safe query tests do not establish the live Waffo schema or merchant-resource contract. Owner activation remains **NO-GO** until authenticated live Test resources prove the exact payment query fields, identities, pagination/count behavior, and representative one-time/subscription facts.
 
-- [ ] **Checkpoint 2 / Step 6: Commit durable one-time reconciliation and stop for review**
+- [x] **Checkpoint 2 / Step 6: Commit durable one-time reconciliation and stop for review**
 
 ```bash
 git add src/platform/commerce/domain/events.ts src/platform/commerce/application/payment-provider.ts src/platform/commerce/application/reconcile-stale-payments.ts src/platform/database/commerce-schema.ts drizzle/0011_payment_reconciliation_jobs.sql drizzle/meta/_journal.json scripts/verify-migrations.ts src/platform/commerce/providers/waffo/adapter.ts src/platform/commerce/application/process-provider-event.ts src/platform/commerce/application/process-one-time-payment-event.ts src/app/api/internal/jobs/reconcile/route.ts tests/contract/waffo-contract.test.ts tests/integration/commerce/payment-reconciliation.test.ts tests/integration/commerce/event-application-idempotency.test.ts docs/providers/waffo-contract-2026-08-08.md docs/superpowers/plans/2026-08-10-commerce-remediation.md
