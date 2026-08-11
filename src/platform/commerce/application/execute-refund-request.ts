@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { PaymentProvider } from "./payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
@@ -20,7 +20,8 @@ export async function executeRefundRequest(input: {
   const row = rows[0];
   if (!row || row.refund.subjectId !== input.job.subjectId)
     throw new Error("refund command target not found");
-  if (row.refund.status === "succeeded" || row.refund.status === "failed") return;
+  if (row.refund.status !== "pending" && row.refund.status !== "processing") return;
+  const expectedStatus = row.refund.status;
 
   const result = await input.provider.requestRefund({
     environment: row.refund.environment === "production" ? "production" : "test",
@@ -41,18 +42,15 @@ export async function executeRefundRequest(input: {
     reason: row.refund.reason,
     idempotencyKey: row.refund.idempotencyKey,
   });
+  const failed = result.status === "failed";
   await input.database
     .update(refunds)
     .set({
       externalRefundReference: result.externalRefundReference,
-      status:
-        result.status === "failed"
-          ? "failed"
-          : result.status === "succeeded"
-            ? "processing"
-            : result.status,
+      status: failed ? "failed" : result.status === "succeeded" ? "processing" : result.status,
+      ...(failed ? { reversalStatus: "not_required", operatorReviewReason: null } : {}),
       providerUpdatedAt: input.now,
       updatedAt: input.now,
     })
-    .where(eq(refunds.id, row.refund.id));
+    .where(and(eq(refunds.id, row.refund.id), eq(refunds.status, expectedStatus)));
 }

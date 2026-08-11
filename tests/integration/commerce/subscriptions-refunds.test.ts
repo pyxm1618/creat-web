@@ -7,8 +7,11 @@ import {
   enqueueSubscriptionCommand,
 } from "@/platform/commerce/application/commerce-commands";
 import { createPlatformAccountDeletionCoordinator } from "@/platform/accounts/platform-account-deletion-coordinator";
-import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
+import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
+import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
+import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
+import { runCommerceCommandWorker } from "@/platform/commerce/application/run-commerce-command-worker";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   accountSubjects,
@@ -130,6 +133,75 @@ async function paidFixture(amountMinor = 1000n) {
     .returning();
   if (!payment) throw new Error("payment insert failed");
   return { subject, product, order, payment };
+}
+
+function refundProvider(requestRefund: PaymentProvider["requestRefund"]): PaymentProvider {
+  return {
+    name: "test-provider",
+    capabilities: { oneTime: true, subscriptions: true, partialRefunds: true },
+    async createCheckout() {
+      throw new Error("not used");
+    },
+    async createOneTimeCheckout() {
+      throw new Error("not used");
+    },
+    async cancelSubscription() {
+      throw new Error("not used");
+    },
+    async resumeSubscription() {
+      throw new Error("not used");
+    },
+    requestRefund,
+    async getPayment() {
+      return null;
+    },
+    async verifyAndNormalizeWebhook() {
+      throw new Error("not used");
+    },
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settled) => {
+    resolve = settled;
+  });
+  return { promise, resolve };
+}
+
+async function refundCommandFixture(requestedMinor = 700n) {
+  await database.db.delete(commerceCommandJobs);
+  const fixture = await paidFixture(1000n);
+  const idempotencyKey = `refund:${crypto.randomUUID()}`;
+  const refund = await enqueueRefundRequest(database.db, {
+    subjectId: fixture.subject.id,
+    paymentId: fixture.payment.id,
+    environment: "test",
+    amount: { currency: "USD", minor: requestedMinor },
+    reason: "customer request",
+    idempotencyKey,
+  });
+  const job = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.targetId, refund.id),
+  });
+  if (!job) throw new Error("refund command job missing");
+  return { ...fixture, refund, job, idempotencyKey };
+}
+
+async function expectAdditionalRefundRejected(input: {
+  readonly subjectId: string;
+  readonly paymentId: string;
+}) {
+  await expect(
+    enqueueRefundRequest(database.db, {
+      subjectId: input.subjectId,
+      paymentId: input.paymentId,
+      environment: "test",
+      amount: { currency: "USD", minor: 400n },
+      reason: "additional partial refund",
+      idempotencyKey: `refund:${crypto.randomUUID()}`,
+    }),
+  ).rejects.toThrow("refund exceeds refundable amount");
 }
 
 async function activateSubscription(
@@ -648,6 +720,297 @@ it("keeps reconciliation-required refunds reserved against refundable capacity",
     status: "reconciliation_required",
   });
 });
+
+it("does not let a late provider response overwrite an authoritative refund webhook", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  const providerCalled = deferred<void>();
+  const providerResult = deferred<{
+    externalRefundReference: string;
+    status: "pending";
+  }>();
+  let calls = 0;
+  const provider = refundProvider(async (request) => {
+    calls += 1;
+    expect(request).toMatchObject({
+      externalPaymentId: fixture.payment.externalPaymentId,
+      idempotencyKey: fixture.idempotencyKey,
+      amount: { currency: "USD", minor: 1000n },
+    });
+    providerCalled.resolve();
+    return providerResult.promise;
+  });
+  const workerNow = new Date("2030-01-01T00:00:00Z");
+  const worker = runCommerceCommandWorker({
+    database: database.db,
+    provider,
+    owner: `refund-worker-${crypto.randomUUID()}`,
+    now: workerNow,
+    limit: 1,
+  });
+  await providerCalled.promise;
+
+  const webhookOccurredAt = new Date("2030-01-01T00:00:01Z");
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-refund-race-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      amount: { currency: "USD", minor: 1000n },
+      occurredAt: webhookOccurredAt,
+    },
+    "c".repeat(64),
+  );
+  providerResult.resolve({
+    externalRefundReference: `REF_LATE_${crypto.randomUUID()}`,
+    status: "pending",
+  });
+
+  expect(await worker).toBe(1);
+  expect(calls).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "succeeded",
+    succeededMinor: 1000n,
+    reversalStatus: "pending",
+    externalRefundReference: null,
+    providerUpdatedAt: webhookOccurredAt,
+  });
+  const persistedPayment = await database.db.query.payments.findFirst({
+    where: eq(payments.id, fixture.payment.id),
+  });
+  expect(persistedPayment).toMatchObject({ refundedMinor: 1000n, refundStatus: "refunded" });
+  const persistedJob = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, fixture.job.id),
+  });
+  expect(persistedJob?.state).toBe("completed");
+});
+
+it("does not let a late provider response overwrite stale-refund reconciliation", async () => {
+  const fixture = await refundCommandFixture();
+  await database.db
+    .update(refunds)
+    .set({ updatedAt: new Date("2000-01-01T00:00:00Z") })
+    .where(eq(refunds.id, fixture.refund.id));
+  const providerCalled = deferred<void>();
+  const providerResult = deferred<{
+    externalRefundReference: string;
+    status: "processing";
+  }>();
+  let calls = 0;
+  const provider = refundProvider(async () => {
+    calls += 1;
+    providerCalled.resolve();
+    return providerResult.promise;
+  });
+  const workerNow = new Date("2030-02-01T00:00:00Z");
+  const worker = runCommerceCommandWorker({
+    database: database.db,
+    provider,
+    owner: `refund-worker-${crypto.randomUUID()}`,
+    now: workerNow,
+    limit: 1,
+  });
+  await providerCalled.promise;
+
+  expect(
+    await reconcileStaleRefunds(database.db, {
+      now: new Date("2030-02-03T00:00:00Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 1,
+    }),
+  ).toBe(1);
+  providerResult.resolve({
+    externalRefundReference: `REF_LATE_${crypto.randomUUID()}`,
+    status: "processing",
+  });
+
+  expect(await worker).toBe(1);
+  expect(calls).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "reconciliation_required",
+    reversalStatus: "pending",
+    externalRefundReference: null,
+  });
+  await expectAdditionalRefundRejected({
+    subjectId: fixture.subject.id,
+    paymentId: fixture.payment.id,
+  });
+});
+
+it("does not call the provider again once a refund requires reconciliation", async () => {
+  const fixture = await refundCommandFixture();
+  await database.db
+    .update(refunds)
+    .set({ updatedAt: new Date("2000-01-01T00:00:00Z") })
+    .where(eq(refunds.id, fixture.refund.id));
+  expect(
+    await reconcileStaleRefunds(database.db, {
+      now: new Date("2030-03-01T00:00:00Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 1,
+    }),
+  ).toBe(1);
+  let calls = 0;
+  const provider = refundProvider(async () => {
+    calls += 1;
+    return {
+      externalRefundReference: `REF_UNEXPECTED_${crypto.randomUUID()}`,
+      status: "processing",
+    };
+  });
+
+  expect(
+    await runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: new Date("2030-03-01T00:00:01Z"),
+      limit: 1,
+    }),
+  ).toBe(1);
+  expect(calls).toBe(0);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "reconciliation_required",
+    reversalStatus: "pending",
+    externalRefundReference: null,
+  });
+  const persistedJob = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, fixture.job.id),
+  });
+  expect(persistedJob?.state).toBe("completed");
+});
+
+it("releases refund capacity after a provider rejection without scheduling reversal", async () => {
+  const fixture = await refundCommandFixture();
+  const provider = refundProvider(async () => ({
+    externalRefundReference: `REF_FAILED_${crypto.randomUUID()}`,
+    status: "failed",
+  }));
+
+  expect(
+    await runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: new Date("2030-04-01T00:00:00Z"),
+      limit: 1,
+    }),
+  ).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "failed",
+    reversalStatus: "not_required",
+    succeededMinor: 0n,
+  });
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+  ).toHaveLength(0);
+
+  const released = await enqueueRefundRequest(database.db, {
+    subjectId: fixture.subject.id,
+    paymentId: fixture.payment.id,
+    environment: "test",
+    amount: { currency: "USD", minor: 400n },
+    reason: "replacement partial refund",
+    idempotencyKey: `refund:${crypto.randomUUID()}`,
+  });
+  expect(released.requestedMinor).toBe(400n);
+});
+
+it("backs off a thrown provider request while preserving refund capacity", async () => {
+  const fixture = await refundCommandFixture();
+  const workerNow = new Date("2030-05-01T00:00:00Z");
+  const provider = refundProvider(async () => {
+    throw new Error("provider unavailable");
+  });
+
+  expect(
+    await runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: workerNow,
+      limit: 1,
+    }),
+  ).toBe(0);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "pending",
+    reversalStatus: "pending",
+    externalRefundReference: null,
+    providerUpdatedAt: null,
+  });
+  const persistedJob = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, fixture.job.id),
+  });
+  expect(persistedJob).toMatchObject({
+    state: "pending",
+    attempts: 1,
+    lastErrorCode: "Error",
+  });
+  expect(persistedJob?.nextAttemptAt.toISOString()).toBe("2030-05-01T00:00:02.000Z");
+  await expectAdditionalRefundRejected({
+    subjectId: fixture.subject.id,
+    paymentId: fixture.payment.id,
+  });
+});
+
+it.each([
+  { providerStatus: "pending" as const, localStatus: "pending" },
+  { providerStatus: "processing" as const, localStatus: "processing" },
+  { providerStatus: "succeeded" as const, localStatus: "processing" },
+])(
+  "keeps capacity reserved when the provider reports $providerStatus",
+  async ({ providerStatus, localStatus }) => {
+    const fixture = await refundCommandFixture();
+    const externalRefundReference = `REF_ACCEPTED_${crypto.randomUUID()}`;
+    const provider = refundProvider(async () => ({
+      externalRefundReference,
+      status: providerStatus,
+    }));
+    const workerNow = new Date("2030-06-01T00:00:00Z");
+
+    expect(
+      await runCommerceCommandWorker({
+        database: database.db,
+        provider,
+        owner: `refund-worker-${crypto.randomUUID()}`,
+        now: workerNow,
+        limit: 1,
+      }),
+    ).toBe(1);
+    const persistedRefund = await database.db.query.refunds.findFirst({
+      where: eq(refunds.id, fixture.refund.id),
+    });
+    expect(persistedRefund).toMatchObject({
+      status: localStatus,
+      reversalStatus: "pending",
+      externalRefundReference,
+      providerUpdatedAt: workerNow,
+    });
+    await expectAdditionalRefundRejected({
+      subjectId: fixture.subject.id,
+      paymentId: fixture.payment.id,
+    });
+  },
+);
 
 it("refunds only the paid subscription period and accepts the next renewal", async () => {
   const { order } = await subscriptionFixture();
