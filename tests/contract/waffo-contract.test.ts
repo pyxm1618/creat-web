@@ -302,13 +302,18 @@ describe("Waffo Pancake 0.16 contract", () => {
   ])(
     "rejects an explicitly %s instead of dropping it from payment lookup validation",
     async (_name, lookup) => {
+      let requestCount = 0;
       const provider = paymentQueryProvider({
         response: { data: { payments: [validPayment()], paymentsCount: 1 } },
+        onRequest: () => {
+          requestCount += 1;
+        },
       });
 
       await expect(provider.getPayment({ environment: "test", ...lookup })).rejects.toBeInstanceOf(
         ProviderContractError,
       );
+      expect(requestCount).toBe(0);
     },
   );
 
