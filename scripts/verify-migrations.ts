@@ -10,7 +10,7 @@ import { createDatabaseClient } from "@/platform/database/client";
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL or DATABASE_URL is required");
 
-const MAIN_BASELINE_TAG = "0007_easy_stellaris";
+const MAIN_BASELINE_TAG = "0010_credit_finalization_lease_token";
 const database = createDatabaseClient(databaseUrl);
 
 async function resetDatabase(): Promise<void> {
@@ -35,12 +35,13 @@ async function assertLatestSchema(label: string): Promise<void> {
     "refunds",
     "commerce_command_jobs",
     "credit_reconciliation_incidents",
+    "payment_reconciliation_jobs",
   ];
   const tables = await database.db.execute(sql<{ table_name: string }>`
     select table_name
     from information_schema.tables
     where table_schema = 'public'
-      and table_name in ('platform_meta','subscriptions','subscription_periods','refunds','commerce_command_jobs','credit_reconciliation_incidents')
+      and table_name in ('platform_meta','subscriptions','subscription_periods','refunds','commerce_command_jobs','credit_reconciliation_incidents','payment_reconciliation_jobs')
   `);
   const actualTables = new Set(tables.map((row) => row.table_name));
   for (const table of requiredTables) {
@@ -67,6 +68,81 @@ async function assertLatestSchema(label: string): Promise<void> {
   `);
   if (finalizationLeaseToken.length !== 1) {
     throw new Error(`${label}: credit_finalization_jobs.lease_token is missing`);
+  }
+
+  const reconciliationColumns = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'payment_reconciliation_jobs'
+  `);
+  const actualReconciliationColumns = new Set(reconciliationColumns.map((row) => row.column_name));
+  for (const column of [
+    "order_id",
+    "environment",
+    "state",
+    "attempts",
+    "lease_owner",
+    "lease_token",
+    "lease_expires_at",
+    "next_attempt_at",
+    "operator_review_reason",
+    "completed_at",
+  ]) {
+    if (!actualReconciliationColumns.has(column)) {
+      throw new Error(`${label}: payment_reconciliation_jobs.${column} is missing`);
+    }
+  }
+
+  const reconciliationConstraints = await database.db.execute(sql<{ constraint_name: string }>`
+    select constraint_name
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'payment_reconciliation_jobs'
+  `);
+  const actualReconciliationConstraints = new Set(
+    reconciliationConstraints.map((row) => row.constraint_name),
+  );
+  for (const constraint of [
+    "payment_reconciliation_job_state_valid",
+    "payment_reconciliation_job_environment_valid",
+    "payment_reconciliation_job_attempts_nonnegative",
+    "payment_reconciliation_job_lease_consistent",
+    "payment_reconciliation_job_review_reason_consistent",
+    "payment_reconciliation_job_terminal_time_consistent",
+  ]) {
+    if (!actualReconciliationConstraints.has(constraint)) {
+      throw new Error(`${label}: missing payment reconciliation constraint ${constraint}`);
+    }
+  }
+
+  const reconciliationIndexes = await database.db.execute(sql<{ indexname: string }>`
+    select indexname
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname in ('payment_reconciliation_order_uq','payment_reconciliation_due_idx','payment_reconciliation_reclaim_idx','commerce_reconciliation_run_dedup_uq')
+  `);
+  const actualReconciliationIndexes = new Set(reconciliationIndexes.map((row) => row.indexname));
+  for (const index of [
+    "payment_reconciliation_order_uq",
+    "payment_reconciliation_due_idx",
+    "payment_reconciliation_reclaim_idx",
+    "commerce_reconciliation_run_dedup_uq",
+  ]) {
+    if (!actualReconciliationIndexes.has(index)) {
+      throw new Error(`${label}: missing payment reconciliation index ${index}`);
+    }
+  }
+
+  const reconciliationDedupKey = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'commerce_reconciliation_runs'
+      and column_name = 'dedup_key'
+  `);
+  if (reconciliationDedupKey.length !== 1) {
+    throw new Error(`${label}: commerce_reconciliation_runs.dedup_key is missing`);
   }
 
   const triggerFunctions = await database.db.execute(sql<{ function_name: string }>`

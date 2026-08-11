@@ -1,10 +1,32 @@
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
-import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/commerce-schema";
+import {
+  commerceReconciliationRuns,
+  fulfillmentJobs,
+  paymentReconciliationJobs,
+  paymentWebhookInbox,
+} from "@/platform/database/commerce-schema";
 import { commerceCommandJobs } from "@/platform/database/subscription-schema";
 
 const LEASE_MS = 5 * 60 * 1000;
+const PAYMENT_RECONCILIATION_MAX_ATTEMPTS = 12;
+
+type PaymentReconciliationWarning = {
+  readonly message: string;
+  readonly layer: string;
+  readonly aiHint?: string;
+};
+
+function allowlistedWarnings(
+  warnings: readonly PaymentReconciliationWarning[] | undefined,
+): readonly PaymentReconciliationWarning[] {
+  return (warnings ?? []).map((warning) => ({
+    message: warning.message,
+    layer: warning.layer,
+    ...(warning.aiHint === undefined ? {} : { aiHint: warning.aiHint }),
+  }));
+}
 
 export async function claimWebhookInbox(
   database: DatabaseClient,
@@ -123,6 +145,218 @@ export async function claimCommerceCommandJobs(
       if (updated) claimed.push(updated);
     }
     return claimed;
+  });
+}
+
+export async function claimPaymentReconciliationJobs(
+  database: DatabaseClient,
+  input: { readonly owner: string; readonly limit?: number; readonly now?: Date },
+) {
+  const now = input.now ?? new Date();
+  const expiresAt = new Date(now.getTime() + LEASE_MS);
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
+
+  return database.transaction(async (tx) => {
+    const candidates = await tx
+      .select()
+      .from(paymentReconciliationJobs)
+      .where(
+        or(
+          and(
+            eq(paymentReconciliationJobs.state, "pending"),
+            lte(paymentReconciliationJobs.nextAttemptAt, now),
+          ),
+          and(
+            eq(paymentReconciliationJobs.state, "processing"),
+            lte(paymentReconciliationJobs.leaseExpiresAt, now),
+          ),
+        ),
+      )
+      .orderBy(paymentReconciliationJobs.createdAt)
+      .limit(limit)
+      .for("update", { skipLocked: true });
+
+    const claimed = [];
+    for (const row of candidates) {
+      const [updated] = await tx
+        .update(paymentReconciliationJobs)
+        .set({
+          state: "processing",
+          leaseOwner: input.owner,
+          leaseToken: crypto.randomUUID(),
+          leaseExpiresAt: expiresAt,
+          updatedAt: now,
+        })
+        .where(eq(paymentReconciliationJobs.id, row.id))
+        .returning();
+      if (updated) claimed.push(updated);
+    }
+    return claimed;
+  });
+}
+
+type PaymentReconciliationClaim = {
+  readonly id: string;
+  readonly owner: string;
+  readonly leaseToken: string;
+  readonly terminalNow: Date;
+};
+
+function ownedLivePaymentReconciliationClaim(input: PaymentReconciliationClaim) {
+  return and(
+    eq(paymentReconciliationJobs.id, input.id),
+    eq(paymentReconciliationJobs.state, "processing"),
+    eq(paymentReconciliationJobs.leaseOwner, input.owner),
+    eq(paymentReconciliationJobs.leaseToken, input.leaseToken),
+    gt(paymentReconciliationJobs.leaseExpiresAt, input.terminalNow),
+  );
+}
+
+export async function completePaymentReconciliationJob(
+  database: DatabaseClient,
+  input: PaymentReconciliationClaim,
+): Promise<boolean> {
+  const [completed] = await database
+    .update(paymentReconciliationJobs)
+    .set({
+      state: "completed",
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastErrorCode: null,
+      completedAt: input.terminalNow,
+      updatedAt: input.terminalNow,
+    })
+    .where(ownedLivePaymentReconciliationClaim(input))
+    .returning({ id: paymentReconciliationJobs.id });
+  return completed !== undefined;
+}
+
+export async function retryPaymentReconciliationJob(
+  database: DatabaseClient,
+  input: PaymentReconciliationClaim & {
+    readonly errorCode: string;
+    readonly warnings?: readonly PaymentReconciliationWarning[];
+  },
+): Promise<boolean> {
+  return database.transaction(async (tx) => {
+    const [owned] = await tx
+      .select({
+        attempts: paymentReconciliationJobs.attempts,
+        orderId: paymentReconciliationJobs.orderId,
+      })
+      .from(paymentReconciliationJobs)
+      .where(ownedLivePaymentReconciliationClaim(input))
+      .for("update");
+    if (!owned) return false;
+
+    const attempts = owned.attempts + 1;
+    const dead = attempts >= PAYMENT_RECONCILIATION_MAX_ATTEMPTS;
+    const errorCode = input.errorCode.slice(0, 120);
+    const warnings = allowlistedWarnings(input.warnings);
+    const [retried] = await tx
+      .update(paymentReconciliationJobs)
+      .set({
+        state: dead ? "dead_letter" : "pending",
+        attempts,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: dead
+          ? input.terminalNow
+          : new Date(input.terminalNow.getTime() + retryDelay(attempts)),
+        lastErrorCode: errorCode,
+        completedAt: dead ? input.terminalNow : null,
+        updatedAt: input.terminalNow,
+      })
+      .where(ownedLivePaymentReconciliationClaim(input))
+      .returning({ id: paymentReconciliationJobs.id });
+    if (!retried) return false;
+
+    await tx
+      .insert(commerceReconciliationRuns)
+      .values({
+        dedupKey: `payment-reconciliation:${input.id}:${input.leaseToken}:retry`,
+        targetType: "payment_reconciliation_job",
+        targetId: input.id,
+        actorType: "worker",
+        beforeJson: {
+          state: "processing",
+          orderId: owned.orderId,
+          attempts: owned.attempts,
+        },
+        afterJson: {
+          state: dead ? "dead_letter" : "pending",
+          errorCode,
+          warnings,
+        },
+        result: dead ? "quarantined" : "retry_scheduled",
+        createdAt: input.terminalNow,
+      })
+      .onConflictDoNothing();
+    return true;
+  });
+}
+
+export async function operatorReviewPaymentReconciliationJob(
+  database: DatabaseClient,
+  input: PaymentReconciliationClaim & {
+    readonly reason: string;
+    readonly warnings?: readonly PaymentReconciliationWarning[];
+  },
+): Promise<boolean> {
+  const reason = input.reason.trim();
+  if (!reason) throw new Error("payment reconciliation operator-review reason is required");
+
+  return database.transaction(async (tx) => {
+    const [owned] = await tx
+      .select({
+        attempts: paymentReconciliationJobs.attempts,
+        orderId: paymentReconciliationJobs.orderId,
+      })
+      .from(paymentReconciliationJobs)
+      .where(ownedLivePaymentReconciliationClaim(input))
+      .for("update");
+    if (!owned) return false;
+
+    const [reviewed] = await tx
+      .update(paymentReconciliationJobs)
+      .set({
+        state: "operator_review",
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        lastErrorCode: null,
+        operatorReviewReason: reason,
+        completedAt: input.terminalNow,
+        updatedAt: input.terminalNow,
+      })
+      .where(ownedLivePaymentReconciliationClaim(input))
+      .returning({ id: paymentReconciliationJobs.id });
+    if (!reviewed) return false;
+
+    await tx
+      .insert(commerceReconciliationRuns)
+      .values({
+        dedupKey: `payment-reconciliation:${input.id}:${input.leaseToken}:operator-review`,
+        targetType: "payment_reconciliation_job",
+        targetId: input.id,
+        actorType: "worker",
+        beforeJson: {
+          state: "processing",
+          orderId: owned.orderId,
+          attempts: owned.attempts,
+        },
+        afterJson: {
+          state: "operator_review",
+          reason,
+          warnings: allowlistedWarnings(input.warnings),
+        },
+        result: "operator_review_required",
+        createdAt: input.terminalNow,
+      })
+      .onConflictDoNothing();
+    return true;
   });
 }
 

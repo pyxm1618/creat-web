@@ -228,13 +228,72 @@ export const fulfillmentJobs = pgTable(
   ],
 );
 
-export const commerceReconciliationRuns = pgTable("commerce_reconciliation_runs", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  targetType: text("target_type").notNull(),
-  targetId: text("target_id").notNull(),
-  actorType: text("actor_type").notNull(),
-  beforeJson: jsonb("before_json").$type<Record<string, unknown>>().notNull(),
-  afterJson: jsonb("after_json").$type<Record<string, unknown>>().notNull(),
-  result: text("result").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
-});
+export const paymentReconciliationJobs = pgTable(
+  "payment_reconciliation_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "restrict" }),
+    environment: text("environment").notNull(),
+    state: text("state").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    lastErrorCode: text("last_error_code"),
+    operatorReviewReason: text("operator_review_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [
+    uniqueIndex("payment_reconciliation_order_uq").on(table.environment, table.orderId),
+    index("payment_reconciliation_due_idx").on(table.state, table.nextAttemptAt, table.createdAt),
+    index("payment_reconciliation_reclaim_idx").on(table.state, table.leaseExpiresAt),
+    check(
+      "payment_reconciliation_job_state_valid",
+      sql`${table.state} in ('pending','processing','completed','operator_review','dead_letter')`,
+    ),
+    check(
+      "payment_reconciliation_job_environment_valid",
+      sql`${table.environment} in ('test','production')`,
+    ),
+    check("payment_reconciliation_job_attempts_nonnegative", sql`${table.attempts} >= 0`),
+    check(
+      "payment_reconciliation_job_lease_consistent",
+      sql`(${table.state} = 'processing' and ${table.leaseOwner} is not null and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'processing' and ${table.leaseOwner} is null and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null)`,
+    ),
+    check(
+      "payment_reconciliation_job_review_reason_consistent",
+      sql`(${table.state} = 'operator_review' and ${table.operatorReviewReason} is not null) or (${table.state} <> 'operator_review' and ${table.operatorReviewReason} is null)`,
+    ),
+    check(
+      "payment_reconciliation_job_terminal_time_consistent",
+      sql`(${table.state} in ('completed','operator_review','dead_letter') and ${table.completedAt} is not null) or (${table.state} in ('pending','processing') and ${table.completedAt} is null)`,
+    ),
+  ],
+);
+
+export const commerceReconciliationRuns = pgTable(
+  "commerce_reconciliation_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    dedupKey: text("dedup_key"),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    actorType: text("actor_type").notNull(),
+    beforeJson: jsonb("before_json").$type<Record<string, unknown>>().notNull(),
+    afterJson: jsonb("after_json").$type<Record<string, unknown>>().notNull(),
+    result: text("result").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("commerce_reconciliation_run_dedup_uq")
+      .on(table.dedupKey)
+      .where(sql`${table.dedupKey} is not null`),
+  ],
+);
