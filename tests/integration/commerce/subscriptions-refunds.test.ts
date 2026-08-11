@@ -15,6 +15,7 @@ import { runCommerceCommandWorker } from "@/platform/commerce/application/run-co
 import { createDatabaseClient } from "@/platform/database/client";
 import {
   accountSubjects,
+  authSecurityEvents,
   commerceAppliedEvents,
   commerceCommandJobs,
   commerceProducts,
@@ -186,6 +187,55 @@ async function refundCommandFixture(requestedMinor = 700n) {
   });
   if (!job) throw new Error("refund command job missing");
   return { ...fixture, refund, job, idempotencyKey };
+}
+
+async function securityEventCount(eventType: string): Promise<number> {
+  const [row] = await database.db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(authSecurityEvents)
+    .where(eq(authSecurityEvents.eventType, eventType));
+  return row?.count ?? 0;
+}
+
+async function startFinalRefundAttempt(requestedMinor = 1000n) {
+  const fixture = await refundCommandFixture(requestedMinor);
+  await database.db
+    .update(commerceCommandJobs)
+    .set({ attempts: 11 })
+    .where(eq(commerceCommandJobs.id, fixture.job.id));
+  const providerCalled = deferred<void>();
+  const releaseProvider = deferred<void>();
+  let calls = 0;
+  const provider = refundProvider(async () => {
+    calls += 1;
+    providerCalled.resolve();
+    await releaseProvider.promise;
+    throw new Error("provider unavailable on final attempt");
+  });
+  const worker = runCommerceCommandWorker({
+    database: database.db,
+    provider,
+    owner: `refund-worker-${crypto.randomUUID()}`,
+    now: new Date("2031-01-01T00:00:00Z"),
+    limit: 1,
+  });
+  await providerCalled.promise;
+  return { fixture, releaseProvider, worker, calls: () => calls };
+}
+
+async function expectFinalAttemptDeadLetter(input: {
+  readonly jobId: string;
+  readonly deadLetterCountBefore: number;
+}) {
+  const persistedJob = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, input.jobId),
+  });
+  expect(persistedJob).toMatchObject({
+    state: "dead_letter",
+    attempts: 12,
+    lastErrorCode: "Error",
+  });
+  expect(await securityEventCount("dead_letter_created")).toBe(input.deadLetterCountBefore + 1);
 }
 
 async function expectAdditionalRefundRejected(input: {
@@ -969,6 +1019,138 @@ it("backs off a thrown provider request while preserving refund capacity", async
   await expectAdditionalRefundRejected({
     subjectId: fixture.subject.id,
     paymentId: fixture.payment.id,
+  });
+});
+
+it("does not overwrite webhook success when the final provider attempt dead-letters", async () => {
+  const race = await startFinalRefundAttempt();
+  const deadLetterCountBefore = await securityEventCount("dead_letter_created");
+  const webhookOccurredAt = new Date("2031-01-01T00:00:01Z");
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-final-attempt-success-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: race.fixture.payment.externalPaymentId,
+      amount: { currency: "USD", minor: 1000n },
+      occurredAt: webhookOccurredAt,
+    },
+    "d".repeat(64),
+  );
+  race.releaseProvider.resolve();
+
+  expect(await race.worker).toBe(0);
+  expect(race.calls()).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, race.fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "succeeded",
+    reversalStatus: "pending",
+    succeededMinor: 1000n,
+    operatorReviewReason: null,
+    providerUpdatedAt: webhookOccurredAt,
+  });
+  const persistedPayment = await database.db.query.payments.findFirst({
+    where: eq(payments.id, race.fixture.payment.id),
+  });
+  expect(persistedPayment).toMatchObject({ refundedMinor: 1000n, refundStatus: "refunded" });
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, race.fixture.payment.id)),
+  ).toHaveLength(0);
+  await expectFinalAttemptDeadLetter({
+    jobId: race.fixture.job.id,
+    deadLetterCountBefore,
+  });
+});
+
+it("does not overwrite webhook failure when the final provider attempt dead-letters", async () => {
+  const race = await startFinalRefundAttempt();
+  const deadLetterCountBefore = await securityEventCount("dead_letter_created");
+  const webhookOccurredAt = new Date("2031-01-01T00:00:02Z");
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_failed",
+      eventId: `evt-final-attempt-failure-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: race.fixture.payment.externalPaymentId,
+      occurredAt: webhookOccurredAt,
+    },
+    "e".repeat(64),
+  );
+  race.releaseProvider.resolve();
+
+  expect(await race.worker).toBe(0);
+  expect(race.calls()).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, race.fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "failed",
+    reversalStatus: "not_required",
+    succeededMinor: 0n,
+    providerUpdatedAt: webhookOccurredAt,
+  });
+  const persistedPayment = await database.db.query.payments.findFirst({
+    where: eq(payments.id, race.fixture.payment.id),
+  });
+  expect(persistedPayment?.refundStatus).toBe("failed");
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, race.fixture.payment.id)),
+  ).toHaveLength(0);
+  await expectFinalAttemptDeadLetter({
+    jobId: race.fixture.job.id,
+    deadLetterCountBefore,
+  });
+});
+
+it("does not overwrite stale reconciliation when the final provider attempt dead-letters", async () => {
+  const race = await startFinalRefundAttempt();
+  const deadLetterCountBefore = await securityEventCount("dead_letter_created");
+  await database.db
+    .update(refunds)
+    .set({ updatedAt: new Date("2000-01-01T00:00:00Z") })
+    .where(eq(refunds.id, race.fixture.refund.id));
+  expect(
+    await reconcileStaleRefunds(database.db, {
+      now: new Date("2031-01-03T00:00:00Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 1,
+    }),
+  ).toBe(1);
+  race.releaseProvider.resolve();
+
+  expect(await race.worker).toBe(0);
+  expect(race.calls()).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, race.fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "reconciliation_required",
+    reversalStatus: "pending",
+    operatorReviewReason: "provider refund settlement webhook did not arrive within threshold",
+    externalRefundReference: null,
+  });
+  const reconciliations = await database.db
+    .select()
+    .from(commerceReconciliationRuns)
+    .where(eq(commerceReconciliationRuns.targetId, race.fixture.payment.id));
+  expect(reconciliations).toHaveLength(1);
+  expect(reconciliations[0]?.afterJson).toMatchObject({
+    status: "reconciliation_required",
+    reason: "provider_settlement_timeout",
+  });
+  await expectFinalAttemptDeadLetter({
+    jobId: race.fixture.job.id,
+    deadLetterCountBefore,
   });
 });
 

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
@@ -91,7 +91,9 @@ export async function runCommerceCommandWorker(input: {
               operatorReviewReason: "refund provider command exhausted retries",
               updatedAt: now,
             })
-            .where(eq(refunds.id, job.targetId))
+            .where(
+              and(eq(refunds.id, job.targetId), inArray(refunds.status, ["pending", "processing"])),
+            )
             .returning({ id: refunds.id, paymentId: refunds.paymentId });
           if (refund) {
             await tx.insert(commerceReconciliationRuns).values({
