@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { authSecurityEvents, paymentWebhookInbox } from "@/platform/database/schema";
@@ -31,7 +31,7 @@ export async function runWebhookInboxWorker(input: {
     try {
       const event = parseNormalizedProviderEvent(row.normalizedPayloadJson);
       await processProviderEvent(input.database, event, row.payloadHash);
-      await input.database
+      const [owned] = await input.database
         .update(paymentWebhookInbox)
         .set({
           state: "completed",
@@ -40,13 +40,21 @@ export async function runWebhookInboxWorker(input: {
           leaseExpiresAt: null,
           lastErrorCode: null,
         })
-        .where(eq(paymentWebhookInbox.id, row.id));
-      processed += 1;
+        .where(
+          and(
+            eq(paymentWebhookInbox.id, row.id),
+            eq(paymentWebhookInbox.state, "processing"),
+            eq(paymentWebhookInbox.leaseOwner, input.owner),
+            gt(paymentWebhookInbox.leaseExpiresAt, input.now),
+          ),
+        )
+        .returning({ id: paymentWebhookInbox.id });
+      if (owned) processed += 1;
     } catch (error) {
       const attempts = row.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       await input.database.transaction(async (tx) => {
-        await tx
+        const [owned] = await tx
           .update(paymentWebhookInbox)
           .set({
             state: dead ? "dead_letter" : "retry",
@@ -56,7 +64,16 @@ export async function runWebhookInboxWorker(input: {
             leaseExpiresAt: null,
             lastErrorCode: errorCode(error),
           })
-          .where(eq(paymentWebhookInbox.id, row.id));
+          .where(
+            and(
+              eq(paymentWebhookInbox.id, row.id),
+              eq(paymentWebhookInbox.state, "processing"),
+              eq(paymentWebhookInbox.leaseOwner, input.owner),
+              gt(paymentWebhookInbox.leaseExpiresAt, input.now),
+            ),
+          )
+          .returning({ id: paymentWebhookInbox.id });
+        if (!owned) return;
         if (dead) {
           await tx.insert(authSecurityEvents).values({
             eventType: "dead_letter_created",

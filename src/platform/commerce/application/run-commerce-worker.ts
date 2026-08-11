@@ -21,44 +21,45 @@ export async function runCommerceWorker(input: {
 }> {
   const now = input.now ?? new Date();
   const batchLimit = Math.min(Math.max(input.limit ?? 60, 1), 100);
-  let remaining = batchLimit;
+  const inboxReserved = batchLimit >= 3 ? Math.floor(batchLimit / 3) : 1;
+  const commandReserved = batchLimit >= 3 ? Math.floor(batchLimit / 3) : batchLimit - 1;
+  const fulfillmentReserved = batchLimit - inboxReserved - commandReserved;
   const inbox = await runWebhookInboxWorker({
     database: input.database,
     owner: input.owner,
     now,
-    limit: remaining,
+    limit: inboxReserved,
   });
-  remaining -= inbox.claimed;
 
+  const commandLimit = commandReserved + (inboxReserved - inbox.claimed);
   let commandClaimed = 0;
   const commandProcessed =
-    remaining > 0
+    commandLimit > 0
       ? await runCommerceCommandWorker({
           database: input.database,
           provider: input.provider,
           owner: input.owner,
           now,
-          limit: remaining,
+          limit: commandLimit,
           onClaimed: (count) => {
             commandClaimed = count;
           },
         })
       : 0;
-  remaining -= commandClaimed;
 
+  const fulfillmentLimit = fulfillmentReserved + (commandLimit - commandClaimed);
   const fulfillment =
-    remaining > 0
+    fulfillmentLimit > 0
       ? await runFulfillmentWorker({
           database: input.database,
           fulfillment: input.fulfillment,
           owner: input.owner,
           now,
-          limit: remaining,
+          limit: fulfillmentLimit,
         })
       : { claimed: 0, processed: 0 };
-  remaining -= fulfillment.claimed;
 
-  input.onClaimed?.(batchLimit - remaining);
+  input.onClaimed?.(inbox.claimed + commandClaimed + fulfillment.claimed);
   return {
     inboxProcessed: inbox.processed,
     commandProcessed,

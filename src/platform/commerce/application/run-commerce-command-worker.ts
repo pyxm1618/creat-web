@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
@@ -44,7 +44,7 @@ export async function runCommerceCommandWorker(input: {
         now,
       });
 
-      await input.database
+      const [owned] = await input.database
         .update(commerceCommandJobs)
         .set({
           state: "completed",
@@ -53,13 +53,21 @@ export async function runCommerceCommandWorker(input: {
           leaseExpiresAt: null,
           lastErrorCode: null,
         })
-        .where(eq(commerceCommandJobs.id, job.id));
-      processed += 1;
+        .where(
+          and(
+            eq(commerceCommandJobs.id, job.id),
+            eq(commerceCommandJobs.state, "processing"),
+            eq(commerceCommandJobs.leaseOwner, input.owner),
+            gt(commerceCommandJobs.leaseExpiresAt, now),
+          ),
+        )
+        .returning({ id: commerceCommandJobs.id });
+      if (owned) processed += 1;
     } catch (error) {
       const attempts = job.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       await input.database.transaction(async (tx) => {
-        await tx
+        const [owned] = await tx
           .update(commerceCommandJobs)
           .set({
             state: dead ? "dead_letter" : "pending",
@@ -69,7 +77,16 @@ export async function runCommerceCommandWorker(input: {
             leaseExpiresAt: null,
             lastErrorCode: errorCode(error),
           })
-          .where(eq(commerceCommandJobs.id, job.id));
+          .where(
+            and(
+              eq(commerceCommandJobs.id, job.id),
+              eq(commerceCommandJobs.state, "processing"),
+              eq(commerceCommandJobs.leaseOwner, input.owner),
+              gt(commerceCommandJobs.leaseExpiresAt, now),
+            ),
+          )
+          .returning({ id: commerceCommandJobs.id });
+        if (!owned) return;
         await tx.insert(authSecurityEvents).values({
           eventType: "provider_failure",
           outcome: "failure",

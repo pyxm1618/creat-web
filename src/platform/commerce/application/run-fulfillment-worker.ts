@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { authSecurityEvents, fulfillmentJobs } from "@/platform/database/schema";
@@ -35,7 +35,7 @@ export async function runFulfillmentWorker(input: {
         operation: job.operation,
         operationKey: job.idempotencyKey,
       });
-      await input.database
+      const [owned] = await input.database
         .update(fulfillmentJobs)
         .set({
           state: "completed",
@@ -44,13 +44,21 @@ export async function runFulfillmentWorker(input: {
           leaseExpiresAt: null,
           lastErrorCode: null,
         })
-        .where(eq(fulfillmentJobs.id, job.id));
-      processed += 1;
+        .where(
+          and(
+            eq(fulfillmentJobs.id, job.id),
+            eq(fulfillmentJobs.state, "processing"),
+            eq(fulfillmentJobs.leaseOwner, input.owner),
+            gt(fulfillmentJobs.leaseExpiresAt, input.now),
+          ),
+        )
+        .returning({ id: fulfillmentJobs.id });
+      if (owned) processed += 1;
     } catch (error) {
       const attempts = job.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       await input.database.transaction(async (tx) => {
-        await tx
+        const [owned] = await tx
           .update(fulfillmentJobs)
           .set({
             state: dead ? "dead_letter" : "pending",
@@ -60,7 +68,16 @@ export async function runFulfillmentWorker(input: {
             leaseExpiresAt: null,
             lastErrorCode: errorCode(error),
           })
-          .where(eq(fulfillmentJobs.id, job.id));
+          .where(
+            and(
+              eq(fulfillmentJobs.id, job.id),
+              eq(fulfillmentJobs.state, "processing"),
+              eq(fulfillmentJobs.leaseOwner, input.owner),
+              gt(fulfillmentJobs.leaseExpiresAt, input.now),
+            ),
+          )
+          .returning({ id: fulfillmentJobs.id });
+        if (!owned) return;
         if (dead) {
           await tx.insert(authSecurityEvents).values({
             eventType: "dead_letter_created",
