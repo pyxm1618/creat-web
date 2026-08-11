@@ -148,13 +148,20 @@ export async function claimCommerceCommandJobs(
 
 export async function claimPaymentReconciliationJobs(
   database: DatabaseClient,
-  input: { readonly owner: string; readonly limit?: number; readonly now?: Date },
+  input: {
+    readonly owner: string;
+    readonly limit?: number;
+    readonly now?: Date;
+    readonly signal?: AbortSignal;
+  },
 ) {
+  input.signal?.throwIfAborted();
   const now = input.now ?? new Date();
   const expiresAt = new Date(now.getTime() + LEASE_MS);
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
 
   return database.transaction(async (tx) => {
+    input.signal?.throwIfAborted();
     const candidates = await tx
       .select()
       .from(paymentReconciliationJobs)
@@ -177,9 +184,11 @@ export async function claimPaymentReconciliationJobs(
       )
       .limit(limit)
       .for("update", { skipLocked: true });
+    input.signal?.throwIfAborted();
 
     const claimed = [];
     for (const row of candidates) {
+      input.signal?.throwIfAborted();
       const [updated] = await tx
         .update(paymentReconciliationJobs)
         .set({
@@ -191,8 +200,10 @@ export async function claimPaymentReconciliationJobs(
         })
         .where(eq(paymentReconciliationJobs.id, row.id))
         .returning();
+      input.signal?.throwIfAborted();
       if (updated) claimed.push(updated);
     }
+    input.signal?.throwIfAborted();
     return claimed;
   });
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { authenticateInternalRequest } from "@/platform/operations/authenticate-internal-request";
-import { runBoundedJob } from "@/platform/operations/run-bounded-job";
+import {
+  JobRuntimeBudgetExceededError,
+  runBoundedJob,
+} from "@/platform/operations/run-bounded-job";
 
 describe("internal job security", () => {
   it("authenticates only an exact bearer secret", () => {
@@ -55,16 +58,20 @@ describe("internal job security", () => {
 
   it("fails closed when the execution exceeds the hard runtime budget", async () => {
     const startedAt = Date.now();
-    await expect(
-      runBoundedJob({
-        batchLimit: 1,
-        maxRuntimeMs: 1_000,
-        run: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 2_000));
-          return "too-late";
-        },
-      }),
-    ).rejects.toThrow(/runtime budget exhausted/i);
+    let signal: AbortSignal | undefined;
+    const run = runBoundedJob({
+      batchLimit: 1,
+      maxRuntimeMs: 1_000,
+      run: async (job) => {
+        signal = job.signal;
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return "too-late";
+      },
+    });
+
+    await expect(run).rejects.toBeInstanceOf(JobRuntimeBudgetExceededError);
+    expect(signal?.reason).toBeInstanceOf(JobRuntimeBudgetExceededError);
+    expect((signal?.reason as Error).message).toBe("job runtime budget exhausted");
     expect(Date.now() - startedAt).toBeLessThan(1_800);
   });
 

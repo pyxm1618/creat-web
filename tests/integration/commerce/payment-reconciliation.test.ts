@@ -1144,6 +1144,59 @@ it("does not seed or claim when payment reconciliation starts pre-aborted", asyn
   expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
 });
 
+it("settles on abort when a read-only provider lookup ignores the signal forever", async () => {
+  const now = new Date("2030-05-02T00:00:00.000Z");
+  const order = await seedOrder();
+  await database.db
+    .update(orders)
+    .set({ createdAt: new Date("2030-04-30T00:00:00.000Z") })
+    .where(eq(orders.id, order.id));
+  const controller = new AbortController();
+  let markLookupStarted!: () => void;
+  const lookupStarted = new Promise<void>((resolve) => {
+    markLookupStarted = resolve;
+  });
+  const provider = paymentProvider(async () => {
+    markLookupStarted();
+    return new Promise(() => undefined);
+  });
+  const run = reconcileStalePayments(database.db, provider, {
+    owner: "payment-provider-ignores-abort-worker",
+    expectedStoreId: "STORE_TEST",
+    now,
+    terminalClock: () => new Date("2030-05-02T00:00:01.000Z"),
+    staleAfterMs: 24 * 60 * 60 * 1000,
+    signal: controller.signal,
+  });
+  await lookupStarted;
+
+  controller.abort(new DOMException("payment slice expired", "AbortError"));
+  const outcome = await Promise.race([
+    run.then(
+      () => ({ settled: "resolved" as const }),
+      (error: unknown) => ({ settled: "rejected" as const, error }),
+    ),
+    new Promise<{ settled: "still_pending" }>((resolve) =>
+      setTimeout(() => resolve({ settled: "still_pending" }), 100),
+    ),
+  ]);
+
+  expect(outcome).toMatchObject({ settled: "rejected", error: { name: "AbortError" } });
+  expect(await database.db.select().from(payments)).toHaveLength(0);
+  expect(await database.db.select().from(fulfillmentJobs)).toHaveLength(0);
+  expect(await database.db.select().from(commerceAppliedEvents)).toHaveLength(0);
+  expect(await database.db.select().from(commerceReconciliationRuns)).toHaveLength(0);
+  expect(await database.db.select().from(paymentReconciliationJobs)).toMatchObject([
+    {
+      orderId: order.id,
+      state: "processing",
+      attempts: 0,
+      leaseOwner: "payment-provider-ignores-abort-worker",
+      completedAt: null,
+    },
+  ]);
+});
+
 it("rolls back a successful provider result when abort occurs while waiting for the live job lock", async () => {
   const now = new Date("2030-05-02T00:00:00.000Z");
   const order = await seedOrder();

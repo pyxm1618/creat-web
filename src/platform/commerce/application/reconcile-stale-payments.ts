@@ -68,10 +68,46 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function awaitProviderLookup<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation();
+  signal.throwIfAborted();
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      queueMicrotask(() => reject(signal.reason ?? new DOMException("aborted", "AbortError")));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    let result: Promise<T>;
+    try {
+      result = operation();
+    } catch (error) {
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+      return;
+    }
+    result.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(signal.aborted && isAbortError(error) ? (signal.reason ?? error) : error);
+      },
+    );
+  });
+}
+
 export async function seedPaymentReconciliationJobs(
   database: DatabaseClient,
-  input: { readonly now?: Date; readonly staleAfterMs?: number; readonly limit?: number } = {},
+  input: {
+    readonly now?: Date;
+    readonly staleAfterMs?: number;
+    readonly limit?: number;
+    readonly signal?: AbortSignal;
+  } = {},
 ): Promise<SeedPaymentReconciliationResult> {
+  input.signal?.throwIfAborted();
   const now = input.now ?? new Date();
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
@@ -81,6 +117,7 @@ export async function seedPaymentReconciliationJobs(
   const cutoff = new Date(now.getTime() - staleAfterMs);
 
   return database.transaction(async (tx) => {
+    input.signal?.throwIfAborted();
     const candidates = await tx
       .select({
         orderId: orders.id,
@@ -104,14 +141,17 @@ export async function seedPaymentReconciliationJobs(
       )
       .orderBy(orders.createdAt, orders.id)
       .limit(limit);
+    input.signal?.throwIfAborted();
 
     const jobs: SeededPaymentReconciliationJob[] = [];
     for (const candidate of candidates) {
+      input.signal?.throwIfAborted();
       const [inserted] = await tx
         .insert(paymentReconciliationJobs)
         .values({ orderId: candidate.orderId, nextAttemptAt: now })
         .onConflictDoNothing({ target: paymentReconciliationJobs.orderId })
         .returning({ id: paymentReconciliationJobs.id });
+      input.signal?.throwIfAborted();
       if (!inserted) continue;
       jobs.push({
         orderId: candidate.orderId,
@@ -123,6 +163,7 @@ export async function seedPaymentReconciliationJobs(
         fulfillmentKey: candidate.fulfillmentKey,
       });
     }
+    input.signal?.throwIfAborted();
 
     return { scanned: candidates.length, seeded: jobs.length, jobs };
   });
@@ -173,18 +214,29 @@ export async function reconcileStalePayments(
     now,
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
     limit,
+    ...(input.signal ? { signal: input.signal } : {}),
   });
+  input.signal?.throwIfAborted();
   const claims = await claimPaymentReconciliationJobs(database, {
     owner: input.owner,
     now,
     limit,
+    ...(input.signal ? { signal: input.signal } : {}),
   });
+  input.signal?.throwIfAborted();
+  let scanned = 0;
   let applied = 0;
   let operatorReview = 0;
   let retried = 0;
 
   for (const claim of claims) {
-    input.signal?.throwIfAborted();
+    if (input.signal?.aborted) {
+      // A terminal/retry result already counted below is durable. Stop before the next claim and
+      // return that committed work; otherwise the abort still cancels the reconciliation run.
+      if (applied + retried + operatorReview > 0) break;
+      input.signal.throwIfAborted();
+    }
+    scanned += 1;
     if (!claim.leaseToken) throw new Error("payment reconciliation claim token missing");
     const leaseToken = claim.leaseToken;
     const [facts] = await database
@@ -201,21 +253,26 @@ export async function reconcileStalePayments(
       .innerJoin(commerceProducts, eq(commerceProducts.id, orders.productId))
       .where(eq(paymentReconciliationJobs.id, claim.id))
       .limit(1);
+    input.signal?.throwIfAborted();
     if (!facts) throw new Error("payment reconciliation order facts missing");
     const environment = parseEnvironment(facts.environment);
     const model = parseModel(facts.model);
     const currency = parseCurrency(facts.currency);
     let lookup: PaymentLookupResult;
     try {
-      lookup = await provider.getPayment({
-        environment,
-        merchantOrderReference: facts.orderId,
-        ...(facts.externalOrderId ? { externalOrderId: facts.externalOrderId } : {}),
-        ...(input.signal ? { signal: input.signal } : {}),
-      });
+      lookup = await awaitProviderLookup(
+        () =>
+          provider.getPayment({
+            environment,
+            merchantOrderReference: facts.orderId,
+            ...(facts.externalOrderId ? { externalOrderId: facts.externalOrderId } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
+          }),
+        input.signal,
+      );
     } catch (error) {
-      input.signal?.throwIfAborted();
-      if (isAbortError(error)) throw error;
+      if (error === input.signal?.reason || isAbortError(error) || input.signal?.aborted)
+        throw error;
       if (
         await retryPaymentReconciliationJob(database, {
           id: claim.id,
@@ -415,12 +472,14 @@ export async function reconcileStalePayments(
             })
             .onConflictDoNothing();
         }
+        // Cancellation linearizes at this final in-transaction check. Once the callback returns,
+        // the database commit outcome is authoritative and the caller must await and report it.
         fence.signal?.throwIfAborted();
         return completed ? ("applied" as const) : ("stale" as const);
       });
     } catch (error) {
-      input.signal?.throwIfAborted();
-      if (isAbortError(error)) throw error;
+      if (error === input.signal?.reason || isAbortError(error) || input.signal?.aborted)
+        throw error;
       if (
         await operatorReviewPaymentReconciliationJob(database, {
           id: claim.id,
@@ -440,5 +499,5 @@ export async function reconcileStalePayments(
     if (claimOutcome === "operator_review") operatorReview += 1;
   }
 
-  return { scanned: claims.length, applied, retried, operatorReview };
+  return { scanned, applied, retried, operatorReview };
 }

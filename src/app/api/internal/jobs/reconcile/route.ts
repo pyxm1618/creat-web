@@ -19,7 +19,10 @@ import {
   authenticateInternalRequest,
   unauthorizedInternalResponse,
 } from "@/platform/operations/authenticate-internal-request";
-import { runBoundedJob } from "@/platform/operations/run-bounded-job";
+import {
+  JobRuntimeBudgetExceededError,
+  runBoundedJob,
+} from "@/platform/operations/run-bounded-job";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,11 +36,11 @@ const EMPTY_PAYMENT_RECONCILIATION = {
   operatorReview: 0,
 } as const;
 
-function isPaymentSliceAbort(error: unknown, signal: AbortSignal | undefined): boolean {
+function isPaymentSliceAbort(error: unknown, signal: AbortSignal): boolean {
   return (
-    signal?.aborted === true &&
-    error instanceof Error &&
-    (error.name === "AbortError" || error.message === "job runtime budget exhausted")
+    signal.aborted &&
+    signal.reason instanceof JobRuntimeBudgetExceededError &&
+    error instanceof JobRuntimeBudgetExceededError
   );
 }
 
@@ -52,24 +55,24 @@ export async function GET(request: Request): Promise<Response> {
     batchLimit: 50,
     maxRuntimeMs: 45_000,
     run: async (job) => {
-      let paymentSliceSignal: AbortSignal | undefined;
+      const paymentSliceController = new AbortController();
       let paymentReconciliation: PaymentReconciliationResult = EMPTY_PAYMENT_RECONCILIATION;
+      const paymentTimeoutId = setTimeout(
+        () => paymentSliceController.abort(new JobRuntimeBudgetExceededError()),
+        PAYMENT_RECONCILIATION_RUNTIME_MS,
+      );
       try {
-        paymentReconciliation = await runBoundedJob({
-          batchLimit: PAYMENT_RECONCILIATION_LIMIT,
-          maxRuntimeMs: PAYMENT_RECONCILIATION_RUNTIME_MS,
-          run: async (paymentJob) => {
-            paymentSliceSignal = paymentJob.signal;
-            return reconcileStalePayments(commerce.database, commerce.provider, {
-              owner: `payment-reconciliation:${commerce.environment}:${randomUUID()}`,
-              expectedStoreId,
-              limit: paymentJob.batchLimit,
-              signal: AbortSignal.any([job.signal, paymentJob.signal]),
-            });
-          },
+        paymentReconciliation = await reconcileStalePayments(commerce.database, commerce.provider, {
+          owner: `payment-reconciliation:${commerce.environment}:${randomUUID()}`,
+          expectedStoreId,
+          limit: PAYMENT_RECONCILIATION_LIMIT,
+          signal: AbortSignal.any([job.signal, paymentSliceController.signal]),
         });
       } catch (error) {
-        if (job.signal.aborted || !isPaymentSliceAbort(error, paymentSliceSignal)) throw error;
+        if (job.signal.aborted) throw job.signal.reason ?? error;
+        if (!isPaymentSliceAbort(error, paymentSliceController.signal)) throw error;
+      } finally {
+        clearTimeout(paymentTimeoutId);
       }
 
       let remaining = job.batchLimit;

@@ -1,3 +1,11 @@
+export class JobRuntimeBudgetExceededError extends Error {
+  override readonly name = "JobRuntimeBudgetExceededError";
+
+  constructor() {
+    super("job runtime budget exhausted");
+  }
+}
+
 export type BoundedJobContext = {
   readonly batchLimit: number;
   readonly startedAt: Date;
@@ -33,14 +41,15 @@ export async function runBoundedJob<T>(input: {
   const canContinue = (minimumRemainingMs = 250) =>
     !controller.signal.aborted && remainingMs() >= minimumRemainingMs;
   const assertWithinBudget = () => {
-    if (!canContinue(1)) throw new Error("job runtime budget exhausted");
+    if (!canContinue(1)) throw new JobRuntimeBudgetExceededError();
   };
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      controller.abort();
-      reject(new Error("job runtime budget exhausted"));
+      const error = new JobRuntimeBudgetExceededError();
+      controller.abort(error);
+      reject(error);
     }, input.maxRuntimeMs);
   });
 
