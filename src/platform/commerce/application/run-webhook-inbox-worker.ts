@@ -19,7 +19,9 @@ export async function runWebhookInboxWorker(input: {
   readonly owner: string;
   readonly now: Date;
   readonly limit: number;
+  readonly clock?: () => Date;
 }): Promise<{ readonly claimed: number; readonly processed: number }> {
+  const clock = input.clock ?? (() => new Date());
   const inbox = await claimWebhookInbox(input.database, {
     owner: input.owner,
     now: input.now,
@@ -28,14 +30,17 @@ export async function runWebhookInboxWorker(input: {
   let processed = 0;
 
   for (const row of inbox) {
+    if (!row.leaseExpiresAt) continue;
+    const claimedLeaseExpiresAt = row.leaseExpiresAt;
     try {
       const event = parseNormalizedProviderEvent(row.normalizedPayloadJson);
       await processProviderEvent(input.database, event, row.payloadHash);
+      const terminalNow = clock();
       const [owned] = await input.database
         .update(paymentWebhookInbox)
         .set({
           state: "completed",
-          processedAt: input.now,
+          processedAt: terminalNow,
           leaseOwner: null,
           leaseExpiresAt: null,
           lastErrorCode: null,
@@ -45,12 +50,14 @@ export async function runWebhookInboxWorker(input: {
             eq(paymentWebhookInbox.id, row.id),
             eq(paymentWebhookInbox.state, "processing"),
             eq(paymentWebhookInbox.leaseOwner, input.owner),
-            gt(paymentWebhookInbox.leaseExpiresAt, input.now),
+            eq(paymentWebhookInbox.leaseExpiresAt, claimedLeaseExpiresAt),
+            gt(paymentWebhookInbox.leaseExpiresAt, terminalNow),
           ),
         )
         .returning({ id: paymentWebhookInbox.id });
       if (owned) processed += 1;
     } catch (error) {
+      const terminalNow = clock();
       const attempts = row.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       await input.database.transaction(async (tx) => {
@@ -59,7 +66,7 @@ export async function runWebhookInboxWorker(input: {
           .set({
             state: dead ? "dead_letter" : "retry",
             attempts,
-            nextAttemptAt: new Date(input.now.getTime() + retryDelay(attempts)),
+            nextAttemptAt: new Date(terminalNow.getTime() + retryDelay(attempts)),
             leaseOwner: null,
             leaseExpiresAt: null,
             lastErrorCode: errorCode(error),
@@ -69,7 +76,8 @@ export async function runWebhookInboxWorker(input: {
               eq(paymentWebhookInbox.id, row.id),
               eq(paymentWebhookInbox.state, "processing"),
               eq(paymentWebhookInbox.leaseOwner, input.owner),
-              gt(paymentWebhookInbox.leaseExpiresAt, input.now),
+              eq(paymentWebhookInbox.leaseExpiresAt, claimedLeaseExpiresAt),
+              gt(paymentWebhookInbox.leaseExpiresAt, terminalNow),
             ),
           )
           .returning({ id: paymentWebhookInbox.id });

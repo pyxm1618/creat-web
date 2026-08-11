@@ -14,12 +14,14 @@ export async function runCommerceWorker(input: {
   readonly now?: Date;
   readonly limit?: number;
   readonly onClaimed?: (count: number) => void;
+  readonly clock?: () => Date;
 }): Promise<{
   readonly inboxProcessed: number;
   readonly commandProcessed: number;
   readonly fulfillmentProcessed: number;
 }> {
-  const now = input.now ?? new Date();
+  const clock = input.clock ?? (() => new Date());
+  const now = input.now ?? clock();
   const batchLimit = Math.min(Math.max(input.limit ?? 60, 1), 100);
   const inboxReserved = batchLimit >= 3 ? Math.floor(batchLimit / 3) : 1;
   const commandReserved = batchLimit >= 3 ? Math.floor(batchLimit / 3) : batchLimit - 1;
@@ -29,6 +31,7 @@ export async function runCommerceWorker(input: {
     owner: input.owner,
     now,
     limit: inboxReserved,
+    clock,
   });
 
   const commandLimit = commandReserved + (inboxReserved - inbox.claimed);
@@ -41,6 +44,7 @@ export async function runCommerceWorker(input: {
           owner: input.owner,
           now,
           limit: commandLimit,
+          clock,
           onClaimed: (count) => {
             commandClaimed = count;
           },
@@ -56,6 +60,7 @@ export async function runCommerceWorker(input: {
           owner: input.owner,
           now,
           limit: fulfillmentLimit,
+          clock,
         })
       : { claimed: 0, processed: 0 };
 

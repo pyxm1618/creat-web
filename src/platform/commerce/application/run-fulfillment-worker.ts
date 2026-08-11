@@ -19,7 +19,9 @@ export async function runFulfillmentWorker(input: {
   readonly owner: string;
   readonly now: Date;
   readonly limit: number;
+  readonly clock?: () => Date;
 }): Promise<{ readonly claimed: number; readonly processed: number }> {
+  const clock = input.clock ?? (() => new Date());
   const jobs = await claimFulfillmentJobs(input.database, {
     owner: input.owner,
     now: input.now,
@@ -28,6 +30,8 @@ export async function runFulfillmentWorker(input: {
   let processed = 0;
 
   for (const job of jobs) {
+    if (!job.leaseExpiresAt) continue;
+    const claimedLeaseExpiresAt = job.leaseExpiresAt;
     try {
       await input.fulfillment.fulfill({
         sourceType: job.sourceType,
@@ -35,11 +39,12 @@ export async function runFulfillmentWorker(input: {
         operation: job.operation,
         operationKey: job.idempotencyKey,
       });
+      const terminalNow = clock();
       const [owned] = await input.database
         .update(fulfillmentJobs)
         .set({
           state: "completed",
-          completedAt: input.now,
+          completedAt: terminalNow,
           leaseOwner: null,
           leaseExpiresAt: null,
           lastErrorCode: null,
@@ -49,12 +54,14 @@ export async function runFulfillmentWorker(input: {
             eq(fulfillmentJobs.id, job.id),
             eq(fulfillmentJobs.state, "processing"),
             eq(fulfillmentJobs.leaseOwner, input.owner),
-            gt(fulfillmentJobs.leaseExpiresAt, input.now),
+            eq(fulfillmentJobs.leaseExpiresAt, claimedLeaseExpiresAt),
+            gt(fulfillmentJobs.leaseExpiresAt, terminalNow),
           ),
         )
         .returning({ id: fulfillmentJobs.id });
       if (owned) processed += 1;
     } catch (error) {
+      const terminalNow = clock();
       const attempts = job.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       await input.database.transaction(async (tx) => {
@@ -63,7 +70,7 @@ export async function runFulfillmentWorker(input: {
           .set({
             state: dead ? "dead_letter" : "pending",
             attempts,
-            nextAttemptAt: new Date(input.now.getTime() + retryDelay(attempts)),
+            nextAttemptAt: new Date(terminalNow.getTime() + retryDelay(attempts)),
             leaseOwner: null,
             leaseExpiresAt: null,
             lastErrorCode: errorCode(error),
@@ -73,7 +80,8 @@ export async function runFulfillmentWorker(input: {
               eq(fulfillmentJobs.id, job.id),
               eq(fulfillmentJobs.state, "processing"),
               eq(fulfillmentJobs.leaseOwner, input.owner),
-              gt(fulfillmentJobs.leaseExpiresAt, input.now),
+              eq(fulfillmentJobs.leaseExpiresAt, claimedLeaseExpiresAt),
+              gt(fulfillmentJobs.leaseExpiresAt, terminalNow),
             ),
           )
           .returning({ id: fulfillmentJobs.id });

@@ -25,8 +25,10 @@ export async function runCommerceCommandWorker(input: {
   readonly now?: Date;
   readonly limit?: number;
   readonly onClaimed?: (count: number) => void;
+  readonly clock?: () => Date;
 }): Promise<number> {
-  const now = input.now ?? new Date();
+  const clock = input.clock ?? (() => new Date());
+  const now = input.now ?? clock();
   let processed = 0;
   const jobs = await claimCommerceCommandJobs(input.database, {
     owner: input.owner,
@@ -36,6 +38,8 @@ export async function runCommerceCommandWorker(input: {
   input.onClaimed?.(jobs.length);
 
   for (const job of jobs) {
+    if (!job.leaseExpiresAt) continue;
+    const claimedLeaseExpiresAt = job.leaseExpiresAt;
     try {
       await executeCommerceCommand({
         database: input.database,
@@ -44,11 +48,12 @@ export async function runCommerceCommandWorker(input: {
         now,
       });
 
+      const terminalNow = clock();
       const [owned] = await input.database
         .update(commerceCommandJobs)
         .set({
           state: "completed",
-          completedAt: now,
+          completedAt: terminalNow,
           leaseOwner: null,
           leaseExpiresAt: null,
           lastErrorCode: null,
@@ -58,12 +63,14 @@ export async function runCommerceCommandWorker(input: {
             eq(commerceCommandJobs.id, job.id),
             eq(commerceCommandJobs.state, "processing"),
             eq(commerceCommandJobs.leaseOwner, input.owner),
-            gt(commerceCommandJobs.leaseExpiresAt, now),
+            eq(commerceCommandJobs.leaseExpiresAt, claimedLeaseExpiresAt),
+            gt(commerceCommandJobs.leaseExpiresAt, terminalNow),
           ),
         )
         .returning({ id: commerceCommandJobs.id });
       if (owned) processed += 1;
     } catch (error) {
+      const terminalNow = clock();
       const attempts = job.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       await input.database.transaction(async (tx) => {
@@ -72,7 +79,7 @@ export async function runCommerceCommandWorker(input: {
           .set({
             state: dead ? "dead_letter" : "pending",
             attempts,
-            nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
+            nextAttemptAt: new Date(terminalNow.getTime() + retryDelay(attempts)),
             leaseOwner: null,
             leaseExpiresAt: null,
             lastErrorCode: errorCode(error),
@@ -82,7 +89,8 @@ export async function runCommerceCommandWorker(input: {
               eq(commerceCommandJobs.id, job.id),
               eq(commerceCommandJobs.state, "processing"),
               eq(commerceCommandJobs.leaseOwner, input.owner),
-              gt(commerceCommandJobs.leaseExpiresAt, now),
+              eq(commerceCommandJobs.leaseExpiresAt, claimedLeaseExpiresAt),
+              gt(commerceCommandJobs.leaseExpiresAt, terminalNow),
             ),
           )
           .returning({ id: commerceCommandJobs.id });
@@ -106,7 +114,7 @@ export async function runCommerceCommandWorker(input: {
               status: "reconciliation_required",
               reversalStatus: "reconciliation_required",
               operatorReviewReason: "refund provider command exhausted retries",
-              updatedAt: now,
+              updatedAt: terminalNow,
             })
             .where(
               and(eq(refunds.id, job.targetId), inArray(refunds.status, ["pending", "processing"])),

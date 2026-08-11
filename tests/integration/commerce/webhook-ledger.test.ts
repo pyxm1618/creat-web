@@ -327,6 +327,7 @@ it("processes a legacy versionless pending inbox payment after deployment", asyn
       owner: "legacy-worker",
       now,
       limit: 1,
+      clock: () => now,
     }),
   ).toEqual({ claimed: 1, processed: 1 });
 

@@ -996,6 +996,7 @@ it("backs off a thrown provider request while preserving refund capacity", async
       owner: `refund-worker-${crypto.randomUUID()}`,
       now: workerNow,
       limit: 1,
+      clock: () => workerNow,
     }),
   ).toBe(0);
   const persistedRefund = await database.db.query.refunds.findFirst({

@@ -412,13 +412,13 @@ it("two workers claim disjoint webhook batches without duplicate ownership", asy
   expect(new Set([...idsA, ...idsB]).size).toBe(12);
 });
 
-it("does not let a stale webhook worker acknowledge a lease reclaimed by a new owner", async () => {
+it("does not let a stale webhook worker acknowledge a lease reclaimed by the same owner", async () => {
   const now = new Date("2040-01-01T00:00:00Z");
   const fixture = await seedWebhookJob({ now });
   const lock = await holdOrderLock(fixture.order.id);
   const worker = runWebhookInboxWorker({
     database: database.db,
-    owner: "webhook-old-owner",
+    owner: "webhook-shared-owner",
     now,
     limit: 1,
   });
@@ -427,15 +427,19 @@ it("does not let a stale webhook worker acknowledge a lease reclaimed by a new o
       database.db.query.paymentWebhookInbox.findFirst({
         where: eq(paymentWebhookInbox.id, fixture.job.id),
       }),
-    "webhook-old-owner",
+    "webhook-shared-owner",
   );
+  const firstClaim = await database.db.query.paymentWebhookInbox.findFirst({
+    where: eq(paymentWebhookInbox.id, fixture.job.id),
+  });
 
   const reclaimed = await claimWebhookInbox(database.db, {
-    owner: "webhook-new-owner",
+    owner: "webhook-shared-owner",
     now: new Date(now.getTime() + 6 * 60 * 1000),
     limit: 1,
   });
   expect(reclaimed.map((row) => row.id)).toEqual([fixture.job.id]);
+  expect(reclaimed[0]?.leaseExpiresAt).not.toEqual(firstClaim?.leaseExpiresAt);
   lock.release.resolve();
   await lock.transaction;
 
@@ -446,12 +450,14 @@ it("does not let a stale webhook worker acknowledge a lease reclaimed by a new o
   expect(persisted).toMatchObject({
     state: "processing",
     attempts: 0,
-    leaseOwner: "webhook-new-owner",
+    leaseOwner: "webhook-shared-owner",
+    leaseExpiresAt: reclaimed[0]?.leaseExpiresAt,
   });
 });
 
-it("does not let an expired webhook lease nack or dead-letter the job", async () => {
+it("does not let a webhook worker nack or dead-letter after its lease naturally expires", async () => {
   const now = new Date("2040-02-01T00:00:00Z");
+  let terminalNow = now;
   const fixture = await seedWebhookJob({ now, amountMinor: 999n, attempts: 11 });
   const lock = await holdOrderLock(fixture.order.id);
   const worker = runWebhookInboxWorker({
@@ -459,6 +465,7 @@ it("does not let an expired webhook lease nack or dead-letter the job", async ()
     owner: "webhook-expired-owner",
     now,
     limit: 1,
+    clock: () => terminalNow,
   });
   await waitForLeaseOwner(
     () =>
@@ -467,10 +474,10 @@ it("does not let an expired webhook lease nack or dead-letter the job", async ()
       }),
     "webhook-expired-owner",
   );
-  await database.db
-    .update(paymentWebhookInbox)
-    .set({ leaseExpiresAt: new Date(now.getTime() - 1) })
-    .where(eq(paymentWebhookInbox.id, fixture.job.id));
+  const firstClaim = await database.db.query.paymentWebhookInbox.findFirst({
+    where: eq(paymentWebhookInbox.id, fixture.job.id),
+  });
+  terminalNow = new Date(now.getTime() + 6 * 60 * 1000);
   lock.release.resolve();
   await lock.transaction;
 
@@ -482,12 +489,13 @@ it("does not let an expired webhook lease nack or dead-letter the job", async ()
     state: "processing",
     attempts: 11,
     leaseOwner: "webhook-expired-owner",
+    leaseExpiresAt: firstClaim?.leaseExpiresAt,
     lastErrorCode: null,
   });
   expect(await securityEventCount("dead_letter_created")).toBe(0);
 });
 
-it("does not let a stale command worker acknowledge a lease reclaimed during provider I/O", async () => {
+it("does not let a stale command worker acknowledge a lease reclaimed by the same owner", async () => {
   const now = new Date("2040-03-01T00:00:00Z");
   const fixture = await seedCommandJob({ now });
   const providerCalled = deferred<void>();
@@ -500,18 +508,22 @@ it("does not let a stale command worker acknowledge a lease reclaimed during pro
   const worker = runCommerceCommandWorker({
     database: database.db,
     provider,
-    owner: "command-old-owner",
+    owner: "command-shared-owner",
     now,
     limit: 1,
   });
   await providerCalled.promise;
+  const firstClaim = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, fixture.job.id),
+  });
 
   const reclaimed = await claimCommerceCommandJobs(database.db, {
-    owner: "command-new-owner",
+    owner: "command-shared-owner",
     now: new Date(now.getTime() + 6 * 60 * 1000),
     limit: 1,
   });
   expect(reclaimed.map((row) => row.id)).toEqual([fixture.job.id]);
+  expect(reclaimed[0]?.leaseExpiresAt).not.toEqual(firstClaim?.leaseExpiresAt);
   releaseProvider.resolve();
 
   expect(await worker).toBe(0);
@@ -521,12 +533,14 @@ it("does not let a stale command worker acknowledge a lease reclaimed during pro
   expect(persisted).toMatchObject({
     state: "processing",
     attempts: 0,
-    leaseOwner: "command-new-owner",
+    leaseOwner: "command-shared-owner",
+    leaseExpiresAt: reclaimed[0]?.leaseExpiresAt,
   });
 });
 
-it("does not let an expired command lease nack, dead-letter, or emit failure side effects", async () => {
+it("does not let a command worker fail or emit side effects after its lease naturally expires", async () => {
   const now = new Date("2040-04-01T00:00:00Z");
+  let terminalNow = now;
   const fixture = await seedCommandJob({ now, attempts: 11 });
   const providerCalled = deferred<void>();
   const releaseProvider = deferred<void>();
@@ -541,12 +555,13 @@ it("does not let an expired command lease nack, dead-letter, or emit failure sid
     owner: "command-expired-owner",
     now,
     limit: 1,
+    clock: () => terminalNow,
   });
   await providerCalled.promise;
-  await database.db
-    .update(commerceCommandJobs)
-    .set({ leaseExpiresAt: new Date(now.getTime() - 1) })
-    .where(eq(commerceCommandJobs.id, fixture.job.id));
+  const firstClaim = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, fixture.job.id),
+  });
+  terminalNow = new Date(now.getTime() + 6 * 60 * 1000);
   releaseProvider.resolve();
 
   expect(await worker).toBe(0);
@@ -557,13 +572,14 @@ it("does not let an expired command lease nack, dead-letter, or emit failure sid
     state: "processing",
     attempts: 11,
     leaseOwner: "command-expired-owner",
+    leaseExpiresAt: firstClaim?.leaseExpiresAt,
     lastErrorCode: null,
   });
   expect(await securityEventCount("provider_failure")).toBe(0);
   expect(await securityEventCount("dead_letter_created")).toBe(0);
 });
 
-it("does not let a stale fulfillment worker acknowledge a lease reclaimed by a new owner", async () => {
+it("does not let a stale fulfillment worker acknowledge a lease reclaimed by the same owner", async () => {
   const now = new Date("2040-05-01T00:00:00Z");
   const job = await seedFulfillmentJob({ now });
   const fulfillmentCalled = deferred<void>();
@@ -577,18 +593,22 @@ it("does not let a stale fulfillment worker acknowledge a lease reclaimed by a n
   const worker = runFulfillmentWorker({
     database: database.db,
     fulfillment,
-    owner: "fulfillment-old-owner",
+    owner: "fulfillment-shared-owner",
     now,
     limit: 1,
   });
   await fulfillmentCalled.promise;
+  const firstClaim = await database.db.query.fulfillmentJobs.findFirst({
+    where: eq(fulfillmentJobs.id, job.id),
+  });
 
   const reclaimed = await claimFulfillmentJobs(database.db, {
-    owner: "fulfillment-new-owner",
+    owner: "fulfillment-shared-owner",
     now: new Date(now.getTime() + 6 * 60 * 1000),
     limit: 1,
   });
   expect(reclaimed.map((row) => row.id)).toEqual([job.id]);
+  expect(reclaimed[0]?.leaseExpiresAt).not.toEqual(firstClaim?.leaseExpiresAt);
   releaseFulfillment.resolve();
 
   expect(await worker).toEqual({ claimed: 1, processed: 0 });
@@ -598,12 +618,14 @@ it("does not let a stale fulfillment worker acknowledge a lease reclaimed by a n
   expect(persisted).toMatchObject({
     state: "processing",
     attempts: 0,
-    leaseOwner: "fulfillment-new-owner",
+    leaseOwner: "fulfillment-shared-owner",
+    leaseExpiresAt: reclaimed[0]?.leaseExpiresAt,
   });
 });
 
-it("does not let an expired fulfillment lease nack or dead-letter the job", async () => {
+it("does not let a fulfillment worker nack or dead-letter after its lease naturally expires", async () => {
   const now = new Date("2040-06-01T00:00:00Z");
+  let terminalNow = now;
   const job = await seedFulfillmentJob({ now, attempts: 11 });
   const fulfillmentCalled = deferred<void>();
   const releaseFulfillment = deferred<void>();
@@ -620,12 +642,13 @@ it("does not let an expired fulfillment lease nack or dead-letter the job", asyn
     owner: "fulfillment-expired-owner",
     now,
     limit: 1,
+    clock: () => terminalNow,
   });
   await fulfillmentCalled.promise;
-  await database.db
-    .update(fulfillmentJobs)
-    .set({ leaseExpiresAt: new Date(now.getTime() - 1) })
-    .where(eq(fulfillmentJobs.id, job.id));
+  const firstClaim = await database.db.query.fulfillmentJobs.findFirst({
+    where: eq(fulfillmentJobs.id, job.id),
+  });
+  terminalNow = new Date(now.getTime() + 6 * 60 * 1000);
   releaseFulfillment.resolve();
 
   expect(await worker).toEqual({ claimed: 1, processed: 0 });
@@ -636,13 +659,125 @@ it("does not let an expired fulfillment lease nack or dead-letter the job", asyn
     state: "processing",
     attempts: 11,
     leaseOwner: "fulfillment-expired-owner",
+    leaseExpiresAt: firstClaim?.leaseExpiresAt,
     lastErrorCode: null,
   });
   expect(await securityEventCount("dead_letter_created")).toBe(0);
 });
 
-it("reserves aggregate capacity for every queue and reports actual claims", async () => {
+it("schedules a webhook retry from the failure completion time", async () => {
   const now = new Date("2040-07-01T00:00:00Z");
+  let terminalNow = now;
+  const fixture = await seedWebhookJob({ now, amountMinor: 999n });
+  const lock = await holdOrderLock(fixture.order.id);
+  const worker = runWebhookInboxWorker({
+    database: database.db,
+    owner: "webhook-retry-owner",
+    now,
+    limit: 1,
+    clock: () => terminalNow,
+  });
+  await waitForLeaseOwner(
+    () =>
+      database.db.query.paymentWebhookInbox.findFirst({
+        where: eq(paymentWebhookInbox.id, fixture.job.id),
+      }),
+    "webhook-retry-owner",
+  );
+  terminalNow = new Date(now.getTime() + 60 * 1000);
+  lock.release.resolve();
+  await lock.transaction;
+
+  expect(await worker).toEqual({ claimed: 1, processed: 0 });
+  const persisted = await database.db.query.paymentWebhookInbox.findFirst({
+    where: eq(paymentWebhookInbox.id, fixture.job.id),
+  });
+  expect(persisted).toMatchObject({
+    state: "retry",
+    attempts: 1,
+    nextAttemptAt: new Date(terminalNow.getTime() + 2_000),
+    leaseOwner: null,
+    leaseExpiresAt: null,
+  });
+});
+
+it("schedules a command retry from the provider failure completion time", async () => {
+  const now = new Date("2040-08-01T00:00:00Z");
+  let terminalNow = now;
+  const fixture = await seedCommandJob({ now });
+  const providerCalled = deferred<void>();
+  const releaseProvider = deferred<void>();
+  const provider = paymentProvider(async () => {
+    providerCalled.resolve();
+    await releaseProvider.promise;
+    throw new Error("provider unavailable");
+  });
+  const worker = runCommerceCommandWorker({
+    database: database.db,
+    provider,
+    owner: "command-retry-owner",
+    now,
+    limit: 1,
+    clock: () => terminalNow,
+  });
+  await providerCalled.promise;
+  terminalNow = new Date(now.getTime() + 60 * 1000);
+  releaseProvider.resolve();
+
+  expect(await worker).toBe(0);
+  const persisted = await database.db.query.commerceCommandJobs.findFirst({
+    where: eq(commerceCommandJobs.id, fixture.job.id),
+  });
+  expect(persisted).toMatchObject({
+    state: "pending",
+    attempts: 1,
+    nextAttemptAt: new Date(terminalNow.getTime() + 2_000),
+    leaseOwner: null,
+    leaseExpiresAt: null,
+  });
+  expect(await securityEventCount("provider_failure")).toBe(1);
+});
+
+it("schedules a fulfillment retry from the failure completion time", async () => {
+  const now = new Date("2040-09-01T00:00:00Z");
+  let terminalNow = now;
+  const job = await seedFulfillmentJob({ now });
+  const fulfillmentCalled = deferred<void>();
+  const releaseFulfillment = deferred<void>();
+  const fulfillment: OrderFulfillment = {
+    async fulfill() {
+      fulfillmentCalled.resolve();
+      await releaseFulfillment.promise;
+      throw new Error("fulfillment unavailable");
+    },
+  };
+  const worker = runFulfillmentWorker({
+    database: database.db,
+    fulfillment,
+    owner: "fulfillment-retry-owner",
+    now,
+    limit: 1,
+    clock: () => terminalNow,
+  });
+  await fulfillmentCalled.promise;
+  terminalNow = new Date(now.getTime() + 60 * 1000);
+  releaseFulfillment.resolve();
+
+  expect(await worker).toEqual({ claimed: 1, processed: 0 });
+  const persisted = await database.db.query.fulfillmentJobs.findFirst({
+    where: eq(fulfillmentJobs.id, job.id),
+  });
+  expect(persisted).toMatchObject({
+    state: "pending",
+    attempts: 1,
+    nextAttemptAt: new Date(terminalNow.getTime() + 2_000),
+    leaseOwner: null,
+    leaseExpiresAt: null,
+  });
+});
+
+it("reserves aggregate capacity for every queue and reports actual claims", async () => {
+  const now = new Date("2040-10-01T00:00:00Z");
   const prefix = `fairness-${crypto.randomUUID()}`;
   const inbox = await database.db
     .insert(paymentWebhookInbox)
@@ -692,6 +827,7 @@ it("reserves aggregate capacity for every queue and reports actual claims", asyn
     owner: "fairness-worker",
     now,
     limit: 4,
+    clock: () => now,
     onClaimed(count) {
       claimed = count;
     },
