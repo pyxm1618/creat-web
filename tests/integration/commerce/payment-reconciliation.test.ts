@@ -361,6 +361,65 @@ it("claims newly due jobs within one turn while an older poison job keeps retryi
   }
 });
 
+it("claims newly due jobs while an older crashed lease keeps expiring", async () => {
+  const start = new Date("2030-05-01T00:00:00.000Z");
+  const crashedOrder = await seedOrder();
+  const [crashed] = await database.db
+    .insert(paymentReconciliationJobs)
+    .values({
+      orderId: crashedOrder.id,
+      nextAttemptAt: start,
+      createdAt: new Date("2029-05-01T00:00:00.000Z"),
+    })
+    .returning();
+  if (!crashed) throw new Error("crashed reconciliation job insert failed");
+
+  let [crashedClaim] = await claimPaymentReconciliationJobs(database.db, {
+    owner: "crashed-worker-0",
+    now: start,
+    limit: 1,
+  });
+  if (!crashedClaim?.leaseExpiresAt) throw new Error("crashed claim lease missing");
+
+  for (let round = 1; round <= 3; round += 1) {
+    const claimAt = crashedClaim.leaseExpiresAt;
+    const normalOrder = await seedOrder();
+    const [normal] = await database.db
+      .insert(paymentReconciliationJobs)
+      .values({
+        orderId: normalOrder.id,
+        nextAttemptAt: new Date(claimAt.getTime() - 1),
+        createdAt: new Date(start.getTime() + round),
+      })
+      .returning();
+    if (!normal) throw new Error("normal reconciliation job insert failed");
+
+    const [normalClaim] = await claimPaymentReconciliationJobs(database.db, {
+      owner: `normal-after-crash-${round}`,
+      now: claimAt,
+      limit: 1,
+    });
+    expect(normalClaim?.id).toBe(normal.id);
+    if (!normalClaim?.leaseToken) throw new Error("normal claim missing");
+    expect(
+      await completePaymentReconciliationJob(database.db, {
+        id: normal.id,
+        owner: `normal-after-crash-${round}`,
+        leaseToken: normalClaim.leaseToken,
+        terminalNow: claimAt,
+      }),
+    ).toBe(true);
+
+    [crashedClaim] = await claimPaymentReconciliationJobs(database.db, {
+      owner: `crashed-worker-${round}`,
+      now: claimAt,
+      limit: 1,
+    });
+    expect(crashedClaim?.id).toBe(crashed.id);
+    if (!crashedClaim?.leaseExpiresAt) throw new Error("crashed reclaim lease missing");
+  }
+});
+
 it("changes the lease token when the same owner reclaims an expired job", async () => {
   const firstNow = new Date("2030-05-01T00:00:00.000Z");
   const reclaimNow = new Date("2030-05-01T00:05:00.000Z");

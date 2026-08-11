@@ -7,6 +7,8 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { createDatabaseClient } from "@/platform/database/client";
 
+import { verifyMigrationMetadata } from "./verify-migration-metadata";
+
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL or DATABASE_URL is required");
 
@@ -222,6 +224,10 @@ async function createMainBaselineFolder(): Promise<string> {
 }
 
 try {
+  await verifyMigrationMetadata({
+    migrationsDirectory: path.resolve("drizzle"),
+    schemaPath: path.resolve("src/platform/database/schema.ts"),
+  });
   await resetDatabase();
   await applyMigrations();
   await applyMigrations();

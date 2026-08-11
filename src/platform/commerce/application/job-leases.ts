@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
@@ -171,7 +171,7 @@ export async function claimPaymentReconciliationJobs(
         ),
       )
       .orderBy(
-        paymentReconciliationJobs.nextAttemptAt,
+        sql`case when ${paymentReconciliationJobs.state} = 'processing' then ${paymentReconciliationJobs.leaseExpiresAt} else ${paymentReconciliationJobs.nextAttemptAt} end`,
         paymentReconciliationJobs.createdAt,
         paymentReconciliationJobs.id,
       )
