@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CheckoutRequiresOperatorReviewError } from "@/platform/commerce/application/checkout-errors";
 import { createCheckout } from "@/platform/commerce/application/create-checkout";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { getAccountContext } from "@/platform/auth/account-context";
@@ -13,9 +14,10 @@ const bodySchema = z.object({ productKey: z.string().trim().min(1).max(120) });
 
 function conflict(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    (error.message === "checkout initialization in progress" ||
-      error.message === "checkout already created")
+    error instanceof CheckoutRequiresOperatorReviewError ||
+    (error instanceof Error &&
+      (error.message === "checkout initialization in progress" ||
+        error.message === "checkout already created"))
   );
 }
 

@@ -7,6 +7,7 @@ import {
 import type { DatabaseClient } from "@/platform/database/client";
 import { commerceReconciliationRuns, orders } from "@/platform/database/commerce-schema";
 
+import { CheckoutRequiresOperatorReviewError } from "./checkout-errors";
 import { runFencedCheckout } from "./fenced-checkout";
 import type { ProductCatalog } from "./product-catalog";
 import type { CreatedCheckout, PaymentProvider } from "./payment-provider";
@@ -92,7 +93,7 @@ export async function createCheckout(
         }
         if (existing.checkoutState === "created") throw new Error("checkout already created");
         if (existing.checkoutState === "failed" && existing.externalCheckoutSessionId) {
-          throw new Error("checkout requires operator review");
+          throw new CheckoutRequiresOperatorReviewError();
         }
         if (
           existing.checkoutState === "creating" &&
