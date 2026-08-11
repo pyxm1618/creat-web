@@ -177,7 +177,7 @@ export async function enqueueRefundRequest(
       .where(
         and(
           eq(refunds.paymentId, row.payment.id),
-          inArray(refunds.status, ["pending", "processing"]),
+          inArray(refunds.status, ["pending", "processing", "reconciliation_required"]),
         ),
       );
     const reserved = BigInt(open?.total ?? 0n);

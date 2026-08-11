@@ -1,4 +1,4 @@
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { commerceReconciliationRuns } from "@/platform/database/commerce-schema";
@@ -22,23 +22,33 @@ export async function reconcileStaleRefunds(
     const candidates = await tx
       .select()
       .from(refunds)
-      .where(and(eq(refunds.status, "processing"), lte(refunds.updatedAt, cutoff)))
+      .where(
+        and(inArray(refunds.status, ["pending", "processing"]), lte(refunds.updatedAt, cutoff)),
+      )
       .orderBy(refunds.updatedAt)
       .limit(limit)
       .for("update", { skipLocked: true });
 
     let reconciled = 0;
     for (const refund of candidates) {
+      const entitlementUncertain =
+        refund.status === "processing" ||
+        refund.externalRefundReference !== null ||
+        refund.providerUpdatedAt !== null;
+      const reversalStatus =
+        entitlementUncertain && refund.reversalStatus === "pending"
+          ? "reconciliation_required"
+          : refund.reversalStatus;
       const [updated] = await tx
         .update(refunds)
         .set({
           status: "reconciliation_required",
-          reversalStatus: "reconciliation_required",
+          reversalStatus,
           operatorReviewReason:
             "provider refund settlement webhook did not arrive within threshold",
           updatedAt: now,
         })
-        .where(and(eq(refunds.id, refund.id), eq(refunds.status, "processing")))
+        .where(and(eq(refunds.id, refund.id), inArray(refunds.status, ["pending", "processing"])))
         .returning({ id: refunds.id });
       if (!updated) continue;
 

@@ -118,3 +118,98 @@ it("moves provider-accepted refunds with no settlement webhook into operator rec
   expect(evidence).toHaveLength(1);
   expect(evidence[0]?.result).toBe("operator_review_required");
 });
+
+it("moves a stale pending refund into reconciliation without implying entitlement reversal", async () => {
+  const [subject] = await database.db.insert(accountSubjects).values({}).returning();
+  if (!subject) throw new Error("subject insert failed");
+  const [product] = await database.db
+    .insert(commerceProducts)
+    .values({
+      key: `refund-pending-reconcile-${crypto.randomUUID()}`,
+      version: 1,
+      model: "one_time",
+      billingInterval: null,
+      environment: "test",
+      providerProductId: `PROD_${crypto.randomUUID()}`,
+      currency: "USD",
+      expectedMinor: 1000n,
+      fulfillmentKey: "refund-pending-reconcile",
+      refundPolicyKey: "default",
+    })
+    .returning();
+  if (!product) throw new Error("product insert failed");
+  const [order] = await database.db
+    .insert(orders)
+    .values({
+      subjectId: subject.id,
+      productId: product.id,
+      environment: "test",
+      status: "paid",
+      expectedCurrency: "USD",
+      expectedMinor: 1000n,
+      checkoutIdempotencyKey: `checkout:${crypto.randomUUID()}`,
+      checkoutState: "created",
+      externalOrderId: `ORD_${crypto.randomUUID()}`,
+    })
+    .returning();
+  if (!order) throw new Error("order insert failed");
+  const [payment] = await database.db
+    .insert(payments)
+    .values({
+      orderId: order.id,
+      environment: "test",
+      externalPaymentId: `PAY_${crypto.randomUUID()}`,
+      status: "succeeded",
+      refundStatus: "none",
+      currency: "USD",
+      amountMinor: 1000n,
+      refundedMinor: 0n,
+      rawPayloadHash: "b".repeat(64),
+    })
+    .returning();
+  if (!payment) throw new Error("payment insert failed");
+
+  const staleAt = new Date("2026-08-08T00:00:00Z");
+  const [refund] = await database.db
+    .insert(refunds)
+    .values({
+      paymentId: payment.id,
+      subjectId: subject.id,
+      environment: "test",
+      idempotencyKey: `refund:${crypto.randomUUID()}`,
+      currency: "USD",
+      requestedMinor: 100n,
+      reason: "customer request",
+      status: "pending",
+      reversalStatus: "pending",
+      updatedAt: staleAt,
+    })
+    .returning();
+  if (!refund) throw new Error("refund insert failed");
+
+  const now = new Date("2026-08-10T00:00:00Z");
+  expect(await reconcileStaleRefunds(database.db, { now })).toBe(1);
+
+  const persisted = await database.db.query.refunds.findFirst({ where: eq(refunds.id, refund.id) });
+  expect(persisted).toMatchObject({
+    status: "reconciliation_required",
+    reversalStatus: "pending",
+  });
+  expect(persisted?.operatorReviewReason).toContain("settlement webhook");
+
+  const evidence = await database.db
+    .select()
+    .from(commerceReconciliationRuns)
+    .where(eq(commerceReconciliationRuns.targetId, payment.id));
+  expect(evidence).toHaveLength(1);
+  expect(evidence[0]?.beforeJson).toMatchObject({
+    refundId: refund.id,
+    status: "pending",
+    externalRefundReference: null,
+  });
+  expect(evidence[0]?.afterJson).toMatchObject({
+    refundId: refund.id,
+    status: "reconciliation_required",
+    reason: "provider_settlement_timeout",
+  });
+});

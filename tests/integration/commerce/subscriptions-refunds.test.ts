@@ -617,6 +617,38 @@ it("serializes concurrent refund reservations so cumulative requested refunds ca
   expect(BigInt(total?.requested ?? 0n)).toBe(600n);
 });
 
+it("keeps reconciliation-required refunds reserved against refundable capacity", async () => {
+  const { subject, payment } = await paidFixture(1000n);
+  await database.db.insert(refunds).values({
+    paymentId: payment.id,
+    subjectId: subject.id,
+    environment: "test",
+    idempotencyKey: `refund:${crypto.randomUUID()}`,
+    currency: "USD",
+    requestedMinor: 700n,
+    reason: "provider settlement uncertain",
+    status: "reconciliation_required",
+  });
+
+  await expect(
+    enqueueRefundRequest(database.db, {
+      subjectId: subject.id,
+      paymentId: payment.id,
+      environment: "test",
+      amount: { currency: "USD", minor: 400n },
+      reason: "additional partial refund",
+      idempotencyKey: `refund:${crypto.randomUUID()}`,
+    }),
+  ).rejects.toThrow("refund exceeds refundable amount");
+
+  const stored = await database.db.select().from(refunds).where(eq(refunds.paymentId, payment.id));
+  expect(stored).toHaveLength(1);
+  expect(stored[0]).toMatchObject({
+    requestedMinor: 700n,
+    status: "reconciliation_required",
+  });
+});
+
 it("refunds only the paid subscription period and accepts the next renewal", async () => {
   const { order } = await subscriptionFixture();
   const subscription = await activateSubscription(order);
