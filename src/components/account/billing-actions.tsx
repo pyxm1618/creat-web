@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 
 import {
-  checkoutOperationFingerprintParts,
   createSessionOperationKeyState,
   digestOperationFingerprint,
   refundOperationFingerprintParts,
@@ -45,46 +44,6 @@ function useKeyedOperation(scopeParts: readonly string[]) {
     ]);
     return runKeyedOperation(state, fingerprint, operation);
   };
-}
-
-function checkoutUrl(value: unknown): string {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("checkoutUrl" in value) ||
-    typeof value.checkoutUrl !== "string"
-  ) {
-    throw new Error("checkout response is invalid");
-  }
-  return value.checkoutUrl;
-}
-
-export function CheckoutAction({
-  productKey,
-  label = "Continue to checkout",
-}: Readonly<{ productKey: string; label?: string }>) {
-  const [state, setState] = useState<"idle" | "pending" | "error">("idle");
-  const fingerprintParts = checkoutOperationFingerprintParts(productKey);
-  const run = useKeyedOperation(fingerprintParts);
-  return (
-    <button
-      type="button"
-      disabled={state === "pending"}
-      onClick={async () => {
-        setState("pending");
-        try {
-          const target = await run(fingerprintParts, async (key) =>
-            checkoutUrl(await command("/api/commerce/checkout", { productKey }, key)),
-          );
-          window.location.assign(target);
-        } catch {
-          setState("error");
-        }
-      }}
-    >
-      {state === "pending" ? "Opening checkout…" : state === "error" ? "Retry checkout" : label}
-    </button>
-  );
 }
 
 export function SubscriptionAction({

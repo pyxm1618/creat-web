@@ -3,13 +3,8 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import {
-  CheckoutAction,
-  RefundAction,
-  SubscriptionAction,
-} from "@/components/account/billing-actions";
+import { RefundAction, SubscriptionAction } from "@/components/account/billing-actions";
 import { featuresConfig } from "@/config/features.config";
-import { productCatalog } from "@/config/products.config";
 import { getAccountContext } from "@/platform/auth/account-context";
 import { formatDisplayAmount, type SupportedCurrency } from "@/platform/commerce/domain/money";
 import { db } from "@/platform/database/application-database";
@@ -19,19 +14,6 @@ import { refunds, subscriptions } from "@/platform/database/subscription-schema"
 export default async function BillingPage() {
   const context = await getAccountContext(await headers());
   if (!context) redirect("/sign-in");
-
-  const latestProducts = new Map<string, (typeof productCatalog.definitions)[number]>();
-  for (const product of productCatalog.definitions) {
-    const current = latestProducts.get(product.key);
-    const modelEnabled =
-      product.commercialModel === "one_time"
-        ? featuresConfig.commerce.oneTime
-        : featuresConfig.commerce.subscriptions;
-    if (product.enabled && modelEnabled && (!current || product.version > current.version)) {
-      latestProducts.set(product.key, product);
-    }
-  }
-  const checkoutProducts = [...latestProducts.values()];
 
   const history = await db
     .select({
@@ -88,23 +70,6 @@ export default async function BillingPage() {
       <section className="card" aria-labelledby="billing-title">
         <p className="eyebrow">Account</p>
         <h1 id="billing-title">Billing</h1>
-
-        {featuresConfig.commerce.enabled && checkoutProducts.length > 0 ? (
-          <section aria-labelledby="checkout-products-title">
-            <h2 id="checkout-products-title">Available products</h2>
-            <ul>
-              {checkoutProducts.map((product) => (
-                <li key={`${product.key}@${product.version}`}>
-                  <strong>{product.key}</strong> · {product.expectedPrice} {product.currency} ·{" "}
-                  {product.commercialModel === "subscription"
-                    ? `${product.billingInterval} subscription`
-                    : "one-time purchase"}{" "}
-                  <CheckoutAction productKey={product.key} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
 
         {featuresConfig.commerce.subscriptions ? (
           <section aria-labelledby="subscriptions-title">

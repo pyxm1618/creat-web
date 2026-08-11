@@ -10,12 +10,13 @@ import {
 } from "@/platform/database/subscription-schema";
 
 import type { Money } from "../domain/money";
+import { isCommerceIdempotencyKey } from "../domain/idempotency-key";
 import type { CommerceEnvironment } from "../domain/product";
 
 type CommerceTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 
 function validateIdempotencyKey(value: string): void {
-  if (!/^[A-Za-z0-9:_-]{16,128}$/.test(value)) {
+  if (!isCommerceIdempotencyKey(value)) {
     throw new Error("invalid commerce idempotency key");
   }
 }

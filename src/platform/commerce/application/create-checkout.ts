@@ -13,6 +13,7 @@ import type { ProductCatalog } from "./product-catalog";
 import type { CreatedCheckout, PaymentProvider } from "./payment-provider";
 import { ensureCommerceProduct } from "./sync-product-catalog";
 import type { CommerceEnvironment } from "../domain/product";
+import { isCommerceIdempotencyKey } from "../domain/idempotency-key";
 
 export type CreateCheckoutInput = {
   readonly subjectId: string;
@@ -34,7 +35,7 @@ export type CheckoutResult = {
 const CHECKOUT_LEASE_MS = 2 * 60 * 1000;
 
 function validateIdempotencyKey(value: string): void {
-  if (!/^[A-Za-z0-9:_-]{16,128}$/.test(value)) throw new Error("invalid checkout idempotency key");
+  if (!isCommerceIdempotencyKey(value)) throw new Error("invalid checkout idempotency key");
 }
 
 export async function createCheckout(

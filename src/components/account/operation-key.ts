@@ -1,3 +1,5 @@
+import { isCommerceIdempotencyKey } from "@/platform/commerce/domain/idempotency-key";
+
 export type OperationKeyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export type OperationKeyState = {
@@ -27,10 +29,6 @@ function normalizeDisplayAmount(value: string): string {
   const integer = BigInt(match[1]!).toString();
   const fractional = match[2]?.replace(/0+$/, "") ?? "";
   return fractional ? `${integer}.${fractional}` : integer;
-}
-
-export function checkoutOperationFingerprintParts(productKey: string) {
-  return ["checkout", productKey.trim()] as const;
 }
 
 export function subscriptionOperationFingerprintParts(
@@ -69,7 +67,7 @@ function persistedOperation(value: string | null): PersistedOperation | undefine
       SHA256_HEX.test(parsed.fingerprint) &&
       "key" in parsed &&
       typeof parsed.key === "string" &&
-      parsed.key.length > 0
+      isCommerceIdempotencyKey(parsed.key)
     ) {
       return parsed as PersistedOperation;
     }
