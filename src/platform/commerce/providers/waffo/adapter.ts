@@ -8,7 +8,9 @@ import type {
   CreatedCheckout,
   CreateCheckoutInput,
   CreateOneTimeCheckoutInput,
+  PaymentLookupResult,
   PaymentProvider,
+  ProviderQueryWarning,
   ProviderSubscriptionSnapshot,
   RefundRequest,
 } from "@/platform/commerce/application/payment-provider";
@@ -29,13 +31,12 @@ export type WaffoProviderConfig = {
   readonly fetch?: typeof fetch;
 };
 
+const PAYMENT_QUERY_LIMIT = 100;
+const DEFAULT_PAYMENT_QUERY_TIMEOUT_MS = 5_000;
+
 type PaymentQueryResult = {
-  payments: Array<{
-    id: string;
-    orderId: string;
-    status: string;
-    orderMerchantExternalId?: string | null;
-  }>;
+  readonly payments?: unknown;
+  readonly paymentsCount?: unknown;
 };
 
 function providerEnvironment(environment: CommerceEnvironment): "test" | "prod" {
@@ -71,6 +72,92 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function requireRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ProviderContractError(`invalid Waffo field: ${field}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new ProviderContractError(`invalid Waffo field: ${field}`);
+  }
+  return value;
+}
+
+function paymentDate(value: unknown): Date {
+  const raw = requireString(value, "payment.createdAt");
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(raw)) {
+    throw new ProviderContractError("invalid Waffo payment timestamp");
+  }
+  const date = new Date(raw);
+  const normalized = raw.includes(".") ? raw : raw.replace(/Z$/, ".000Z");
+  if (Number.isNaN(date.getTime()) || date.toISOString() !== normalized) {
+    throw new ProviderContractError("invalid Waffo payment timestamp");
+  }
+  return date;
+}
+
+function paymentStatus(value: unknown): "pending" | "succeeded" | "failed" | "canceled" {
+  if (value === "pending" || value === "succeeded" || value === "failed" || value === "canceled") {
+    return value;
+  }
+  throw new ProviderContractError(`unsupported Waffo payment status: ${String(value)}`);
+}
+
+function paymentAmount(value: unknown) {
+  const amount = requireRecord(value, "payment.snapshotAmountDetails");
+  const currency = requireString(amount.currency, "payment.snapshotAmountDetails.currency");
+  const total = requireString(amount.total, "payment.snapshotAmountDetails.total");
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ProviderContractError("invalid Waffo payment currency");
+  }
+  try {
+    return parseDisplayAmount(total, currency);
+  } catch {
+    throw new ProviderContractError("invalid Waffo payment amount");
+  }
+}
+
+function queryWarnings(value: unknown): readonly ProviderQueryWarning[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new ProviderContractError("invalid Waffo query warnings");
+  return value.map((entry, index) => {
+    const warning = requireRecord(entry, `warnings[${index}]`);
+    const message = requireString(warning.message, `warnings[${index}].message`);
+    const layer = requireString(warning.layer, `warnings[${index}].layer`);
+    const aiHint = optionalString(warning.aiHint);
+    return { message, layer, ...(aiHint ? { aiHint } : {}) };
+  });
+}
+
+function scopedRequestSignal(input: {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}): { readonly signal: AbortSignal; readonly cleanup: () => void } {
+  const timeoutMs = input.timeoutMs ?? DEFAULT_PAYMENT_QUERY_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30_000) {
+    throw new ProviderContractError("invalid Waffo payment lookup timeout");
+  }
+  const controller = new AbortController();
+  const abortFromCaller = () => {
+    controller.abort(input.signal?.reason ?? new DOMException("aborted", "AbortError"));
+  };
+  if (input.signal?.aborted) abortFromCaller();
+  else input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException("Waffo payment lookup timed out", "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
 function subscriptionStatus(value: string): ProviderSubscriptionSnapshot["status"] {
   if (
     value === "pending" ||
@@ -86,14 +173,80 @@ function subscriptionStatus(value: string): ProviderSubscriptionSnapshot["status
   throw new ProviderContractError(`unsupported Waffo subscription status: ${value}`);
 }
 
+function normalizedPayment(
+  value: unknown,
+  input: Parameters<PaymentProvider["getPayment"]>[0],
+  expectedStoreId: string,
+): NormalizedPaymentSnapshot {
+  const payment = requireRecord(value, "payment");
+  const externalPaymentId = requireString(payment.id, "payment.id");
+  const externalOrderId = requireString(payment.orderId, "payment.orderId");
+  const merchantOrderReference = requireString(
+    payment.orderMerchantExternalId,
+    "payment.orderMerchantExternalId",
+  );
+  if (input.externalPaymentId && externalPaymentId !== input.externalPaymentId) {
+    throw new ProviderContractError("Waffo payment id mismatch");
+  }
+  if (input.merchantOrderReference && merchantOrderReference !== input.merchantOrderReference) {
+    throw new ProviderContractError("Waffo merchant order reference mismatch");
+  }
+  if (input.externalOrderId && externalOrderId !== input.externalOrderId) {
+    throw new ProviderContractError("Waffo order id mismatch");
+  }
+
+  const onetimeOrder =
+    payment.onetimeOrder === null || payment.onetimeOrder === undefined
+      ? undefined
+      : requireRecord(payment.onetimeOrder, "payment.onetimeOrder");
+  const subscriptionOrder =
+    payment.subscriptionOrder === null || payment.subscriptionOrder === undefined
+      ? undefined
+      : requireRecord(payment.subscriptionOrder, "payment.subscriptionOrder");
+  if (Boolean(onetimeOrder) === Boolean(subscriptionOrder)) {
+    throw new ProviderContractError("Waffo payment must have exactly one order relation");
+  }
+  const relation = onetimeOrder ?? subscriptionOrder;
+  if (!relation) throw new ProviderContractError("Waffo payment order relation missing");
+  if (requireString(relation.id, "payment.order.id") !== externalOrderId) {
+    throw new ProviderContractError("Waffo payment relation order id mismatch");
+  }
+  const store = requireRecord(relation.store, "payment.order.store");
+  const storeId = requireString(store.id, "payment.order.store.id");
+  if (storeId !== expectedStoreId) throw new ProviderContractError("Waffo payment store mismatch");
+
+  const model = onetimeOrder ? "one_time" : "subscription";
+  if (onetimeOrder) {
+    const testMode = requireBoolean(onetimeOrder.testMode, "payment.onetimeOrder.testMode");
+    if (testMode !== (input.environment === "test")) {
+      throw new ProviderContractError("Waffo one-time payment environment mismatch");
+    }
+  }
+
+  return {
+    environment: input.environment,
+    model,
+    storeId,
+    externalOrderId,
+    merchantOrderReference,
+    externalPaymentId,
+    status: paymentStatus(payment.status),
+    amount: paymentAmount(payment.snapshotAmountDetails),
+    occurredAt: paymentDate(payment.createdAt),
+  };
+}
+
 export function createWaffoPaymentProvider(config: WaffoProviderConfig): PaymentProvider {
-  const client = new WaffoPancake({
-    merchantId: config.merchantId,
-    privateKey: config.privateKey,
-    ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
-    ...(config.fetch ? { fetch: config.fetch } : {}),
-    ...(config.webhookPublicKey ? { webhookPublicKey: config.webhookPublicKey } : {}),
-  });
+  const baseFetch = config.fetch ?? globalThis.fetch.bind(globalThis);
+  const createClient = (requestFetch?: typeof fetch) =>
+    new WaffoPancake({
+      merchantId: config.merchantId,
+      privateKey: config.privateKey,
+      ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      ...(requestFetch ? { fetch: requestFetch } : {}),
+      ...(config.webhookPublicKey ? { webhookPublicKey: config.webhookPublicKey } : {}),
+    });
+  const client = createClient(config.fetch);
 
   async function createCheckout(input: CreateCheckoutInput): Promise<CreatedCheckout> {
     const result = await client.checkout.authenticated.create({
@@ -161,56 +314,86 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         status: status === "processing" ? ("processing" as const) : ("pending" as const),
       };
     },
-    async getPayment(input): Promise<NormalizedPaymentSnapshot | null> {
+    async getPayment(input): Promise<PaymentLookupResult> {
       if (!input.merchantOrderReference && !input.externalPaymentId) {
         throw new ProviderContractError(
           "payment lookup requires merchant order reference or payment id",
         );
       }
-      const filter = input.merchantOrderReference
-        ? "orderMerchantExternalId: { eq: $reference }"
-        : "id: { eq: $paymentId }";
-      const variables = input.merchantOrderReference
-        ? { reference: input.merchantOrderReference }
-        : { paymentId: input.externalPaymentId };
-      const variableDefinition = input.merchantOrderReference
-        ? "$reference: String!"
-        : "$paymentId: ID!";
-      const response = await client.graphql.query<PaymentQueryResult>({
-        query: `query (${variableDefinition}) {
-          payments(filter: { ${filter} }) {
+      const expectedStoreId = config.storeId;
+      if (!expectedStoreId) {
+        throw new ProviderContractError("Waffo payment lookup requires storeId");
+      }
+      const definitions = [];
+      const filters = [];
+      const variables: Record<string, unknown> = {};
+      if (input.merchantOrderReference) {
+        definitions.push("$reference: String!");
+        filters.push("orderMerchantExternalId: { eq: $reference }");
+        variables.reference = input.merchantOrderReference;
+      }
+      if (input.externalPaymentId) {
+        definitions.push("$paymentId: String!");
+        filters.push("id: { eq: $paymentId }");
+        variables.paymentId = input.externalPaymentId;
+      }
+      const filter = `{ ${filters.join(", ")} }`;
+      const request = scopedRequestSignal(input);
+      const scopedClient = createClient((requestInfo, init) =>
+        baseFetch(requestInfo, { ...init, signal: request.signal }),
+      );
+      try {
+        const response = await scopedClient.graphql.query<PaymentQueryResult>({
+          query: `query (${definitions.join(", ")}) {
+          payments(limit: ${PAYMENT_QUERY_LIMIT}, filter: ${filter}) {
             id
             orderId
             status
             orderMerchantExternalId
+            snapshotAmountDetails { currency total }
+            onetimeOrder { id testMode store { id } }
+            subscriptionOrder { id store { id } }
+            createdAt
           }
+          paymentsCount(filter: ${filter})
         }`,
-        variables,
-      });
-      if (response.errors?.length) {
-        throw new ProviderContractError(response.errors.map((error) => error.message).join("; "));
+          variables,
+        });
+        if (request.signal.aborted) {
+          throw request.signal.reason ?? new DOMException("aborted", "AbortError");
+        }
+        if (response.errors?.length) {
+          throw new ProviderContractError(response.errors.map((error) => error.message).join("; "));
+        }
+        const data = requireRecord(response.data, "payment query data");
+        if (!Array.isArray(data.payments)) {
+          throw new ProviderContractError("invalid Waffo payments result");
+        }
+        if (!Number.isInteger(data.paymentsCount) || Number(data.paymentsCount) < 0) {
+          throw new ProviderContractError("invalid Waffo payments count");
+        }
+        const count = Number(data.paymentsCount);
+        if (count > PAYMENT_QUERY_LIMIT) {
+          throw new ProviderContractError("Waffo payment query exceeded bounded limit");
+        }
+        if (count !== data.payments.length) {
+          throw new ProviderContractError("Waffo payment query count mismatch");
+        }
+        const payments = data.payments.map((payment) =>
+          normalizedPayment(payment, input, expectedStoreId),
+        );
+        if (
+          new Set(payments.map((payment) => payment.externalPaymentId)).size !== payments.length
+        ) {
+          throw new ProviderContractError("Waffo payment query returned duplicate ids");
+        }
+        return {
+          payments,
+          warnings: queryWarnings(response.warnings),
+        };
+      } finally {
+        request.cleanup();
       }
-      const payment = response.data?.payments[0];
-      if (!payment) return null;
-      const status = payment.status;
-      if (
-        status !== "pending" &&
-        status !== "succeeded" &&
-        status !== "failed" &&
-        status !== "canceled"
-      ) {
-        throw new ProviderContractError(`unsupported Waffo payment status: ${status}`);
-      }
-      return {
-        environment: input.environment,
-        externalOrderId: payment.orderId,
-        externalPaymentId: payment.id,
-        ...(payment.orderMerchantExternalId
-          ? { merchantOrderReference: payment.orderMerchantExternalId }
-          : {}),
-        status,
-        occurredAt: new Date(),
-      };
     },
     async verifyAndNormalizeWebhook({
       rawBody,

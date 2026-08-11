@@ -60,7 +60,7 @@ function provider(result: NormalizedProviderEvent | Error): PaymentProvider {
       throw new Error("not used");
     },
     async getPayment() {
-      return null;
+      return { payments: [], warnings: [] };
     },
     async verifyAndNormalizeWebhook() {
       if (result instanceof Error) throw result;

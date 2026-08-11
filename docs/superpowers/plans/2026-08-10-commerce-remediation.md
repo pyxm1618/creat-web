@@ -412,11 +412,19 @@ git commit -m "fix(commerce): fence worker leases"
 
 ### Task 7: Provider Payment Reconciliation and Waffo Query Contract
 
+> **Safety revision (2026-08-11):** subscription auto-recovery is withdrawn. A payment query does not expose authoritative payment-level subscription period bounds in the pinned contract. `subscriptionOrder.currentPeriodStart/currentPeriodEnd` describe the current order projection and must never be used to manufacture a historical payment period, fulfillment, or Credits grant.
+
 **Files:**
 - Modify: `src/platform/commerce/domain/events.ts`
 - Modify: `src/platform/commerce/application/payment-provider.ts`
 - Create: `src/platform/commerce/application/reconcile-stale-payments.ts`
+- Modify: `src/platform/database/commerce-schema.ts`
+- Create: `drizzle/0011_payment_reconciliation_jobs.sql`
+- Modify: `drizzle/meta/_journal.json`
+- Modify: `scripts/verify-migrations.ts`
 - Modify: `src/platform/commerce/providers/waffo/adapter.ts`
+- Modify: `src/platform/commerce/application/process-provider-event.ts`
+- Modify: `src/platform/commerce/application/process-one-time-payment-event.ts`
 - Modify: `src/app/api/internal/jobs/reconcile/route.ts`
 - Modify: `tests/contract/waffo-contract.test.ts`
 - Test: `tests/integration/commerce/payment-reconciliation.test.ts`
@@ -424,10 +432,13 @@ git commit -m "fix(commerce): fence worker leases"
 
 **Interfaces:**
 - Waffo filter variables use `String!` for merchant references and payment ids.
-- `NormalizedPaymentSnapshot` includes model, amount, provider payment/order ids, merchant reference, occurred time, and subscription-period dates when applicable.
-- Reconciliation event id: `payment-reconciliation:${environment}:${externalPaymentId}:${status}`
+- Payment lookup returns a bounded list plus allowlisted provider warnings. The list and count use the identical filter; simultaneous merchant-reference/payment-id inputs are both queried and both cross-validated.
+- `NormalizedPaymentSnapshot` includes model, store, amount, provider payment/order ids, merchant reference, status, and provider-created time. It intentionally has no subscription period fields.
+- One-time reconciliation event identity and canonical payload hash are deterministic across retries.
+- Subscription payment facts always enter durable operator review with reason `payment-level period unavailable`; they never create a payment, subscription period, fulfillment job, or Credits mutation.
+- Durable payment-reconciliation jobs use short claims, bounded retry/backoff/quarantine, and terminal compare-and-set against owner, the exact claimed lease expiry token, and a freshly sampled terminal time.
 
-- [ ] **Step 1: Add failing Waffo contract and missed-webhook tests**
+- [x] **Checkpoint 1 / Step 1: Add failing Waffo query-contract tests**
 
 ```ts
 expect(graphqlBody.query).toContain("$paymentId: String!");
@@ -438,46 +449,69 @@ expect(snapshot).toMatchObject({
 });
 ```
 
-Seed a stale checkout-created order, return a succeeded provider snapshot from a fake provider, run reconciliation twice, and assert exactly one succeeded payment and one fulfillment job. Repeat for a subscription snapshot with period dates.
+Cover bounded `payments(limit: 100)` plus `paymentsCount` using the same filter, duplicate/count/pagination rejection, exact merchant/payment/order/store/environment/model identity, strict amount/currency/time parsing, partial data plus errors, warning preservation, and request-scoped abort/timeout propagation into the SDK fetch.
 
-- [ ] **Step 2: Run contract and reconciliation tests and verify missing snapshot fields/service**
+- [x] **Checkpoint 1 / Step 2: Observe RED, implement the contract, and run focused gates**
 
 ```bash
 bunx vitest run --config vitest.contract.config.ts tests/contract/waffo-contract.test.ts
-bunx vitest run --config vitest.integration.config.ts tests/integration/commerce/payment-reconciliation.test.ts
+bun run typecheck
+bun run lint
+bun run verify:commerce
 ```
 
-Expected: the contract exposes `ID!`, amount/model fields are absent, and the reconciliation service cannot be imported.
+The SDK client for each lookup wraps the configured fetch with the request's combined caller signal and bounded timeout. GraphQL partial data with errors fails closed. Warnings return only `message`, `layer`, and optional `aiHint` for later persistent audit. This checkpoint changes no reconciliation mutation behavior.
 
-- [ ] **Step 3: Query authoritative fields and feed snapshots through applied-event processing**
+- [x] **Checkpoint 1 / Step 3: Commit and stop for review**
+
+```bash
+git commit -m "fix(commerce): validate Waffo payment queries"
+```
+
+- [ ] **Checkpoint 2 / Step 1: Add failing durable reconciliation tests**
+
+Use real PostgreSQL for sequential and concurrent runs, webhook races, lease expiry/same-owner reclaim, provider I/O lock freedom, pending/transient backoff, poison isolation, starvation prevention, duplicate succeeded payments, identity/model/store/environment/amount failures, subscription quarantine, abort, and event-id collision.
+
+- [ ] **Checkpoint 2 / Step 2: Add the durable job and only one-time recovery**
 
 ```graphql
 query ($reference: String!) {
-  payments(filter: { orderMerchantExternalId: { eq: $reference } }) {
+  payments(limit: 100, filter: { orderMerchantExternalId: { eq: $reference } }) {
     id orderId status orderMerchantExternalId createdAt
     snapshotAmountDetails { currency total }
-    onetimeOrder { id }
-    subscriptionOrder { id currentPeriodStart currentPeriodEnd }
+    onetimeOrder { id testMode store { id } }
+    subscriptionOrder { id store { id } }
   }
+  paymentsCount(filter: { orderMerchantExternalId: { eq: $reference } })
 }
 ```
 
-Reject ambiguous/malformed responses. The reconciler scans bounded stale checkout-created orders under `SKIP LOCKED`, queries by the local order id, converts a terminal snapshot into the matching normalized one-time/subscription event, and calls `processProviderEvent` with a deterministic snapshot hash. Pending/null results remain untouched; provider errors propagate so the job route reports failure.
+Create durable reconciliation rows for stale checkout-created orders. Claim in a short transaction, perform provider I/O without a database lock/transaction, isolate each item, and fence every terminal result by this claim's lease token and terminal wall clock. One-time succeeded facts use the sole `processProviderEvent` mutation entry; duplicate succeeded facts or deterministic mismatches enter idempotent operator review. Pending/no-result/transient provider outcomes use bounded backoff; all failed/canceled terminal facts complete deterministically. Subscription facts enter operator review without payment/period/fulfillment/Credits mutations.
 
-- [ ] **Step 4: Run contract, reconciliation, Commerce, and type checks**
+- [ ] **Checkpoint 2 / Step 3: Harden provider-event replay identity**
+
+Identical `(environment,eventId,eventType,payloadHash)` replay remains a no-op. Reuse of the same `(environment,eventId)` with a different event type or canonical payload hash fails closed and writes a persistent reconciliation/audit record instead of silently accepting the conflict. Add a one-time handler product-model check as a second fail-closed defense.
+
+- [ ] **Checkpoint 2 / Step 4: Reserve route capacity and runtime**
+
+Give payment reconciliation an independent small item quota and time slice. Pass the bounded-job signal through the provider lookup; after abort, no handler may write the database. Preserve separate refund, payload-purge, Credits, and alert opportunities. Return actual `scanned`, `applied`, `retried`, and `operatorReview` counters.
+
+- [ ] **Checkpoint 2 / Step 5: Run full gates and commit**
 
 ```bash
 bunx vitest run --config vitest.contract.config.ts tests/contract/waffo-contract.test.ts
 bunx vitest run --config vitest.integration.config.ts tests/integration/commerce/payment-reconciliation.test.ts
+bunx vitest run --config vitest.integration.config.ts tests/integration/commerce/event-application-idempotency.test.ts
 bun run verify:commerce
+bun run verify:credit-races
 bun run typecheck
 ```
 
-Expected: all commands exit `0`. Live provider verification remains owner-side because test/production credentials are not stored in the repository.
+Expected: all commands exit `0`. Code-safe query tests do not establish the live Waffo schema or merchant-resource contract. Owner activation remains **NO-GO** until authenticated live Test resources prove the exact payment query fields, identities, pagination/count behavior, and representative one-time/subscription facts.
 
-- [ ] **Step 5: Commit provider reconciliation**
+- [ ] **Checkpoint 2 / Step 6: Commit durable one-time reconciliation and stop for review**
 
 ```bash
-git add src/platform/commerce/domain/events.ts src/platform/commerce/application/payment-provider.ts src/platform/commerce/application/reconcile-stale-payments.ts src/platform/commerce/providers/waffo/adapter.ts src/app/api/internal/jobs/reconcile/route.ts tests/contract/waffo-contract.test.ts tests/integration/commerce/payment-reconciliation.test.ts docs/providers/waffo-contract-2026-08-08.md
+git add src/platform/commerce/domain/events.ts src/platform/commerce/application/payment-provider.ts src/platform/commerce/application/reconcile-stale-payments.ts src/platform/database/commerce-schema.ts drizzle/0011_payment_reconciliation_jobs.sql drizzle/meta/_journal.json scripts/verify-migrations.ts src/platform/commerce/providers/waffo/adapter.ts src/platform/commerce/application/process-provider-event.ts src/platform/commerce/application/process-one-time-payment-event.ts src/app/api/internal/jobs/reconcile/route.ts tests/contract/waffo-contract.test.ts tests/integration/commerce/payment-reconciliation.test.ts tests/integration/commerce/event-application-idempotency.test.ts docs/providers/waffo-contract-2026-08-08.md docs/superpowers/plans/2026-08-10-commerce-remediation.md
 git commit -m "fix(commerce): reconcile missed payments"
 ```

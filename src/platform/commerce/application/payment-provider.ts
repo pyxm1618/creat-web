@@ -46,6 +46,17 @@ export type RefundRequest = {
   readonly idempotencyKey: string;
 };
 
+export type ProviderQueryWarning = {
+  readonly message: string;
+  readonly layer: string;
+  readonly aiHint?: string;
+};
+
+export type PaymentLookupResult = {
+  readonly payments: readonly NormalizedPaymentSnapshot[];
+  readonly warnings: readonly ProviderQueryWarning[];
+};
+
 export interface PaymentProvider {
   readonly name: PaymentProviderId;
   readonly capabilities: {
@@ -74,7 +85,9 @@ export interface PaymentProvider {
     readonly merchantOrderReference?: string;
     readonly externalOrderId?: string;
     readonly externalPaymentId?: string;
-  }): Promise<NormalizedPaymentSnapshot | null>;
+    readonly signal?: AbortSignal;
+    readonly timeoutMs?: number;
+  }): Promise<PaymentLookupResult>;
   verifyAndNormalizeWebhook(input: {
     readonly rawBody: Uint8Array;
     readonly signature: string;

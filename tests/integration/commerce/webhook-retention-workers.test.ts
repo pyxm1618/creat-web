@@ -56,7 +56,7 @@ const invalidSignatureProvider: PaymentProvider = {
     throw new Error("not used");
   },
   async getPayment() {
-    return null;
+    return { payments: [], warnings: [] };
   },
   async verifyAndNormalizeWebhook() {
     throw new InvalidWebhookSignatureError();

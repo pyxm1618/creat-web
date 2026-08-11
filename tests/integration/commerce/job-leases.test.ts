@@ -215,7 +215,7 @@ function paymentProvider(
       throw new Error("not used");
     },
     async getPayment() {
-      return null;
+      return { payments: [], warnings: [] };
     },
     async verifyAndNormalizeWebhook() {
       throw new Error("not used");

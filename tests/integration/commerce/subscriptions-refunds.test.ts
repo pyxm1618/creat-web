@@ -154,7 +154,7 @@ function refundProvider(requestRefund: PaymentProvider["requestRefund"]): Paymen
     },
     requestRefund,
     async getPayment() {
-      return null;
+      return { payments: [], warnings: [] };
     },
     async verifyAndNormalizeWebhook() {
       throw new Error("not used");

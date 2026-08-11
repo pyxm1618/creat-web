@@ -88,10 +88,12 @@ export type NormalizedProviderEvent =
 
 export type NormalizedPaymentSnapshot = {
   readonly environment: CommerceEnvironment;
+  readonly model: "one_time" | "subscription";
+  readonly storeId: string;
   readonly externalOrderId: string;
-  readonly merchantOrderReference?: string;
-  readonly externalPaymentId?: string;
+  readonly merchantOrderReference: string;
+  readonly externalPaymentId: string;
   readonly status: "pending" | "succeeded" | "failed" | "canceled";
-  readonly amount?: Money;
+  readonly amount: Money;
   readonly occurredAt: Date;
 };

@@ -37,11 +37,59 @@ Waffo amounts are decimal display strings, not integer minor units. Examples fro
 
 The starter converts provider display strings to BIGINT minor units using an explicit reviewed currency exponent registry. Unsupported currencies and precision mismatches fail closed. The original provider display value may be preserved only where needed for diagnostics; financial equality is evaluated in minor units plus currency.
 
-## Payment lookup contract — pending Commerce Task 7
+## Payment query contract
 
-The intended reconciliation query uses `String!` variables for both merchant-owned `orderMerchantExternalId` references and direct payment ids. That repository contract is **not yet verified in this branch**: the current adapter and contract suite still require the Commerce Task 7 change and its `$reference: String!` / `$paymentId: String!` assertions.
+The pinned SDK documentation exposes merchant GraphQL payment queries, `paymentsCount` with the same filter as the corresponding list, payment `snapshotAmountDetails`, `createdAt`, and mutually exclusive `onetimeOrder` / `subscriptionOrder` relations. It explicitly documents `OnetimeOrder.testMode`; the subscription payment query documentation does not establish a payment-level subscription period.
 
-Do not mark payment lookup repository-verified until the Task 7 adapter and contract test pass together. Even after that repository gate, live activation separately requires an authenticated query against merchant-owned test and production resources and confirmation of the returned payment snapshot.
+The application query is bounded to 100 rows and requests:
+
+```graphql
+query ($reference: String!, $paymentId: String!) {
+  payments(
+    limit: 100
+    filter: {
+      orderMerchantExternalId: { eq: $reference }
+      id: { eq: $paymentId }
+    }
+  ) {
+    id
+    orderId
+    status
+    orderMerchantExternalId
+    snapshotAmountDetails { currency total }
+    onetimeOrder { id testMode store { id } }
+    subscriptionOrder { id store { id } }
+    createdAt
+  }
+  paymentsCount(
+    filter: {
+      orderMerchantExternalId: { eq: $reference }
+      id: { eq: $paymentId }
+    }
+  )
+}
+```
+
+Either lookup identity may be omitted, but when both are provided both remain in the list and count filters and both are validated against every returned payment. The adapter also requires:
+
+- list length equals `paymentsCount`, count does not exceed 100, and payment IDs are unique;
+- `orderMerchantExternalId` matches the local order reference when supplied;
+- exactly one provider-order relation, whose `id` equals `payment.orderId` and whose `store.id` equals the configured store;
+- one-time `testMode` maps exactly to local `test` / `production`;
+- supported payment status, uppercase supported currency, exact decimal precision, and a strict UTC provider `createdAt`;
+- any GraphQL `errors`, including partial data plus errors, fail closed.
+
+Every lookup creates a request-scoped SDK client whose custom fetch receives a combined caller abort signal and a bounded timeout. Provider warnings are not discarded: only `message`, `layer`, and optional `aiHint` leave the adapter so the reconciliation worker can persist an allowlisted audit record.
+
+These tests validate code against the checked-in SDK 0.16.0 documentation and a controlled wire fixture. They do **not** prove the authenticated live merchant schema or resources.
+
+## Missed-webhook recovery boundary
+
+Automatic recovery is restricted to unambiguous one-time payment facts. Subscription payment facts discovered through GraphQL must be quarantined for operator review with reason `payment-level period unavailable` and must produce no payment row, subscription period, fulfillment job, or Credits grant.
+
+`subscriptionOrder.currentPeriodStart` and `subscriptionOrder.currentPeriodEnd` are current order-projection fields, not proven historical payment-period fields. They must never be copied onto a recovered subscription payment. Subscription recovery can be reconsidered only after the live schema or retained historical event proves authoritative payment-level period bounds.
+
+Therefore this implementation may be code-safe while owner activation remains **NO-GO**.
 
 ## Webhook contract
 
@@ -75,7 +123,7 @@ Relevant event types exposed by SDK 0.16.0:
 
 Relevant data fields include `orderId`, `orderMerchantExternalId`, `paymentId`, `paymentStatus`, `currency`, `amount`, subscription period fields, and refund fields.
 
-Phase 4 handles one-time `order.completed` and refund events. Signed subscription events are durably retained as unsupported normalized events until the subscription phase adds typed handling.
+The verified-webhook path handles one-time, refund, and typed subscription events. Subscription activation/payment mutation requires period bounds from that signed event itself. This is separate from GraphQL missed-webhook reconciliation: query results cannot substitute current order-period fields for missing payment-level history.
 
 ## Retention contract
 
