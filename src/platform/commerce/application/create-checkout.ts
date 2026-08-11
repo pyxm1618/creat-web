@@ -91,6 +91,9 @@ export async function createCheckout(
           throw new Error("checkout idempotency key reused for different product");
         }
         if (existing.checkoutState === "created") throw new Error("checkout already created");
+        if (existing.checkoutState === "failed" && existing.externalCheckoutSessionId) {
+          throw new Error("checkout requires operator review");
+        }
         if (
           existing.checkoutState === "creating" &&
           existing.checkoutLeaseExpiresAt &&

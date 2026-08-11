@@ -195,10 +195,17 @@ export async function processSubscriptionEvent(
   const order = await lockOrder(tx, event);
   if (order.subjectId !== subject.id) throw new Error("subscription order subject changed");
   const resurrectionEvent = RESURRECTION_EVENT_TYPES.has(event.type);
+  let [subscription] = await tx
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.orderId, order.id))
+    .limit(1)
+    .for("update");
 
   await guardSubscriptionEventForSubject({
     subject,
     eventType: event.type,
+    ...(subscription ? { subscriptionStatus: parseSubscriptionStatus(subscription.status) } : {}),
     reconcile: async () => {
       await tx.insert(commerceReconciliationRuns).values({
         targetType: "subscription_account_deletion_fence",
@@ -227,13 +234,6 @@ export async function processSubscriptionEvent(
       if (!product || product.model !== "subscription") {
         throw new Error("subscription event targets a non-subscription product");
       }
-
-      let [subscription] = await tx
-        .select()
-        .from(subscriptions)
-        .where(eq(subscriptions.orderId, order.id))
-        .limit(1)
-        .for("update");
 
       if (!subscription) {
         [subscription] = await tx

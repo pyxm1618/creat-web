@@ -181,6 +181,8 @@ it("rejects a checkout before the provider call when account deletion has starte
 
 it("does not return a provider checkout URL when deletion wins during the provider call", async () => {
   const subject = await subjectId();
+  const buyerIdentitySentinel = "buyer-identity-must-not-be-audited";
+  const buyerEmailSentinel = "buyer-email-must-not-be-audited@example.com";
   let providerStarted!: () => void;
   const started = new Promise<void>((resolve) => {
     providerStarted = resolve;
@@ -189,7 +191,9 @@ it("does not return a provider checkout URL when deletion wins during the provid
   const providerGate = new Promise<void>((resolve) => {
     releaseProvider = resolve;
   });
+  let calls = 0;
   const fake = provider(async () => {
+    calls += 1;
     providerStarted();
     await providerGate;
     return {
@@ -199,18 +203,17 @@ it("does not return a provider checkout URL when deletion wins during the provid
     };
   });
   const idempotencyKey = `checkout:${crypto.randomUUID()}`;
+  const input = {
+    subjectId: subject,
+    buyerIdentity: buyerIdentitySentinel,
+    buyerEmail: buyerEmailSentinel,
+    productKey: "one-time-test",
+    environment: "test" as const,
+    idempotencyKey,
+    appOrigin: "https://app.example.com",
+  };
 
-  const checkout = createCheckout(
-    {
-      subjectId: subject,
-      buyerIdentity: subject,
-      productKey: "one-time-test",
-      environment: "test",
-      idempotencyKey,
-      appOrigin: "https://app.example.com",
-    },
-    { database: database.db, catalog, provider: fake },
-  );
+  const checkout = createCheckout(input, { database: database.db, catalog, provider: fake });
   await started;
   await database.db
     .update(accountSubjects)
@@ -219,6 +222,15 @@ it("does not return a provider checkout URL when deletion wins during the provid
   releaseProvider();
 
   await expect(checkout).rejects.toThrow("account subject is not active");
+  await database.db
+    .update(accountSubjects)
+    .set({ status: "active", deletionRequestedAt: null })
+    .where(eq(accountSubjects.id, subject));
+  await expect(
+    createCheckout(input, { database: database.db, catalog, provider: fake }),
+  ).rejects.toThrow("checkout requires operator review");
+
+  expect(calls).toBe(1);
   const [order] = await database.db
     .select()
     .from(orders)
@@ -228,6 +240,7 @@ it("does not return a provider checkout URL when deletion wins during the provid
     externalCheckoutSessionId: "session-deletion-race",
     externalOrderId: "order-deletion-race",
   });
+  if (!order) throw new Error("checkout order missing");
   const reconciliations = await database.db
     .select()
     .from(commerceReconciliationRuns)
@@ -237,11 +250,29 @@ it("does not return a provider checkout URL when deletion wins during the provid
     targetType: "checkout_session",
     actorType: "application",
     result: "operator_review_required",
-    afterJson: {
-      externalCheckoutSessionId: "session-deletion-race",
-      externalOrderId: "order-deletion-race",
-      checkoutUrlReturned: false,
-      localCheckoutState: "failed",
-    },
   });
+  expect(reconciliations[0]?.beforeJson).toEqual({
+    orderId: order.id,
+    subjectId: subject,
+    checkoutState: "creating",
+  });
+  expect(reconciliations[0]?.afterJson).toEqual({
+    externalCheckoutSessionId: "session-deletion-race",
+    externalOrderId: "order-deletion-race",
+    checkoutUrlReturned: false,
+    localCheckoutState: "failed",
+    orderIdentifiersPersisted: true,
+  });
+  const serializedAudit = JSON.stringify({
+    beforeJson: reconciliations[0]?.beforeJson,
+    afterJson: reconciliations[0]?.afterJson,
+  });
+  expect(serializedAudit).not.toContain("https://checkout.example/session-deletion-race");
+  expect(serializedAudit).not.toContain(buyerIdentitySentinel);
+  expect(serializedAudit).not.toContain(buyerEmailSentinel);
+  for (const payload of [reconciliations[0]?.beforeJson, reconciliations[0]?.afterJson]) {
+    expect(payload).not.toHaveProperty("checkoutUrl");
+    expect(payload).not.toHaveProperty("buyerEmail");
+    expect(payload).not.toHaveProperty("buyerIdentity");
+  }
 });

@@ -393,6 +393,56 @@ it("reconciles a past-due event racing the final deletion scan without retry", a
   ).toContainEqual(expect.objectContaining({ result: "nonterminal_transition_blocked" }));
 });
 
+it("does not regress terminal subscriptions after account deletion starts", async () => {
+  const cases = [
+    { currentStatus: "canceled", eventType: "subscription_canceling" },
+    { currentStatus: "expired", eventType: "subscription_canceling" },
+    { currentStatus: "closed", eventType: "subscription_canceling" },
+    { currentStatus: "expired", eventType: "subscription_canceled" },
+    { currentStatus: "closed", eventType: "subscription_canceled" },
+  ] as const;
+
+  for (const testCase of cases) {
+    const { subject, order } = await subscriptionFixture();
+    const subscription = await activateSubscription(order);
+    await database.db
+      .update(subscriptions)
+      .set({ status: testCase.currentStatus, cancelAtPeriodEnd: false })
+      .where(eq(subscriptions.id, subscription.id));
+    await subjects.beginDeletion(subject.id);
+    const eventId = `evt-terminal-${testCase.currentStatus}-${testCase.eventType}-${crypto.randomUUID()}`;
+    const event = {
+      type: testCase.eventType,
+      eventId,
+      environment: "test" as const,
+      externalOrderId: order.externalOrderId!,
+      merchantOrderReference: order.id,
+      occurredAt: new Date("2026-10-01T00:00:00Z"),
+    };
+
+    await expect(processProviderEvent(database.db, event, "4".repeat(64))).resolves.toBeUndefined();
+    await expect(processProviderEvent(database.db, event, "4".repeat(64))).resolves.toBeUndefined();
+
+    expect(
+      await database.db.query.subscriptions.findFirst({
+        where: eq(subscriptions.id, subscription.id),
+      }),
+    ).toMatchObject({ status: testCase.currentStatus, cancelAtPeriodEnd: false });
+    expect(
+      await database.db
+        .select()
+        .from(commerceAppliedEvents)
+        .where(eq(commerceAppliedEvents.providerEventId, eventId)),
+    ).toHaveLength(1);
+    expect(
+      await database.db
+        .select()
+        .from(commerceReconciliationRuns)
+        .where(eq(commerceReconciliationRuns.targetId, order.externalOrderId!)),
+    ).toHaveLength(1);
+  }
+});
+
 it("does not extend the grace deadline when repeated past-due events arrive", async () => {
   const { order } = await subscriptionFixture();
   const subscription = await activateSubscription(order);
