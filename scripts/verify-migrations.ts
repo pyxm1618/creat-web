@@ -79,7 +79,6 @@ async function assertLatestSchema(label: string): Promise<void> {
   const actualReconciliationColumns = new Set(reconciliationColumns.map((row) => row.column_name));
   for (const column of [
     "order_id",
-    "environment",
     "state",
     "attempts",
     "lease_owner",
@@ -93,6 +92,9 @@ async function assertLatestSchema(label: string): Promise<void> {
       throw new Error(`${label}: payment_reconciliation_jobs.${column} is missing`);
     }
   }
+  if (actualReconciliationColumns.has("environment")) {
+    throw new Error(`${label}: payment_reconciliation_jobs.environment must derive from orders`);
+  }
 
   const reconciliationConstraints = await database.db.execute(sql<{ constraint_name: string }>`
     select constraint_name
@@ -105,8 +107,7 @@ async function assertLatestSchema(label: string): Promise<void> {
   );
   for (const constraint of [
     "payment_reconciliation_job_state_valid",
-    "payment_reconciliation_job_environment_valid",
-    "payment_reconciliation_job_attempts_nonnegative",
+    "payment_reconciliation_job_attempts_valid",
     "payment_reconciliation_job_lease_consistent",
     "payment_reconciliation_job_review_reason_consistent",
     "payment_reconciliation_job_terminal_time_consistent",
@@ -116,12 +117,14 @@ async function assertLatestSchema(label: string): Promise<void> {
     }
   }
 
-  const reconciliationIndexes = await database.db.execute(sql<{ indexname: string }>`
-    select indexname
+  const reconciliationIndexes = await database.db.execute(
+    sql<{ indexname: string; indexdef: string }>`
+    select indexname, indexdef
     from pg_indexes
     where schemaname = 'public'
       and indexname in ('payment_reconciliation_order_uq','payment_reconciliation_due_idx','payment_reconciliation_reclaim_idx','commerce_reconciliation_run_dedup_uq')
-  `);
+  `,
+  );
   const actualReconciliationIndexes = new Set(reconciliationIndexes.map((row) => row.indexname));
   for (const index of [
     "payment_reconciliation_order_uq",
@@ -132,6 +135,13 @@ async function assertLatestSchema(label: string): Promise<void> {
     if (!actualReconciliationIndexes.has(index)) {
       throw new Error(`${label}: missing payment reconciliation index ${index}`);
     }
+  }
+  const orderIndex = String(
+    reconciliationIndexes.find((row) => row.indexname === "payment_reconciliation_order_uq")
+      ?.indexdef ?? "",
+  );
+  if (!orderIndex.endsWith("(order_id)") || orderIndex.includes("environment")) {
+    throw new Error(`${label}: payment reconciliation order index is not globally unique`);
   }
 
   const reconciliationDedupKey = await database.db.execute(sql<{ column_name: string }>`

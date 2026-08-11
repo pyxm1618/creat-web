@@ -4,13 +4,13 @@ import {
   InvalidWebhookSignatureError,
   ProviderContractError,
 } from "@/platform/commerce/application/errors";
+import { validateProviderQueryWarnings } from "@/platform/commerce/application/provider-query-warnings";
 import type {
   CreatedCheckout,
   CreateCheckoutInput,
   CreateOneTimeCheckoutInput,
   PaymentLookupResult,
   PaymentProvider,
-  ProviderQueryWarning,
   ProviderSubscriptionSnapshot,
   RefundRequest,
 } from "@/platform/commerce/application/payment-provider";
@@ -118,18 +118,6 @@ function paymentAmount(value: unknown) {
   } catch {
     throw new ProviderContractError("invalid Waffo payment amount");
   }
-}
-
-function queryWarnings(value: unknown): readonly ProviderQueryWarning[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw new ProviderContractError("invalid Waffo query warnings");
-  return value.map((entry, index) => {
-    const warning = requireRecord(entry, `warnings[${index}]`);
-    const message = requireString(warning.message, `warnings[${index}].message`);
-    const layer = requireString(warning.layer, `warnings[${index}].layer`);
-    const aiHint = optionalString(warning.aiHint);
-    return { message, layer, ...(aiHint ? { aiHint } : {}) };
-  });
 }
 
 function scopedRequestSignal(input: {
@@ -399,7 +387,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         }
         return {
           payments,
-          warnings: queryWarnings(response.warnings),
+          warnings: validateProviderQueryWarnings(response.warnings),
         };
       } finally {
         request.cleanup();

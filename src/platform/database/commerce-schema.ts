@@ -235,7 +235,6 @@ export const paymentReconciliationJobs = pgTable(
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id, { onDelete: "restrict" }),
-    environment: text("environment").notNull(),
     state: text("state").default("pending").notNull(),
     attempts: integer("attempts").default(0).notNull(),
     leaseOwner: text("lease_owner"),
@@ -251,7 +250,7 @@ export const paymentReconciliationJobs = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
   },
   (table) => [
-    uniqueIndex("payment_reconciliation_order_uq").on(table.environment, table.orderId),
+    uniqueIndex("payment_reconciliation_order_uq").on(table.orderId),
     index("payment_reconciliation_due_idx").on(table.state, table.nextAttemptAt, table.createdAt),
     index("payment_reconciliation_reclaim_idx").on(table.state, table.leaseExpiresAt),
     check(
@@ -259,10 +258,9 @@ export const paymentReconciliationJobs = pgTable(
       sql`${table.state} in ('pending','processing','completed','operator_review','dead_letter')`,
     ),
     check(
-      "payment_reconciliation_job_environment_valid",
-      sql`${table.environment} in ('test','production')`,
+      "payment_reconciliation_job_attempts_valid",
+      sql`${table.attempts} >= 0 and ${table.attempts} <= 12 and ((${table.state} = 'dead_letter' and ${table.attempts} = 12) or (${table.state} <> 'dead_letter' and ${table.attempts} < 12))`,
     ),
-    check("payment_reconciliation_job_attempts_nonnegative", sql`${table.attempts} >= 0`),
     check(
       "payment_reconciliation_job_lease_consistent",
       sql`(${table.state} = 'processing' and ${table.leaseOwner} is not null and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'processing' and ${table.leaseOwner} is null and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null)`,

@@ -9,6 +9,8 @@ import {
 } from "@/platform/database/commerce-schema";
 import { commerceCommandJobs } from "@/platform/database/subscription-schema";
 
+import { validateProviderQueryWarnings } from "./provider-query-warnings";
+
 const LEASE_MS = 5 * 60 * 1000;
 const PAYMENT_RECONCILIATION_MAX_ATTEMPTS = 12;
 
@@ -21,11 +23,7 @@ type PaymentReconciliationWarning = {
 function allowlistedWarnings(
   warnings: readonly PaymentReconciliationWarning[] | undefined,
 ): readonly PaymentReconciliationWarning[] {
-  return (warnings ?? []).map((warning) => ({
-    message: warning.message,
-    layer: warning.layer,
-    ...(warning.aiHint === undefined ? {} : { aiHint: warning.aiHint }),
-  }));
+  return validateProviderQueryWarnings(warnings);
 }
 
 export async function claimWebhookInbox(
@@ -172,7 +170,11 @@ export async function claimPaymentReconciliationJobs(
           ),
         ),
       )
-      .orderBy(paymentReconciliationJobs.createdAt)
+      .orderBy(
+        paymentReconciliationJobs.nextAttemptAt,
+        paymentReconciliationJobs.createdAt,
+        paymentReconciliationJobs.id,
+      )
       .limit(limit)
       .for("update", { skipLocked: true });
 

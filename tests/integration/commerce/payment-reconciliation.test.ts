@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
+import { ProviderContractError } from "@/platform/commerce/application/errors";
 import {
   claimPaymentReconciliationJobs,
   completePaymentReconciliationJob,
@@ -20,6 +21,19 @@ import {
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
 const database = createDatabaseClient(databaseUrl);
+
+const invalidWarningCases = [
+  [
+    "too many warnings",
+    Array.from({ length: 17 }, (_, index) => ({
+      message: `warning-${index}`,
+      layer: "payments",
+    })),
+  ],
+  ["message too long", [{ message: "m".repeat(513), layer: "payments" }]],
+  ["layer too long", [{ message: "warning", layer: "l".repeat(65) }]],
+  ["AI hint too long", [{ message: "warning", layer: "payments", aiHint: "a".repeat(513) }]],
+] as const;
 
 beforeAll(async () => {
   await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS public CASCADE"));
@@ -89,7 +103,6 @@ it("installs the durable payment reconciliation job columns", async () => {
   expect(rows.map((row) => row.column_name)).toEqual([
     "id",
     "order_id",
-    "environment",
     "state",
     "attempts",
     "lease_owner",
@@ -104,6 +117,12 @@ it("installs the durable payment reconciliation job columns", async () => {
   ]);
 });
 
+it("derives reconciliation environment from the referenced order", () => {
+  type JobInsert = typeof paymentReconciliationJobs.$inferInsert;
+  const environmentIsNotInsertable: "environment" extends keyof JobInsert ? never : true = true;
+  expect(environmentIsNotInsertable).toBe(true);
+});
+
 it("installs fail-closed state, lease, and operator-review constraints", async () => {
   const rows = await database.db.execute(sql<{ name: string; definition: string }>`
     select constraint_name as name, pg_get_constraintdef(pc.oid) as definition
@@ -115,8 +134,9 @@ it("installs fail-closed state, lease, and operator-review constraints", async (
   const constraints = new Map(rows.map((row) => [row.name, row.definition]));
 
   expect(constraints.get("payment_reconciliation_job_state_valid")).toContain("operator_review");
-  expect(constraints.get("payment_reconciliation_job_environment_valid")).toContain("production");
-  expect(constraints.get("payment_reconciliation_job_attempts_nonnegative")).toContain(">= 0");
+  expect(constraints.get("payment_reconciliation_job_attempts_valid")).toContain(">= 0");
+  expect(constraints.get("payment_reconciliation_job_attempts_valid")).toContain("<= 12");
+  expect(constraints.get("payment_reconciliation_job_attempts_valid")).toContain("dead_letter");
   expect(constraints.get("payment_reconciliation_job_lease_consistent")).toContain("lease_token");
   expect(constraints.get("payment_reconciliation_job_review_reason_consistent")).toContain(
     "operator_review_reason",
@@ -132,7 +152,8 @@ it("installs due, reclaim, and per-order idempotency indexes", async () => {
   `);
   const indexes = new Map(rows.map((row) => [row.name, row.definition]));
 
-  expect(indexes.get("payment_reconciliation_order_uq")).toContain("environment, order_id");
+  expect(indexes.get("payment_reconciliation_order_uq")).toMatch(/\(order_id\)$/);
+  expect(indexes.get("payment_reconciliation_order_uq")).not.toContain("environment");
   expect(indexes.get("payment_reconciliation_due_idx")).toContain(
     "state, next_attempt_at, created_at",
   );
@@ -159,12 +180,86 @@ it("installs a persistent idempotency key for operator audit", async () => {
   expect(indexes).toHaveLength(1);
 });
 
+it("allows only one reconciliation job for a global order id", async () => {
+  const order = await seedOrder();
+  await database.db.insert(paymentReconciliationJobs).values({ orderId: order.id });
+
+  await expect(
+    (async () => {
+      await database.db.insert(paymentReconciliationJobs).values({ orderId: order.id });
+    })(),
+  ).rejects.toThrow();
+});
+
+it.each([
+  ["attempts above the maximum", { state: "pending", attempts: 13 }],
+  ["pending at the maximum", { state: "pending", attempts: 12 }],
+  [
+    "processing at the maximum",
+    {
+      state: "processing",
+      attempts: 12,
+      leaseOwner: "invalid-owner",
+      leaseToken: "invalid-token",
+      leaseExpiresAt: new Date("2030-05-01T00:05:00.000Z"),
+    },
+  ],
+  [
+    "dead letter below the maximum",
+    {
+      state: "dead_letter",
+      attempts: 11,
+      completedAt: new Date("2030-05-01T00:00:00.000Z"),
+    },
+  ],
+] as const)("rejects an invalid reconciliation attempt state: %s", async (_name, values) => {
+  const order = await seedOrder();
+  await expect(
+    (async () => {
+      await database.db.insert(paymentReconciliationJobs).values({
+        orderId: order.id,
+        ...values,
+      });
+    })(),
+  ).rejects.toThrow();
+});
+
+it("enforces non-null audit dedup keys while allowing legacy null keys", async () => {
+  const values = {
+    targetType: "payment_reconciliation_job",
+    targetId: crypto.randomUUID(),
+    actorType: "worker",
+    beforeJson: {},
+    afterJson: {},
+    result: "operator_review_required",
+  } as const;
+
+  await database.db.insert(commerceReconciliationRuns).values([
+    { ...values, dedupKey: null },
+    { ...values, dedupKey: null },
+    { ...values, dedupKey: "payment-reconciliation:dedup-proof" },
+  ]);
+  await expect(
+    (async () => {
+      await database.db
+        .insert(commerceReconciliationRuns)
+        .values({ ...values, dedupKey: "payment-reconciliation:dedup-proof" });
+    })(),
+  ).rejects.toThrow();
+
+  const rows = await database.db.select().from(commerceReconciliationRuns);
+  expect(rows.filter((row) => row.dedupKey === null)).toHaveLength(2);
+  expect(rows.filter((row) => row.dedupKey === "payment-reconciliation:dedup-proof")).toHaveLength(
+    1,
+  );
+});
+
 it("allows only one concurrent claim for a due reconciliation job", async () => {
   const now = new Date("2030-05-01T00:00:00.000Z");
   const order = await seedOrder();
   const [job] = await database.db
     .insert(paymentReconciliationJobs)
-    .values({ orderId: order.id, environment: "test", nextAttemptAt: now })
+    .values({ orderId: order.id, nextAttemptAt: now })
     .returning();
   if (!job) throw new Error("reconciliation job insert failed");
 
@@ -185,13 +280,94 @@ it("allows only one concurrent claim for a due reconciliation job", async () => 
   expect(claimed[0]?.leaseToken).toMatch(/^[0-9a-f-]{36}$/);
 });
 
+it("claims newly due jobs within one turn while an older poison job keeps retrying", async () => {
+  const start = new Date("2030-05-01T00:00:00.000Z");
+  const poisonOrder = await seedOrder();
+  const [poison] = await database.db
+    .insert(paymentReconciliationJobs)
+    .values({
+      orderId: poisonOrder.id,
+      nextAttemptAt: start,
+      createdAt: new Date("2029-05-01T00:00:00.000Z"),
+    })
+    .returning();
+  if (!poison) throw new Error("poison reconciliation job insert failed");
+
+  let [poisonClaim] = await claimPaymentReconciliationJobs(database.db, {
+    owner: "poison-worker-0",
+    now: start,
+    limit: 1,
+  });
+  if (!poisonClaim?.leaseToken) throw new Error("poison claim missing");
+  expect(
+    await retryPaymentReconciliationJob(database.db, {
+      id: poison.id,
+      owner: "poison-worker-0",
+      leaseToken: poisonClaim.leaseToken,
+      terminalNow: start,
+      errorCode: "POISON",
+    }),
+  ).toBe(true);
+
+  for (let round = 1; round <= 3; round += 1) {
+    const persistedPoison = await database.db.query.paymentReconciliationJobs.findFirst({
+      where: eq(paymentReconciliationJobs.id, poison.id),
+    });
+    if (!persistedPoison) throw new Error("poison job disappeared");
+    const claimAt = persistedPoison.nextAttemptAt;
+    const normalOrder = await seedOrder();
+    const [normal] = await database.db
+      .insert(paymentReconciliationJobs)
+      .values({
+        orderId: normalOrder.id,
+        nextAttemptAt: new Date(claimAt.getTime() - 1),
+        createdAt: new Date(start.getTime() + round),
+      })
+      .returning();
+    if (!normal) throw new Error("normal reconciliation job insert failed");
+
+    const [normalClaim] = await claimPaymentReconciliationJobs(database.db, {
+      owner: `normal-worker-${round}`,
+      now: claimAt,
+      limit: 1,
+    });
+    expect(normalClaim?.id).toBe(normal.id);
+    if (!normalClaim?.leaseToken) throw new Error("normal claim missing");
+    expect(
+      await completePaymentReconciliationJob(database.db, {
+        id: normal.id,
+        owner: `normal-worker-${round}`,
+        leaseToken: normalClaim.leaseToken,
+        terminalNow: claimAt,
+      }),
+    ).toBe(true);
+
+    [poisonClaim] = await claimPaymentReconciliationJobs(database.db, {
+      owner: `poison-worker-${round}`,
+      now: claimAt,
+      limit: 1,
+    });
+    expect(poisonClaim?.id).toBe(poison.id);
+    if (!poisonClaim?.leaseToken) throw new Error("poison reclaim missing");
+    expect(
+      await retryPaymentReconciliationJob(database.db, {
+        id: poison.id,
+        owner: `poison-worker-${round}`,
+        leaseToken: poisonClaim.leaseToken,
+        terminalNow: claimAt,
+        errorCode: "POISON",
+      }),
+    ).toBe(true);
+  }
+});
+
 it("changes the lease token when the same owner reclaims an expired job", async () => {
   const firstNow = new Date("2030-05-01T00:00:00.000Z");
   const reclaimNow = new Date("2030-05-01T00:05:00.000Z");
   const order = await seedOrder();
   const [job] = await database.db
     .insert(paymentReconciliationJobs)
-    .values({ orderId: order.id, environment: "test", nextAttemptAt: firstNow })
+    .values({ orderId: order.id, nextAttemptAt: firstNow })
     .returning();
   if (!job) throw new Error("reconciliation job insert failed");
 
@@ -229,7 +405,7 @@ it("does not let a stale token complete a same-owner reclaimed job", async () =>
   const order = await seedOrder();
   const [job] = await database.db
     .insert(paymentReconciliationJobs)
-    .values({ orderId: order.id, environment: "test", nextAttemptAt: firstNow })
+    .values({ orderId: order.id, nextAttemptAt: firstNow })
     .returning();
   if (!job) throw new Error("reconciliation job insert failed");
   const [first] = await claimPaymentReconciliationJobs(database.db, {
@@ -260,13 +436,70 @@ it("does not let a stale token complete a same-owner reclaimed job", async () =>
   });
 });
 
+it.each(["retry", "operator_review"] as const)(
+  "does not let a stale token write %s state or audit after same-owner reclaim",
+  async (operation) => {
+    const firstNow = new Date("2030-05-01T00:00:00.000Z");
+    const reclaimNow = new Date("2030-05-01T00:05:00.000Z");
+    const terminalNow = new Date("2030-05-01T00:06:00.000Z");
+    const order = await seedOrder();
+    const [job] = await database.db
+      .insert(paymentReconciliationJobs)
+      .values({ orderId: order.id, nextAttemptAt: firstNow })
+      .returning();
+    if (!job) throw new Error("reconciliation job insert failed");
+    const [first] = await claimPaymentReconciliationJobs(database.db, {
+      owner: "payment-shared-owner",
+      now: firstNow,
+    });
+    const [reclaimed] = await claimPaymentReconciliationJobs(database.db, {
+      owner: "payment-shared-owner",
+      now: reclaimNow,
+    });
+    if (!first?.leaseToken || !reclaimed?.leaseToken) throw new Error("claim token missing");
+
+    const transitioned =
+      operation === "retry"
+        ? await retryPaymentReconciliationJob(database.db, {
+            id: job.id,
+            owner: "payment-shared-owner",
+            leaseToken: first.leaseToken,
+            terminalNow,
+            errorCode: "STALE",
+          })
+        : await operatorReviewPaymentReconciliationJob(database.db, {
+            id: job.id,
+            owner: "payment-shared-owner",
+            leaseToken: first.leaseToken,
+            terminalNow,
+            reason: "stale must not review",
+          });
+
+    expect(transitioned).toBe(false);
+    const persisted = await database.db.query.paymentReconciliationJobs.findFirst({
+      where: eq(paymentReconciliationJobs.id, job.id),
+    });
+    expect(persisted).toMatchObject({
+      state: "processing",
+      leaseToken: reclaimed.leaseToken,
+      attempts: 0,
+    });
+    expect(
+      await database.db
+        .select()
+        .from(commerceReconciliationRuns)
+        .where(eq(commerceReconciliationRuns.targetId, job.id)),
+    ).toHaveLength(0);
+  },
+);
+
 it("does not retry after the claimed lease naturally expires", async () => {
   const claimNow = new Date("2030-05-01T00:00:00.000Z");
   const terminalNow = new Date("2030-05-01T00:06:00.000Z");
   const order = await seedOrder();
   const [job] = await database.db
     .insert(paymentReconciliationJobs)
-    .values({ orderId: order.id, environment: "test", nextAttemptAt: claimNow })
+    .values({ orderId: order.id, nextAttemptAt: claimNow })
     .returning();
   if (!job) throw new Error("reconciliation job insert failed");
   const [claimed] = await claimPaymentReconciliationJobs(database.db, {
@@ -292,7 +525,132 @@ it("does not retry after the claimed lease naturally expires", async () => {
     attempts: 0,
     leaseToken: claimed.leaseToken,
   });
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, job.id)),
+  ).toHaveLength(0);
 });
+
+it("does not write operator-review state or audit after the claimed lease expires", async () => {
+  const claimNow = new Date("2030-05-01T00:00:00.000Z");
+  const terminalNow = new Date("2030-05-01T00:06:00.000Z");
+  const order = await seedOrder();
+  const [job] = await database.db
+    .insert(paymentReconciliationJobs)
+    .values({ orderId: order.id, nextAttemptAt: claimNow })
+    .returning();
+  if (!job) throw new Error("reconciliation job insert failed");
+  const [claimed] = await claimPaymentReconciliationJobs(database.db, {
+    owner: "payment-expired-review-owner",
+    now: claimNow,
+  });
+  if (!claimed?.leaseToken) throw new Error("claim token missing");
+
+  expect(
+    await operatorReviewPaymentReconciliationJob(database.db, {
+      id: job.id,
+      owner: "payment-expired-review-owner",
+      leaseToken: claimed.leaseToken,
+      terminalNow,
+      reason: "expired must not review",
+    }),
+  ).toBe(false);
+  expect(
+    await database.db
+      .select()
+      .from(commerceReconciliationRuns)
+      .where(eq(commerceReconciliationRuns.targetId, job.id)),
+  ).toHaveLength(0);
+});
+
+it.each(invalidWarningCases)(
+  "rejects %s before retry can persist provider warnings",
+  async (_name, warnings) => {
+    const claimNow = new Date("2030-05-01T00:00:00.000Z");
+    const order = await seedOrder();
+    const [job] = await database.db
+      .insert(paymentReconciliationJobs)
+      .values({ orderId: order.id, nextAttemptAt: claimNow })
+      .returning();
+    if (!job) throw new Error("reconciliation job insert failed");
+    const [claimed] = await claimPaymentReconciliationJobs(database.db, {
+      owner: "payment-warning-retry-owner",
+      now: claimNow,
+    });
+    if (!claimed?.leaseToken) throw new Error("claim token missing");
+
+    await expect(
+      retryPaymentReconciliationJob(database.db, {
+        id: job.id,
+        owner: "payment-warning-retry-owner",
+        leaseToken: claimed.leaseToken,
+        terminalNow: new Date("2030-05-01T00:01:00.000Z"),
+        errorCode: "INVALID_WARNING",
+        warnings,
+      }),
+    ).rejects.toBeInstanceOf(ProviderContractError);
+
+    const persisted = await database.db.query.paymentReconciliationJobs.findFirst({
+      where: eq(paymentReconciliationJobs.id, job.id),
+    });
+    expect(persisted).toMatchObject({
+      state: "processing",
+      attempts: 0,
+      leaseToken: claimed.leaseToken,
+    });
+    expect(
+      await database.db
+        .select()
+        .from(commerceReconciliationRuns)
+        .where(eq(commerceReconciliationRuns.targetId, job.id)),
+    ).toHaveLength(0);
+  },
+);
+
+it.each(invalidWarningCases)(
+  "rejects %s before operator review can persist provider warnings",
+  async (_name, warnings) => {
+    const claimNow = new Date("2030-05-01T00:00:00.000Z");
+    const order = await seedOrder();
+    const [job] = await database.db
+      .insert(paymentReconciliationJobs)
+      .values({ orderId: order.id, nextAttemptAt: claimNow })
+      .returning();
+    if (!job) throw new Error("reconciliation job insert failed");
+    const [claimed] = await claimPaymentReconciliationJobs(database.db, {
+      owner: "payment-warning-review-owner",
+      now: claimNow,
+    });
+    if (!claimed?.leaseToken) throw new Error("claim token missing");
+
+    await expect(
+      operatorReviewPaymentReconciliationJob(database.db, {
+        id: job.id,
+        owner: "payment-warning-review-owner",
+        leaseToken: claimed.leaseToken,
+        terminalNow: new Date("2030-05-01T00:01:00.000Z"),
+        reason: "warning contract invalid",
+        warnings,
+      }),
+    ).rejects.toBeInstanceOf(ProviderContractError);
+
+    const persisted = await database.db.query.paymentReconciliationJobs.findFirst({
+      where: eq(paymentReconciliationJobs.id, job.id),
+    });
+    expect(persisted).toMatchObject({
+      state: "processing",
+      leaseToken: claimed.leaseToken,
+    });
+    expect(
+      await database.db
+        .select()
+        .from(commerceReconciliationRuns)
+        .where(eq(commerceReconciliationRuns.targetId, job.id)),
+    ).toHaveLength(0);
+  },
+);
 
 it("schedules retry backoff from terminal time and clears the live lease", async () => {
   const claimNow = new Date("2030-05-01T00:00:00.000Z");
@@ -300,7 +658,7 @@ it("schedules retry backoff from terminal time and clears the live lease", async
   const order = await seedOrder();
   const [job] = await database.db
     .insert(paymentReconciliationJobs)
-    .values({ orderId: order.id, environment: "test", nextAttemptAt: claimNow })
+    .values({ orderId: order.id, nextAttemptAt: claimNow })
     .returning();
   if (!job) throw new Error("reconciliation job insert failed");
   const [claimed] = await claimPaymentReconciliationJobs(database.db, {
@@ -373,7 +731,6 @@ it("quarantines a transient failure after the bounded final attempt", async () =
     .insert(paymentReconciliationJobs)
     .values({
       orderId: order.id,
-      environment: "test",
       attempts: 11,
       nextAttemptAt: claimNow,
     })
@@ -421,7 +778,7 @@ it("writes one idempotent operator-review audit with allowlisted warnings", asyn
   const order = await seedOrder();
   const [job] = await database.db
     .insert(paymentReconciliationJobs)
-    .values({ orderId: order.id, environment: "test", nextAttemptAt: claimNow })
+    .values({ orderId: order.id, nextAttemptAt: claimNow })
     .returning();
   if (!job) throw new Error("reconciliation job insert failed");
   const [claimed] = await claimPaymentReconciliationJobs(database.db, {

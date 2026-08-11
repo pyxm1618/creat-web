@@ -319,6 +319,36 @@ describe("Waffo Pancake 0.16 contract", () => {
 
   it.each([
     [
+      "more than 16 warnings",
+      Array.from({ length: 17 }, (_, index) => ({
+        message: `warning-${index}`,
+        layer: "graphql",
+      })),
+    ],
+    ["a warning message over 512 characters", [{ message: "m".repeat(513), layer: "graphql" }]],
+    ["a warning layer over 64 characters", [{ message: "warning", layer: "l".repeat(65) }]],
+    [
+      "a warning AI hint over 512 characters",
+      [{ message: "warning", layer: "graphql", aiHint: "a".repeat(513) }],
+    ],
+  ])("fails closed for %s", async (_name, warnings) => {
+    const provider = paymentQueryProvider({
+      response: {
+        data: { payments: [validPayment()], paymentsCount: 1 },
+        warnings,
+      },
+    });
+
+    await expect(
+      provider.getPayment({
+        environment: "test",
+        merchantOrderReference,
+      }),
+    ).rejects.toBeInstanceOf(ProviderContractError);
+  });
+
+  it.each([
+    [
       "partial data with GraphQL errors",
       { data: { payments: [validPayment()], paymentsCount: 1 }, errors: [{ message: "partial" }] },
     ],
