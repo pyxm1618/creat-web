@@ -423,6 +423,54 @@ describe("Credits release artifacts", () => {
     );
   });
 
+  it.each(["E", "e"])(
+    "rejects ledger signatures hidden after escaped quotes in %s strings",
+    async (escapePrefix) => {
+      const root = await createArtifactRoot();
+      await writeFile(
+        path.join(root, "drizzle/0009_production_readiness.sql"),
+        [
+          String.raw`SELECT ${escapePrefix}'prefix\\path\' marker keywords`,
+          'CREATE FUNCTION "reject_credit_ledger_mutation"() RETURNS trigger;',
+          'CREATE TRIGGER "credit_ledger_entries_append_only"',
+          'BEFORE UPDATE OR DELETE ON "credit_ledger_entries"',
+          'EXECUTE FUNCTION "reject_credit_ledger_mutation"();',
+          String.raw`multiple escapes \n \t \x41 \\ suffix';`,
+        ].join("\n"),
+        "utf8",
+      );
+
+      const result = runArtifactVerifier(root);
+
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "durable credit ledger integrity migration is not executable",
+      );
+    },
+  );
+
+  it("keeps a real ledger function visible after escape and standard strings", async () => {
+    const root = await createArtifactRoot();
+    await writeFile(
+      path.join(root, "drizzle/0009_production_readiness.sql"),
+      [
+        String.raw`SELECT E'escaped quote \' slash \\ newline \n tab \t done';`,
+        String.raw`SELECT 'standard string trailing backslash\';`,
+        'CREATE FUNCTION "reject_credit_ledger_mutation"() RETURNS trigger',
+        "LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;",
+        'CREATE TRIGGER "credit_ledger_entries_append_only"',
+        'BEFORE UPDATE OR DELETE ON "credit_ledger_entries"',
+        'FOR EACH ROW EXECUTE FUNCTION "reject_credit_ledger_mutation"();',
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = runArtifactVerifier(root);
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("credits_release_artifacts_verified");
+  });
+
   it("accepts legal trigger event reordering and SQL reformatting", async () => {
     const root = await createArtifactRoot();
     const target = path.join(root, "drizzle/0009_production_readiness.sql");

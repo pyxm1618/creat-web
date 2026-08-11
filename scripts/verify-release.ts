@@ -164,7 +164,14 @@ export async function verifyCreditsReleaseArtifacts(root: string): Promise<void>
 function stripSqlComments(sql: string): string {
   let output = "";
   let index = 0;
-  let state: "normal" | "single" | "double" | "line" | "block" | "dollar" = "normal";
+  let state:
+    | "normal"
+    | "standard-single"
+    | "escape-single"
+    | "double"
+    | "line"
+    | "block"
+    | "dollar" = "normal";
   let blockDepth = 0;
   let dollarTag = "";
 
@@ -206,9 +213,15 @@ function stripSqlComments(sql: string): string {
       }
       continue;
     }
-    if (state === "single" || state === "double") {
-      const quote = state === "single" ? "'" : '"';
-      output += state === "single" && current !== quote ? " " : current;
+    if (state === "standard-single" || state === "escape-single" || state === "double") {
+      const singleQuoted = state !== "double";
+      const quote = singleQuoted ? "'" : '"';
+      if (state === "escape-single" && current === "\\") {
+        output += next === "\n" ? " \n" : next ? "  " : " ";
+        index += next ? 2 : 1;
+        continue;
+      }
+      output += singleQuoted && current !== quote ? " " : current;
       if (current === quote) {
         if (next === quote) {
           output += next;
@@ -233,8 +246,14 @@ function stripSqlComments(sql: string): string {
       index += 2;
       continue;
     }
-    if (current === "'") state = "single";
-    else if (current === '"') state = "double";
+    if (current === "'") {
+      const prefix = sql[index - 1] ?? "";
+      const beforePrefix = sql[index - 2] ?? "";
+      state =
+        (prefix === "E" || prefix === "e") && !/[A-Za-z0-9_$]/.test(beforePrefix)
+          ? "escape-single"
+          : "standard-single";
+    } else if (current === '"') state = "double";
     else if (current === "$") {
       const match = sql.slice(index).match(/^\$[A-Za-z0-9_]*\$/);
       if (match) {
