@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { routeRegistry } from "@/config/routes.config";
+import { localePath } from "@/platform/i18n/routing";
 
 function tokenize(value: string): string[] {
   return value.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -53,9 +54,7 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
     await expect(h1, `${route.route}: exactly one H1`).toHaveCount(1);
     await expect(h1).toHaveText(route.h1);
 
-    const headings = await page
-      .locator("h1,h2,h3,h4,h5,h6")
-      .allTextContents();
+    const headings = await page.locator("h1,h2,h3,h4,h5,h6").allTextContents();
     expect(
       headings.every((heading) => heading.trim().length > 0),
       `${route.route}: headings must not be empty UI placeholders`,
@@ -116,16 +115,21 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
   }
 });
 
-test("production sitemap is exactly the registered indexable surface", async ({ request }) => {
+test("production sitemap is exactly the registered localized indexable surface", async ({ request }) => {
   const response = await request.get("/sitemap.xml");
   expect(response.status()).toBe(200);
   const xml = await response.text();
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)]
     .map((match) => decodeXml(match[1]!))
     .sort();
+  const origin = routeRegistry.site.canonicalOrigin.replace(/\/+$/, "");
   const expected = routeRegistry
     .sitemapEntries()
-    .map((entry) => entry.canonical)
+    .flatMap((entry) =>
+      routeRegistry.site.supportedLocales.map(
+        (locale) => `${origin}${localePath(routeRegistry.site, locale, entry.route)}`,
+      ),
+    )
     .sort();
   expect(locs).toEqual(expected);
 });
