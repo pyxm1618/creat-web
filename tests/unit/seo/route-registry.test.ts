@@ -4,7 +4,11 @@ import {
   createRouteRegistry,
   seoReviewFingerprint,
 } from "@/platform/seo/route-registry";
-import type { IndexablePage, RouteDefinition, SiteSeoConfig } from "@/platform/seo/types";
+import type {
+  IndexablePage,
+  RouteDefinition,
+  SiteSeoConfig,
+} from "@/platform/seo/types";
 
 const site: SiteSeoConfig = {
   siteName: "Example Tool",
@@ -156,7 +160,9 @@ describe("route registry", () => {
       reviewFingerprint: seoReviewFingerprint(home),
     };
 
-    expect(() => createRouteRegistry(site, [reviewedHome, routes[1]!, routes[2]!])).not.toThrow();
+    expect(() =>
+      createRouteRegistry(site, [reviewedHome, routes[1]!, routes[2]!]),
+    ).not.toThrow();
   });
 
   it("rejects reviewed SEO that changed after the recorded review", () => {
