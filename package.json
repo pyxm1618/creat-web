@@ -9,7 +9,7 @@
     "build:test": "APP_ENV=test next build --webpack",
     "start": "next start",
     "format": "prettier --write .",
-    "format:check": "prettier --write tests/production/seo-production.spec.ts tests/unit/seo/route-registry.test.ts && git diff -- tests/production/seo-production.spec.ts tests/unit/seo/route-registry.test.ts && false",
+    "format:check": "prettier --check .",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run --config vitest.config.ts",
