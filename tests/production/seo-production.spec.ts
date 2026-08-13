@@ -37,7 +37,9 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
 
     const canonical = sitemapEntries.get(route.route);
     expect(canonical, `${route.route}: sitemap canonical exists`).toBeTruthy();
-    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonical!);
+    const renderedCanonical = await page.locator('link[rel="canonical"]').getAttribute("href");
+    expect(renderedCanonical, `${route.route}: canonical exists`).toBeTruthy();
+    expect(new URL(renderedCanonical!).toString()).toBe(new URL(canonical!).toString());
 
     const robots =
       (await page.locator('meta[name="robots"]').getAttribute("content")) ?? "";
