@@ -41,6 +41,7 @@ export type IndexablePage = {
   readonly relatedRoutes: readonly string[];
   readonly lastModified: string;
   readonly reviewStatus?: SeoReviewStatus;
+  readonly reviewFingerprint?: string;
 };
 
 export type NonIndexablePage = {
