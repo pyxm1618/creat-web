@@ -39,10 +39,12 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
     expect(canonical, `${route.route}: sitemap canonical exists`).toBeTruthy();
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", canonical!);
 
-    const robots = (await page.locator('meta[name="robots"]').getAttribute("content")) ?? "";
-    expect(robots.toLocaleLowerCase("en-US"), `${route.route}: must remain indexable`).not.toContain(
-      "noindex",
-    );
+    const robots =
+      (await page.locator('meta[name="robots"]').getAttribute("content")) ?? "";
+    expect(
+      robots.toLocaleLowerCase("en-US"),
+      `${route.route}: must remain indexable`,
+    ).not.toContain("noindex");
 
     await expect(page).toHaveTitle(route.title);
     await expect(page.locator('meta[name="description"]')).toHaveAttribute(
@@ -69,7 +71,8 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
     const keywordWords = [...new Set(tokenize(route.primaryKeyword))];
     const visibleWordSet = new Set(visibleWords);
     const coveredKeywordWords = keywordWords.filter((word) => visibleWordSet.has(word));
-    const coverage = keywordWords.length === 0 ? 0 : coveredKeywordWords.length / keywordWords.length;
+    const coverage =
+      keywordWords.length === 0 ? 0 : coveredKeywordWords.length / keywordWords.length;
     const exactOccurrences = countPhrase(visibleWords, route.primaryKeyword);
     const densityPct = Number(
       ((exactOccurrences / Math.max(visibleWords.length, 1)) * 100).toFixed(3),
@@ -86,7 +89,10 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
         tokenCoverage: coverage,
       }),
     );
-    expect(coverage, `${route.route}: primary keyword tokens must be present in visible content`).toBe(1);
+    expect(
+      coverage,
+      `${route.route}: primary keyword tokens must be present in visible content`,
+    ).toBe(1);
 
     const renderedInternalPaths = new Set(
       await page.locator('a[href^="/"]').evaluateAll((links) =>
@@ -115,37 +121,43 @@ test("production rendered SEO matches the route registry", async ({ page }) => {
   }
 });
 
-test("production sitemap is exactly the registered localized indexable surface", async ({ request }) => {
-  const response = await request.get("/sitemap.xml");
-  expect(response.status()).toBe(200);
-  const xml = await response.text();
-  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)]
-    .map((match) => decodeXml(match[1]!))
-    .sort();
-  const origin = routeRegistry.site.canonicalOrigin.replace(/\/+$/, "");
-  const expected = routeRegistry
-    .sitemapEntries()
-    .flatMap((entry) =>
-      routeRegistry.site.supportedLocales.map(
-        (locale) => `${origin}${localePath(routeRegistry.site, locale, entry.route)}`,
-      ),
-    )
-    .sort();
-  expect(locs).toEqual(expected);
-});
+test(
+  "production sitemap is exactly the registered localized indexable surface",
+  async ({ request }) => {
+    const response = await request.get("/sitemap.xml");
+    expect(response.status()).toBe(200);
+    const xml = await response.text();
+    const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)]
+      .map((match) => decodeXml(match[1]!))
+      .sort();
+    const origin = routeRegistry.site.canonicalOrigin.replace(/\/+$/, "");
+    const expected = routeRegistry
+      .sitemapEntries()
+      .flatMap((entry) =>
+        routeRegistry.site.supportedLocales.map(
+          (locale) => `${origin}${localePath(routeRegistry.site, locale, entry.route)}`,
+        ),
+      )
+      .sort();
+    expect(locs).toEqual(expected);
+  },
+);
 
-test("production legal surfaces remain noindex and outside the sitemap", async ({ page, request }) => {
-  const sitemap = await (await request.get("/sitemap.xml")).text();
-  const legalNoindexRoutes = routeRegistry.routes.filter(
-    (route) => route.class === "public_noindex" && route.pageType === "Legal",
-  );
-
-  for (const route of legalNoindexRoutes) {
-    const response = await page.goto(route.route, { waitUntil: "networkidle" });
-    expect(response?.status(), `${route.route}: HTTP status`).toBe(200);
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/i);
-    expect(sitemap, `${route.route}: must not enter sitemap`).not.toContain(
-      `${routeRegistry.site.canonicalOrigin}${route.route}`,
+test(
+  "production legal surfaces remain noindex and outside the sitemap",
+  async ({ page, request }) => {
+    const sitemap = await (await request.get("/sitemap.xml")).text();
+    const legalNoindexRoutes = routeRegistry.routes.filter(
+      (route) => route.class === "public_noindex" && route.pageType === "Legal",
     );
-  }
-});
+
+    for (const route of legalNoindexRoutes) {
+      const response = await page.goto(route.route, { waitUntil: "networkidle" });
+      expect(response?.status(), `${route.route}: HTTP status`).toBe(200);
+      await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/i);
+      expect(sitemap, `${route.route}: must not enter sitemap`).not.toContain(
+        `${routeRegistry.site.canonicalOrigin}${route.route}`,
+      );
+    }
+  },
+);
