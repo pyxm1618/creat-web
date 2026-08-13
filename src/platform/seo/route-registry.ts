@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import { canonicalUrl } from "./canonical";
@@ -14,6 +16,7 @@ const MIN_TITLE_LENGTH = 12;
 const MAX_TITLE_LENGTH = 65;
 const MIN_DESCRIPTION_LENGTH = 50;
 const MAX_DESCRIPTION_LENGTH = 180;
+const REVIEW_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 
 const siteSchema = z.object({
   siteName: z.string().trim().min(1),
@@ -44,6 +47,7 @@ const indexableSchema = z.object({
   relatedRoutes: z.array(z.string().startsWith("/")),
   lastModified: z.iso.date(),
   reviewStatus: z.enum(["draft", "reviewed"]).optional(),
+  reviewFingerprint: z.string().regex(REVIEW_FINGERPRINT_PATTERN).optional(),
 });
 
 const nonIndexableSchema = z.object({
@@ -71,8 +75,44 @@ function normalizeText(value: string): string {
   return value.trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
 }
 
+function stableReviewText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
 function asIndexable(route: RouteDefinition): route is IndexablePage {
   return route.class === "public_indexable";
+}
+
+export function seoReviewFingerprint(
+  route: Pick<
+    IndexablePage,
+    | "route"
+    | "searchIntent"
+    | "primaryKeyword"
+    | "secondaryKeywords"
+    | "title"
+    | "description"
+    | "h1"
+    | "canonical"
+    | "pageType"
+    | "relatedRoutes"
+    | "lastModified"
+  >,
+): string {
+  const payload = [
+    normalizeRoute(route.route),
+    stableReviewText(route.searchIntent),
+    stableReviewText(route.primaryKeyword),
+    [...(route.secondaryKeywords ?? [])].map(stableReviewText).sort(),
+    stableReviewText(route.title),
+    stableReviewText(route.description),
+    stableReviewText(route.h1),
+    route.canonical?.trim() ?? "",
+    route.pageType,
+    [...route.relatedRoutes].map(normalizeRoute).sort(),
+    route.lastModified,
+  ];
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 function meaningfulTokens(value: string): readonly string[] {
@@ -102,6 +142,17 @@ function assertNoPlaceholders(route: IndexablePage): void {
   ];
   if (fields.some((field) => PLACEHOLDER_PATTERN.test(field))) {
     throw new Error(`placeholder SEO content: ${route.route}`);
+  }
+}
+
+function assertReviewIntegrity(route: IndexablePage): void {
+  if (route.reviewStatus !== "reviewed") return;
+  const expected = seoReviewFingerprint(route);
+  if (!route.reviewFingerprint) {
+    throw new Error(`reviewed SEO route is missing fingerprint: ${route.route}`);
+  }
+  if (route.reviewFingerprint !== expected) {
+    throw new Error(`reviewed SEO route changed after review: ${route.route}`);
   }
 }
 
@@ -161,6 +212,7 @@ export function createRouteRegistry(
     if (!asIndexable(route)) continue;
     assertNoPlaceholders(route);
     assertIntentAlignment(route);
+    assertReviewIntegrity(route);
 
     const canonical = canonicalUrl(site.canonicalOrigin, route.canonical ?? route.route);
     const existingCanonical = canonicals.get(canonical);
