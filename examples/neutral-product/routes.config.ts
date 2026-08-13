@@ -18,6 +18,7 @@ export const routeDefinitions = [
     relatedRoutes: ["/seo-starter-checklist", "/pricing", "/privacy", "/terms"],
     lastModified: "2026-08-09",
     reviewStatus: "reviewed",
+    reviewFingerprint: "af01d11ecba7e085ab3b397d0cea55cd8e49e24ccaed4ec4440632c9d748db41",
   },
   {
     route: "/seo-starter-checklist",
@@ -32,6 +33,7 @@ export const routeDefinitions = [
     relatedRoutes: ["/", "/pricing", "/privacy"],
     lastModified: "2026-08-09",
     reviewStatus: "reviewed",
+    reviewFingerprint: "1e29748c5d4d07098df44a20418da9c57b6d55c976d068f21b97799bce65af08",
   },
   {
     route: "/pricing",
@@ -46,6 +48,7 @@ export const routeDefinitions = [
     relatedRoutes: ["/", "/refund-policy", "/terms"],
     lastModified: "2026-08-09",
     reviewStatus: "reviewed",
+    reviewFingerprint: "4e1b3f3237be9e7a015541fde86f5a6c5a697018136d6c7a072a87ece109bfe6",
   },
   {
     route: "/privacy",
