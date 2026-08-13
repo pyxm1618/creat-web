@@ -69,7 +69,7 @@ test("analytics-enabled homepage stays within release budgets", async ({ page })
 
   await page.waitForFunction(() => window.__gaStubLoaded === true);
   await page.waitForFunction(() => window.__clarityStubLoaded === true);
-  await expect(page.getByRole("button", { name: "Privacy settings" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Analytics settings" })).toBeVisible();
 
   const firstLink = page.locator('a[href^="/"]').first();
   await firstLink.evaluate((element) => {
