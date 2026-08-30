@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { homeConfig } from "@/config/home.config";
 import { routeRegistry } from "@/config/routes.config";
 
 test("homepage has server-rendered purpose, one H1 and meaningful navigation", async ({ page }) => {
@@ -15,7 +16,18 @@ test("homepage has server-rendered purpose, one H1 and meaningful navigation", a
 
   const html = await response?.text();
   expect(html).toContain(home.h1);
-  expect(html).toContain("SEO-first neutral starter");
+
+  // The configured hero copy must be present in the server response rather than
+  // injected on the client. Compare against the longest fragment that carries no
+  // HTML-escapable character, so this holds for any product's wording.
+  const hero = homeConfig.sections.find((section) => section.type === "hero");
+  if (!hero) throw new Error("homepage must configure a hero section");
+  const serverRenderedFragment = hero.lead
+    .split(/[&<>"']/)
+    .reduce((longest, part) => (part.length > longest.length ? part : longest), "")
+    .trim();
+  expect(serverRenderedFragment.length).toBeGreaterThan(20);
+  expect(html).toContain(serverRenderedFragment);
 });
 
 test("homepage does not overflow a 375px viewport", async ({ page }) => {
