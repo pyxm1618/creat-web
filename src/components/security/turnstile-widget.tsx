@@ -109,5 +109,5 @@ export function TurnstileWidget({
     onTokenRef.current(null);
   }, [resetSignal]);
 
-  return <div ref={containerRef} aria-label="Human verification" />;
+  return <div ref={containerRef} className="min-h-[65px]" aria-label="Human verification" />;
 }

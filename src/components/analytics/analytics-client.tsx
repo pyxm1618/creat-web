@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 
+import { buttonGhost, buttonPrimary, buttonSecondary } from "@/components/ui/styles";
+
 import {
   isAnalyticsLocationSafe,
   sanitizeAnalyticsEvent,
@@ -120,30 +122,30 @@ function ConsentPanel({
 }>) {
   return (
     <aside
-      className="analytics-consent"
+      className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-2xl rounded-xl border border-border bg-surface p-5 shadow-lg sm:inset-x-auto sm:right-4 sm:left-auto sm:w-96"
       aria-label={settings ? "Analytics settings panel" : "Analytics consent"}
     >
-      <p>
+      <p className="text-sm leading-relaxed text-muted">
         Optional analytics help improve this site. They are never required for core product use.
       </p>
-      <div>
+      <div className="mt-4 flex flex-wrap gap-2">
         {currentConsent !== "granted" ? (
-          <button type="button" onClick={() => onChoose("granted")}>
+          <button type="button" className={buttonPrimary} onClick={() => onChoose("granted")}>
             Allow analytics
           </button>
         ) : null}
         {currentConsent === "unknown" ? (
-          <button type="button" onClick={() => onChoose("denied")}>
+          <button type="button" className={buttonSecondary} onClick={() => onChoose("denied")}>
             Decline
           </button>
         ) : null}
         {currentConsent === "granted" ? (
-          <button type="button" onClick={() => onChoose("denied")}>
+          <button type="button" className={buttonSecondary} onClick={() => onChoose("denied")}>
             Withdraw analytics consent
           </button>
         ) : null}
         {settings && onClose ? (
-          <button type="button" onClick={onClose}>
+          <button type="button" className={buttonGhost} onClick={onClose}>
             Close
           </button>
         ) : null}
@@ -211,7 +213,12 @@ export function AnalyticsClient({
 
   return (
     <>
-      <button type="button" aria-label="Analytics settings" onClick={() => setSettingsOpen(true)}>
+      <button
+        type="button"
+        aria-label="Analytics settings"
+        className="fixed bottom-4 left-4 z-40 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted shadow-sm transition-colors hover:text-foreground"
+        onClick={() => setSettingsOpen(true)}
+      >
         Privacy settings
       </button>
       {settingsOpen ? (

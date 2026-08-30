@@ -38,7 +38,7 @@ export default async function SegmentRootLayout({ children, params }: SegmentLay
   return (
     <html lang={locale}>
       <body>
-        <div className="site-frame">
+        <div className="flex min-h-screen flex-col">
           <SiteHeader locale={locale} />
           {children}
           <SiteFooter />

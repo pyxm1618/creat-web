@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { TurnstileWidget } from "@/components/security/turnstile-widget";
+import { buttonPrimary, input, label, metaText, panel } from "@/components/ui/styles";
 
 type Status = "idle" | "sending" | "sent" | "limited" | "challenge" | "error";
 
@@ -50,8 +51,10 @@ export function SignInForm({
   const challengeReady = Boolean(turnstileSiteKey && turnstileToken);
 
   return (
-    <form onSubmit={submit} aria-describedby="sign-in-status">
-      <label htmlFor="email">Email address</label>
+    <form onSubmit={submit} aria-describedby="sign-in-status" className={`${panel} p-6`}>
+      <label htmlFor="email" className={label}>
+        Email address
+      </label>
       <input
         id="email"
         name="email"
@@ -61,24 +64,33 @@ export function SignInForm({
         value={email}
         onChange={(event) => setEmail(event.target.value)}
         disabled={status === "sending"}
+        className={input}
       />
-      {turnstileSiteKey ? (
-        <TurnstileWidget
-          siteKey={turnstileSiteKey}
-          resetSignal={resetSignal}
-          onToken={(token) => {
-            setTurnstileToken(token);
-            if (token) setStatus((current) => (current === "challenge" ? "idle" : current));
-          }}
-          onUnavailable={() => setStatus("challenge")}
-        />
-      ) : (
-        <p role="alert">Human verification is unavailable. Sign-in requests are disabled.</p>
-      )}
-      <button type="submit" disabled={status === "sending" || !challengeReady}>
+      <div className="mt-4">
+        {turnstileSiteKey ? (
+          <TurnstileWidget
+            siteKey={turnstileSiteKey}
+            resetSignal={resetSignal}
+            onToken={(token) => {
+              setTurnstileToken(token);
+              if (token) setStatus((current) => (current === "challenge" ? "idle" : current));
+            }}
+            onUnavailable={() => setStatus("challenge")}
+          />
+        ) : (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            Human verification is unavailable. Sign-in requests are disabled.
+          </p>
+        )}
+      </div>
+      <button
+        type="submit"
+        disabled={status === "sending" || !challengeReady}
+        className={`mt-5 w-full ${buttonPrimary}`}
+      >
         {status === "sending" ? "Sending…" : "Send secure sign-in link"}
       </button>
-      <p id="sign-in-status" aria-live="polite">
+      <p id="sign-in-status" aria-live="polite" className={`mt-4 ${metaText}`}>
         {status === "sent"
           ? "If this address can receive mail, a sign-in link has been sent."
           : status === "limited"

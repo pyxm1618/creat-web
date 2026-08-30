@@ -17,7 +17,7 @@ export default async function MarketingLayout({ children }: Readonly<{ children:
   return (
     <html lang={siteConfig.defaultLocale}>
       <body>
-        <div className="site-frame">
+        <div className="flex min-h-screen flex-col">
           <SiteHeader />
           {children}
           <SiteFooter />

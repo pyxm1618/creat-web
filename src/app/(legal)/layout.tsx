@@ -16,7 +16,7 @@ export default async function LegalLayout({ children }: Readonly<{ children: Rea
   return (
     <html lang={siteConfig.defaultLocale}>
       <body>
-        <div className="site-frame">
+        <div className="flex min-h-screen flex-col">
           <SiteHeader />
           {children}
           <SiteFooter />

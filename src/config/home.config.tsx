@@ -25,9 +25,15 @@ export const homeConfig = {
       body: "For tools, calculators and generators, replace this neutral surface with the real server-rendered or progressively enhanced product experience. Authentication and commerce are not prerequisites for the first launch.",
       surface: (
         <div>
-          <p className="section-kicker">Product-first boundary</p>
-          <strong>Useful surface → supporting explanation → optional platform modules</strong>
-          <p>Swap this panel for the product itself without rebuilding the SEO shell.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">
+            Product-first boundary
+          </p>
+          <strong className="mt-3 block text-base font-semibold text-foreground">
+            Useful surface → supporting explanation → optional platform modules
+          </strong>
+          <p className="mt-2 text-[0.9375rem] leading-relaxed text-muted">
+            Swap this panel for the product itself without rebuilding the SEO shell.
+          </p>
         </div>
       ),
     },

@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 
+import { buttonSecondary, input, label as labelClass, panel } from "@/components/ui/styles";
+
 import {
   createSessionOperationKeyState,
   digestOperationFingerprint,
@@ -78,6 +80,7 @@ export function SubscriptionAction({
   const run = useKeyedOperation(fingerprintParts);
   return (
     <button
+      className={`mt-3 ${buttonSecondary}`}
       type="button"
       disabled={state === "pending" || state === "done"}
       onClick={async () => {
@@ -115,20 +118,27 @@ export function RefundAction({
   const [state, setState] = useState<"idle" | "pending" | "done" | "error">("idle");
   const run = useKeyedOperation(["refund", paymentId]);
   return (
-    <div className="billing-action">
-      <label>
+    <div className={`mt-3 ${panel} p-4`}>
+      <label className={labelClass}>
         Refund amount ({currency})
         <input
+          className={input}
           value={amount}
           inputMode="decimal"
           onChange={(event) => setAmount(event.target.value)}
         />
       </label>
-      <label>
+      <label className={`mt-4 block ${labelClass}`}>
         Reason
-        <input value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} />
+        <input
+          className={input}
+          value={reason}
+          maxLength={500}
+          onChange={(event) => setReason(event.target.value)}
+        />
       </label>
       <button
+        className={`mt-4 ${buttonSecondary}`}
         type="button"
         disabled={state === "pending" || state === "done" || reason.trim().length < 3}
         onClick={async () => {
