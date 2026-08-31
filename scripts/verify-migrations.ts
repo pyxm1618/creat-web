@@ -12,7 +12,7 @@ import { verifyMigrationMetadata } from "./verify-migration-metadata";
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL or DATABASE_URL is required");
 
-const MAIN_BASELINE_TAG = "0010_credit_finalization_lease_token";
+const MAIN_BASELINE_TAG = "0007_easy_stellaris";
 const database = createDatabaseClient(databaseUrl);
 
 async function resetDatabase(): Promise<void> {
