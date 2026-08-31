@@ -4,6 +4,9 @@ Private, SEO-first Next.js starter for launching overseas web products quickly, 
 
 `pyxm1618/quickiching` is a strictly read-only reference project. `creat-web` does not modify it, depend on it, or copy its product identity/content.
 
+> **中文用户**：[docs/setup/建站手册.md](docs/setup/建站手册.md) 是一份按时间顺序
+> 的完整操作手册，从空仓库到被 Google 收录，含实际建站时才会撞到的坑。
+
 ## Default mode: SEO launch
 
 The neutral starter intentionally ships with advanced product modules disabled:
