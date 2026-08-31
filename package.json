@@ -25,7 +25,7 @@
     "verify:seo": "bun scripts/verify-seo.ts",
     "verify:seo:production": "playwright test --config playwright.production.config.ts",
     "verify:i18n": "bun scripts/verify-i18n.ts",
-    "verify:performance": "playwright test --config playwright.performance.config.ts",
+    "verify:performance": "playwright test --config playwright.performance.config.ts && playwright test --config playwright.performance-analytics.config.ts",
     "verify:security": "bun scripts/verify-security.ts && APP_ENV=production bun scripts/verify-security.ts",
     "verify:subscription": "bun scripts/verify-subscription.ts",
     "verify:commerce": "bun scripts/verify-commerce.ts",

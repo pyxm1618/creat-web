@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createRouteRegistry } from "@/platform/seo/route-registry";
-import type { RouteDefinition, SiteSeoConfig } from "@/platform/seo/types";
+import { createRouteRegistry, seoReviewFingerprint } from "@/platform/seo/route-registry";
+import type { IndexablePage, RouteDefinition, SiteSeoConfig } from "@/platform/seo/types";
 
 const site: SiteSeoConfig = {
   siteName: "Example Tool",
@@ -31,7 +31,7 @@ const routes: RouteDefinition[] = [
     pageType: "WebApplication",
     relatedRoutes: ["/guide"],
     lastModified: "2026-08-06",
-    reviewStatus: "reviewed",
+    reviewStatus: "draft",
   } as RouteDefinition,
   {
     route: "/guide",
@@ -46,10 +46,15 @@ const routes: RouteDefinition[] = [
     pageType: "Article",
     relatedRoutes: ["/"],
     lastModified: "2026-08-06",
-    reviewStatus: "reviewed",
+    reviewStatus: "draft",
   } as RouteDefinition,
   { route: "/account", class: "private" },
 ];
+
+function asIndexable(route: RouteDefinition): IndexablePage {
+  if (route.class !== "public_indexable") throw new Error("test route must be indexable");
+  return route;
+}
 
 describe("route registry", () => {
   it("returns only public indexable routes for sitemap", () => {
@@ -101,7 +106,7 @@ describe("route registry", () => {
   });
 
   it("rejects duplicate descriptions across indexable pages", () => {
-    const home = routes[0] as Extract<RouteDefinition, { class: "public_indexable" }>;
+    const home = asIndexable(routes[0]!);
     expect(() =>
       createRouteRegistry(site, [
         routes[0]!,
@@ -138,5 +143,44 @@ describe("route registry", () => {
         } as RouteDefinition,
       ]),
     ).toThrow("intent conflict");
+  });
+
+  it("accepts a reviewed route only with the matching content fingerprint", () => {
+    const home = asIndexable(routes[0]!);
+    const reviewedHome: IndexablePage = {
+      ...home,
+      reviewStatus: "reviewed",
+      reviewFingerprint: seoReviewFingerprint(home),
+    };
+
+    expect(() => createRouteRegistry(site, [reviewedHome, routes[1]!, routes[2]!])).not.toThrow();
+  });
+
+  it("rejects reviewed SEO that changed after the recorded review", () => {
+    const home = asIndexable(routes[0]!);
+    const reviewedHome: IndexablePage = {
+      ...home,
+      reviewStatus: "reviewed",
+      reviewFingerprint: seoReviewFingerprint(home),
+    };
+
+    expect(() =>
+      createRouteRegistry(site, [
+        { ...reviewedHome, title: "Example Tool with Newly Changed Reviewed Copy" },
+        routes[1]!,
+        routes[2]!,
+      ]),
+    ).toThrow("changed after review");
+  });
+
+  it("does not invalidate review for non-semantic keyword or related-route ordering", () => {
+    const home = asIndexable(routes[0]!);
+    expect(
+      seoReviewFingerprint({
+        ...home,
+        secondaryKeywords: [...(home.secondaryKeywords ?? [])].reverse(),
+        relatedRoutes: [...home.relatedRoutes].reverse(),
+      }),
+    ).toBe(seoReviewFingerprint(home));
   });
 });
