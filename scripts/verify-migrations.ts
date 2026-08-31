@@ -1,33 +1,268 @@
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { createDatabaseClient } from "@/platform/database/client";
 
+import { verifyMigrationMetadata } from "./verify-migration-metadata";
+
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("TEST_DATABASE_URL or DATABASE_URL is required");
 
+const MAIN_BASELINE_TAG = "0007_easy_stellaris";
 const database = createDatabaseClient(databaseUrl);
 
-try {
-  await migrate(database.db, {
-    migrationsFolder: "drizzle",
-    migrationsSchema: "drizzle",
-    migrationsTable: "__drizzle_migrations",
-  });
-  await migrate(database.db, {
-    migrationsFolder: "drizzle",
-    migrationsSchema: "drizzle",
-    migrationsTable: "__drizzle_migrations",
-  });
+async function resetDatabase(): Promise<void> {
+  await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS public CASCADE"));
+  await database.db.execute(sql.raw("DROP SCHEMA IF EXISTS drizzle CASCADE"));
+  await database.db.execute(sql.raw("CREATE SCHEMA public"));
+}
 
+async function applyMigrations(folder = "drizzle"): Promise<void> {
+  await migrate(database.db, {
+    migrationsFolder: folder,
+    migrationsSchema: "drizzle",
+    migrationsTable: "__drizzle_migrations",
+  });
+}
+
+async function assertLatestSchema(label: string): Promise<void> {
+  const requiredTables = [
+    "platform_meta",
+    "subscriptions",
+    "subscription_periods",
+    "refunds",
+    "commerce_command_jobs",
+    "credit_reconciliation_incidents",
+    "payment_reconciliation_jobs",
+  ];
   const tables = await database.db.execute(sql<{ table_name: string }>`
     select table_name
     from information_schema.tables
-    where table_schema = 'public' and table_name = 'platform_meta'
+    where table_schema = 'public'
+      and table_name in ('platform_meta','subscriptions','subscription_periods','refunds','commerce_command_jobs','credit_reconciliation_incidents','payment_reconciliation_jobs')
   `);
-  if (tables.length !== 1) throw new Error("foundation schema verification failed");
+  const actualTables = new Set(tables.map((row) => row.table_name));
+  for (const table of requiredTables) {
+    if (!actualTables.has(table)) throw new Error(`${label}: missing migrated table ${table}`);
+  }
 
-  console.log(JSON.stringify({ event: "database_migration_verified", tables: ["platform_meta"] }));
+  const billingInterval = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'commerce_products'
+      and column_name = 'billing_interval'
+  `);
+  if (billingInterval.length !== 1) {
+    throw new Error(`${label}: commerce_products.billing_interval is missing`);
+  }
+
+  const finalizationLeaseToken = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'credit_finalization_jobs'
+      and column_name = 'lease_token'
+  `);
+  if (finalizationLeaseToken.length !== 1) {
+    throw new Error(`${label}: credit_finalization_jobs.lease_token is missing`);
+  }
+
+  const reconciliationColumns = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'payment_reconciliation_jobs'
+  `);
+  const actualReconciliationColumns = new Set(reconciliationColumns.map((row) => row.column_name));
+  for (const column of [
+    "order_id",
+    "state",
+    "attempts",
+    "lease_owner",
+    "lease_token",
+    "lease_expires_at",
+    "next_attempt_at",
+    "operator_review_reason",
+    "completed_at",
+  ]) {
+    if (!actualReconciliationColumns.has(column)) {
+      throw new Error(`${label}: payment_reconciliation_jobs.${column} is missing`);
+    }
+  }
+  if (actualReconciliationColumns.has("environment")) {
+    throw new Error(`${label}: payment_reconciliation_jobs.environment must derive from orders`);
+  }
+
+  const reconciliationConstraints = await database.db.execute(sql<{ constraint_name: string }>`
+    select constraint_name
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'payment_reconciliation_jobs'
+  `);
+  const actualReconciliationConstraints = new Set(
+    reconciliationConstraints.map((row) => row.constraint_name),
+  );
+  for (const constraint of [
+    "payment_reconciliation_job_state_valid",
+    "payment_reconciliation_job_attempts_valid",
+    "payment_reconciliation_job_lease_consistent",
+    "payment_reconciliation_job_review_reason_consistent",
+    "payment_reconciliation_job_terminal_time_consistent",
+  ]) {
+    if (!actualReconciliationConstraints.has(constraint)) {
+      throw new Error(`${label}: missing payment reconciliation constraint ${constraint}`);
+    }
+  }
+
+  const reconciliationIndexes = await database.db.execute(
+    sql<{ indexname: string; indexdef: string }>`
+    select indexname, indexdef
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname in ('payment_reconciliation_order_uq','payment_reconciliation_due_idx','payment_reconciliation_reclaim_idx','commerce_reconciliation_run_dedup_uq','order_payment_reconciliation_stale_idx')
+  `,
+  );
+  const actualReconciliationIndexes = new Set(reconciliationIndexes.map((row) => row.indexname));
+  for (const index of [
+    "payment_reconciliation_order_uq",
+    "payment_reconciliation_due_idx",
+    "payment_reconciliation_reclaim_idx",
+    "commerce_reconciliation_run_dedup_uq",
+    "order_payment_reconciliation_stale_idx",
+  ]) {
+    if (!actualReconciliationIndexes.has(index)) {
+      throw new Error(`${label}: missing payment reconciliation index ${index}`);
+    }
+  }
+  const orderIndex = String(
+    reconciliationIndexes.find((row) => row.indexname === "payment_reconciliation_order_uq")
+      ?.indexdef ?? "",
+  );
+  if (!orderIndex.endsWith("(order_id)") || orderIndex.includes("environment")) {
+    throw new Error(`${label}: payment reconciliation order index is not globally unique`);
+  }
+  const staleOrderIndex = String(
+    reconciliationIndexes.find((row) => row.indexname === "order_payment_reconciliation_stale_idx")
+      ?.indexdef ?? "",
+  );
+  if (
+    !staleOrderIndex.includes("(created_at, id)") ||
+    !staleOrderIndex.includes("checkout_state = 'created'::text") ||
+    !staleOrderIndex.includes("status = 'pending'::text")
+  ) {
+    throw new Error(`${label}: stale payment reconciliation order index is malformed`);
+  }
+
+  const reconciliationDedupKey = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'commerce_reconciliation_runs'
+      and column_name = 'dedup_key'
+  `);
+  if (reconciliationDedupKey.length !== 1) {
+    throw new Error(`${label}: commerce_reconciliation_runs.dedup_key is missing`);
+  }
+
+  const triggerFunctions = await database.db.execute(sql<{ function_name: string }>`
+    select p.proname as function_name
+    from pg_proc p
+    inner join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'reject_credit_ledger_mutation'
+  `);
+  if (triggerFunctions.length !== 1) {
+    throw new Error(`${label}: reject_credit_ledger_mutation function is missing`);
+  }
+
+  const ledgerTriggers = await database.db.execute(
+    sql<{ trigger_name: string; function_name: string; enabled: string }>`
+      select t.tgname as trigger_name, p.proname as function_name, t.tgenabled as enabled
+      from pg_trigger t
+      inner join pg_class c on c.oid = t.tgrelid
+      inner join pg_namespace n on n.oid = c.relnamespace
+      inner join pg_proc p on p.oid = t.tgfoid
+      where n.nspname = 'public'
+        and c.relname = 'credit_ledger_entries'
+        and t.tgname = 'credit_ledger_entries_append_only'
+        and not t.tgisinternal
+    `,
+  );
+  if (
+    ledgerTriggers.length !== 1 ||
+    ledgerTriggers[0]?.function_name !== "reject_credit_ledger_mutation" ||
+    ledgerTriggers[0]?.enabled === "D"
+  ) {
+    throw new Error(`${label}: credit_ledger_entries_append_only trigger is missing or disabled`);
+  }
+}
+
+async function createMainBaselineFolder(): Promise<string> {
+  const journalPath = path.join("drizzle", "meta", "_journal.json");
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+    version: string;
+    dialect: string;
+    entries: Array<{
+      idx: number;
+      version: string;
+      when: number;
+      tag: string;
+      breakpoints: boolean;
+    }>;
+  };
+  const baselineIndex = journal.entries.findIndex((entry) => entry.tag === MAIN_BASELINE_TAG);
+  if (baselineIndex < 0) throw new Error(`main migration baseline not found: ${MAIN_BASELINE_TAG}`);
+  if (baselineIndex === journal.entries.length - 1) {
+    throw new Error("no generated migration exists after the main baseline");
+  }
+
+  const folder = await mkdtemp(path.join(tmpdir(), "creat-web-main-migrations-"));
+  await mkdir(path.join(folder, "meta"), { recursive: true });
+  const entries = journal.entries.slice(0, baselineIndex + 1);
+  await writeFile(
+    path.join(folder, "meta", "_journal.json"),
+    `${JSON.stringify({ version: journal.version, dialect: journal.dialect, entries }, null, 2)}\n`,
+    "utf8",
+  );
+  for (const entry of entries) {
+    await cp(path.join("drizzle", `${entry.tag}.sql`), path.join(folder, `${entry.tag}.sql`));
+  }
+  return folder;
+}
+
+try {
+  await verifyMigrationMetadata({
+    migrationsDirectory: path.resolve("drizzle"),
+    schemaPath: path.resolve("src/platform/database/schema.ts"),
+  });
+  await resetDatabase();
+  await applyMigrations();
+  await applyMigrations();
+  await assertLatestSchema("empty database to latest");
+
+  const baselineFolder = await createMainBaselineFolder();
+  try {
+    await resetDatabase();
+    await applyMigrations(baselineFolder);
+    await applyMigrations();
+    await applyMigrations();
+    await assertLatestSchema("main migration chain to latest");
+  } finally {
+    await rm(baselineFolder, { recursive: true, force: true });
+  }
+
+  console.log(
+    JSON.stringify({
+      event: "database_migration_verified",
+      paths: ["empty_to_latest", "main_chain_to_latest"],
+      mainBaseline: MAIN_BASELINE_TAG,
+    }),
+  );
 } finally {
   await database.close();
 }

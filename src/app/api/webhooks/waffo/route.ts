@@ -30,6 +30,9 @@ export async function POST(request: Request): Promise<Response> {
   if (!ingested.accepted) {
     return Response.json({ error: "invalid_signature" }, { status: 401 });
   }
+  if (ingested.operatorReview) {
+    return Response.json({ accepted: true, operatorReview: true }, { status: 202 });
+  }
   if (ingested.duplicate) {
     return Response.json({ accepted: true, duplicate: true }, { status: 202 });
   }

@@ -4,11 +4,13 @@ import { createPostgresAccountSubjectRepository } from "@/platform/accounts/post
 import { ensureActiveAccountSubject } from "@/platform/accounts/resolve-account-subject";
 import { db } from "@/platform/database/application-database";
 
-import { auth } from "./auth";
+import { getAuth } from "./auth";
 
 const subjects = createPostgresAccountSubjectRepository(db);
 
 export async function getAccountContext(requestHeaders: Headers) {
+  const auth = getAuth();
+  if (!auth) return null;
   const result = await auth.api.getSession({ headers: requestHeaders });
   if (!result) return null;
 

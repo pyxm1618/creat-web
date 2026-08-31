@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Creat Web starter social card">
+  <rect width="1200" height="630" fill="#f8fafc"/>
+  <rect x="72" y="72" width="1056" height="486" rx="32" fill="#111827"/>
+  <text x="132" y="276" fill="#f9fafb" font-family="system-ui, sans-serif" font-size="72" font-weight="700">SEO-first web starter</text>
+  <text x="132" y="360" fill="#d1d5db" font-family="system-ui, sans-serif" font-size="38">Replace brand, copy and artwork before production launch.</text>
+</svg>

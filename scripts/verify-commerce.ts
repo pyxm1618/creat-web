@@ -39,6 +39,26 @@ if (!contract.includes("live merchant resource validation still required")) {
 if (contract.includes("WAFFO_CONTRACT_VERIFIED=1") === false) {
   throw new Error("Waffo contract document must describe the deployment gate");
 }
+const paymentGateHeading = "## Mandatory live payment-query activation gate";
+const paymentGate = contract.slice(contract.indexOf(paymentGateHeading));
+if (!paymentGate.startsWith(paymentGateHeading)) {
+  throw new Error("Waffo contract document must define the live payment-query gate");
+}
+for (const requirement of [
+  "authenticated merchant GraphQL introspection",
+  "`String!` variables",
+  "identical list/count filter",
+  "bounded list and count completeness",
+  "one-time relation, `testMode`, store, amount, currency, and `createdAt`",
+  "representative one-time payment snapshot",
+  "payment-level immutable subscription period",
+  "subscription automatic recovery remains **NO-GO**",
+  "must not be set until both the original live-resource checklist and this payment-query gate pass",
+]) {
+  if (!paymentGate.includes(requirement)) {
+    throw new Error(`Waffo payment-query activation gate is incomplete: ${requirement}`);
+  }
+}
 
 console.log(
   JSON.stringify({

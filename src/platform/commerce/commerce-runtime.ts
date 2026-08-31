@@ -44,7 +44,7 @@ export async function getCommerceRuntime() {
   let creditHandlers = {};
   if (featuresConfig.commerce.credits) {
     const { createCreditFulfillmentHandlers } =
-      await import("@/platform/credits/application/commerce-handlers");
+      await import("@/platform/credits/integration/commerce/credit-fulfillment");
     creditHandlers = createCreditFulfillmentHandlers(db, creditFulfillmentDefinitions);
   }
 

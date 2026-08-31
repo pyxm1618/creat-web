@@ -1,6 +1,6 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth/minimal";
-import { bearer, magicLink } from "better-auth/plugins";
+import { magicLink } from "better-auth/plugins";
 
 import type { DatabaseClient } from "@/platform/database/client";
 
@@ -82,7 +82,6 @@ export function createAuth(input: {
       cookiePrefix: input.cookiePrefix,
     },
     plugins: [
-      bearer(),
       magicLink({
         expiresIn: 60 * 10,
         storeToken: "hashed",

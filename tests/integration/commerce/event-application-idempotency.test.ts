@@ -8,8 +8,10 @@ import {
   accountSubjects,
   commerceAppliedEvents,
   commerceProducts,
+  fulfillmentJobs,
   orders,
   payments,
+  refunds,
 } from "@/platform/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -102,6 +104,24 @@ it("replaying the same refund provider event changes the ledger exactly once", a
     ),
   });
   expect(stored).toMatchObject({ refundedMinor: 1000n, refundStatus: "partial" });
+
+  const providerRefunds = await database.db
+    .select()
+    .from(refunds)
+    .where(eq(refunds.paymentId, payment.id));
+  expect(providerRefunds).toHaveLength(1);
+  expect(providerRefunds[0]).toMatchObject({
+    idempotencyKey: `provider-refund:test:${eventId}`,
+    requestedMinor: 1000n,
+    succeededMinor: 1000n,
+    status: "succeeded",
+    reversalStatus: "reconciliation_required",
+  });
+  const reversalJobs = await database.db
+    .select()
+    .from(fulfillmentJobs)
+    .where(eq(fulfillmentJobs.sourceType, "refund"));
+  expect(reversalJobs).toHaveLength(0);
 
   const applications = await database.db
     .select()

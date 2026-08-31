@@ -2,16 +2,20 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/cron/account-deletions",
-      "schedule": "0 3 * * *"
+      "path": "/api/internal/jobs/commerce",
+      "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/commerce",
-      "schedule": "15 3 * * *"
+      "path": "/api/internal/jobs/reconcile",
+      "schedule": "17 * * * *"
     },
     {
-      "path": "/api/cron/credits",
-      "schedule": "30 3 * * *"
+      "path": "/api/internal/jobs/credit-expiry",
+      "schedule": "31 * * * *"
+    },
+    {
+      "path": "/api/internal/jobs/account-deletion",
+      "schedule": "47 * * * *"
     }
   ]
 }

@@ -1,58 +1,77 @@
-import { readdir, readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import path from "node:path";
 
 import { findPotentialSecrets } from "@/platform/security/secret-scan";
 
-const SCAN_ROOTS = ["src", "scripts", ".github"] as const;
-const ROOT_FILES = [
-  ".env.example",
-  "drizzle.config.ts",
-  "eslint.config.mjs",
-  "next.config.ts",
-  "package.json",
-  "playwright.config.ts",
-  "tsconfig.json",
-  "vitest.config.ts",
-  "vitest.contract.config.ts",
-  "vitest.integration.config.ts",
-] as const;
+const ALLOWED_FAKE_VALUES_BY_FILE: Readonly<Record<string, readonly string[]>> = {
+  ".github/workflows/ci.yml": [
+    "schema-generation-secret-with-at-least-32-characters",
+    "e2e-better-auth-secret-with-at-least-32-characters",
+  ],
+  "docs/superpowers/plans/2026-08-06-creat-web-authentication-plan.md": [
+    "schema-generation-secret-with-at-least-32-characters",
+  ],
+  "scripts/verify-clean-setup.ts": [
+    "clean-setup-auth-secret-with-more-than-32-characters",
+    "clean-setup-google-client-secret-value",
+    "clean-setup-test-private-key",
+  ],
+  "scripts/verify-release.ts": ["re_release_fixture"],
+  "src/platform/config/load-runtime-config.ts": [
+    "test-only-better-auth-secret-never-use-in-production",
+  ],
+  "tests/build/run-feature-matrix.ts": [
+    "feature-matrix-auth-secret-with-at-least-32-characters",
+    "feature-matrix-google-secret",
+    "feature-matrix-private-key",
+    "private-key",
+  ],
+  "tests/unit/config/commerce-runtime-env.test.ts": ["private-test-key"],
+  "tests/unit/config/runtime-env.test.ts": ["re_test_not_a_live_key", "replace-me"],
+  "tests/unit/observability/redact.test.ts": ["sk-secret"],
+};
+const rootArgument = process.argv.find((argument) => argument.startsWith("--root="))?.slice(7);
+const repositoryRoot = path.resolve(rootArgument || ".");
 
-const EXCLUDED_FILES = new Set([
-  "src/platform/security/secret-scan.ts",
-  "scripts/verify-secrets.ts",
-]);
-
-const TEXT_EXTENSION = /\.(?:ts|tsx|js|mjs|cjs|json|yml|yaml|env|example)$/;
-
-async function collectFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await collectFiles(target)));
-      continue;
-    }
-
-    if (TEXT_EXTENSION.test(entry.name) || entry.name.startsWith(".env")) {
-      files.push(target);
-    }
+function trackedFiles(root: string): string[] {
+  const result = spawnSync("git", ["-C", root, "ls-files", "-z"]);
+  if (result.status !== 0) {
+    throw new Error(`git ls-files failed: ${result.stderr.toString("utf8").trim()}`);
   }
-
-  return files;
+  return result.stdout.toString("utf8").split("\0").filter(Boolean).sort();
 }
 
-const candidates = [
-  ...ROOT_FILES,
-  ...(await Promise.all(SCAN_ROOTS.map((root) => collectFiles(root)))).flat(),
-];
+function decodeText(content: Uint8Array): string | undefined {
+  if (content.includes(0)) return undefined;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(content);
+  } catch {
+    return undefined;
+  }
+}
 
 const findings = [];
-for (const file of [...new Set(candidates)].sort()) {
-  if (EXCLUDED_FILES.has(file)) continue;
-  const content = await readFile(file, "utf8");
-  findings.push(...findPotentialSecrets(file, content));
+let textFiles = 0;
+let binaryFiles = 0;
+const candidates = trackedFiles(repositoryRoot);
+for (const file of candidates) {
+  const target = path.join(repositoryRoot, file);
+  const fileStat = await lstat(target);
+  const bytes = fileStat.isSymbolicLink()
+    ? new TextEncoder().encode(await readlink(target))
+    : await readFile(target);
+  const content = decodeText(bytes);
+  if (content === undefined) {
+    binaryFiles += 1;
+    continue;
+  }
+  textFiles += 1;
+  findings.push(
+    ...findPotentialSecrets(file, content, {
+      allowedAssignmentValues: ALLOWED_FAKE_VALUES_BY_FILE[file] ?? [],
+    }),
+  );
 }
 
 if (findings.length > 0) {
@@ -62,4 +81,11 @@ if (findings.length > 0) {
   throw new Error(`secret verification failed with ${findings.length} finding(s)`);
 }
 
-console.log(JSON.stringify({ event: "repository_secrets_verified", files: candidates.length }));
+console.log(
+  JSON.stringify({
+    event: "repository_secrets_verified",
+    trackedFiles: candidates.length,
+    textFiles,
+    binaryFiles,
+  }),
+);

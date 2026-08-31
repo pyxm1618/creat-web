@@ -8,10 +8,13 @@ const site: SiteSeoConfig = {
   siteName: "Example",
   canonicalOrigin: "https://example.com",
   defaultLocale: "en",
+  supportedLocales: ["en"],
+  localeLabels: { en: "English" },
+  localePrefixStrategy: "as-needed",
   defaultTitle: "Example",
   titleTemplate: "%s | Example",
   defaultDescription: "A sufficiently detailed default description for the example site.",
-  defaultOgImage: "/og/default.png",
+  defaultOgImage: "/og/default.svg",
   releaseStatus: "reviewed",
 };
 
@@ -46,11 +49,19 @@ const routes: RouteDefinition[] = [
 
 const registry = createRouteRegistry(site, routes);
 
-it("emits canonical only in production", () => {
+it("emits canonical and language alternates only in production", () => {
   expect(metadataForRoute(registry, "/", "production").alternates).toEqual({
     canonical: "https://example.com/",
+    languages: {
+      en: "https://example.com/",
+      "x-default": "https://example.com/",
+    },
   });
   expect(metadataForRoute(registry, "/", "staging").alternates).toBeUndefined();
+});
+
+it("does not emit obsolete meta keywords", () => {
+  expect(metadataForRoute(registry, "/", "production").keywords).toBeUndefined();
 });
 
 it("keeps legal pages noindex and follow only when environment allows following", () => {

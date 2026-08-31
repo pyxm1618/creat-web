@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 
+import { AccountShell } from "@/components/account/account-shell";
+import { env } from "@/platform/config/env";
+
 import { SignInForm } from "./sign-in-form";
 
 export const metadata: Metadata = {
@@ -9,13 +12,13 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    <main className="shell">
-      <section className="card" aria-labelledby="sign-in-title">
-        <p className="eyebrow">Account access</p>
-        <h1 id="sign-in-title">Sign in securely</h1>
-        <p>No password is required. We will send a single-use confirmation link.</p>
-        <SignInForm />
-      </section>
-    </main>
+    <AccountShell
+      eyebrow="Account access"
+      title="Sign in securely"
+      titleId="sign-in-title"
+      intro="No password is required. We will send a single-use confirmation link."
+    >
+      <SignInForm turnstileSiteKey={env.turnstileSiteKey} />
+    </AccountShell>
   );
 }

@@ -14,6 +14,7 @@ export type RuntimeEnv = {
   readonly databaseUrl: string;
   readonly betterAuthSecret: string | undefined;
   readonly cronSecret: string | undefined;
+  readonly indexNowKey: string | undefined;
   readonly emailTransport: EmailTransport;
   readonly emailFrom: string | undefined;
   readonly supportEmail: string | undefined;
@@ -21,6 +22,8 @@ export type RuntimeEnv = {
   readonly googleClientId: string | undefined;
   readonly googleClientSecret: string | undefined;
   readonly resendApiKey: string | undefined;
+  readonly turnstileSiteKey: string | undefined;
+  readonly turnstileSecretKey: string | undefined;
   readonly waffoMerchantId: string | undefined;
   readonly waffoPrivateKey: string | undefined;
   readonly waffoStoreId: string | undefined;
@@ -30,6 +33,7 @@ export type RuntimeEnv = {
   readonly commerceRetentionKey: string | undefined;
   readonly commerceRetentionKeyId: string | undefined;
   readonly ga4MeasurementId: string | undefined;
+  readonly clarityProjectId: string | undefined;
 };
 
 const baseSchema = z.object({
@@ -39,6 +43,7 @@ const baseSchema = z.object({
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().optional(),
   CRON_SECRET: z.string().optional(),
+  INDEXNOW_KEY: z.string().optional(),
   EMAIL_TRANSPORT: z.enum(["test", "resend"]).optional(),
   EMAIL_FROM: z.string().optional(),
   SUPPORT_EMAIL: z.email().optional(),
@@ -46,6 +51,8 @@ const baseSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
+  TURNSTILE_SITE_KEY: z.string().optional(),
+  TURNSTILE_SECRET_KEY: z.string().optional(),
   WAFFO_MERCHANT_ID: z.string().optional(),
   WAFFO_PRIVATE_KEY: z.string().optional(),
   WAFFO_STORE_ID: z.string().optional(),
@@ -55,10 +62,14 @@ const baseSchema = z.object({
   COMMERCE_RETENTION_KEY: z.string().optional(),
   COMMERCE_RETENTION_KEY_ID: z.string().optional(),
   GA4_MEASUREMENT_ID: z.string().optional(),
+  CLARITY_PROJECT_ID: z.string().optional(),
 });
 
 const TEST_ONLY_AUTH_SECRET = "test-only-better-auth-secret-never-use-in-production";
 const TEST_ONLY_CRON_SECRET = "test-only-cron-secret-never-use-in-production";
+const TEST_ONLY_TURNSTILE_SITE_KEY = "1x00000000000000000000AA";
+const TEST_ONLY_TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA";
+const INDEXNOW_KEY_PATTERN = /^[A-Za-z0-9-]{8,128}$/;
 
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return false;
@@ -71,9 +82,21 @@ function requireSecret(value: string | undefined, label: string): string {
   return value;
 }
 
+function resolveIndexNowKey(parsed: z.infer<typeof baseSchema>): string | undefined {
+  const value = parsed.INDEXNOW_KEY?.trim();
+  if (!value) return undefined;
+  if (isPlaceholder(value) || !INDEXNOW_KEY_PATTERN.test(value)) {
+    throw new Error("IndexNow key must contain 8-128 ASCII letters, digits, or dashes");
+  }
+  return value;
+}
+
+function isTurnstileTestKey(value: string): boolean {
+  return /^[123]x0{8,}/.test(value);
+}
+
 function assertDeploymentEnvironment(parsed: z.infer<typeof baseSchema>): void {
   if (!parsed.VERCEL_ENV) return;
-
   const expected: Record<VercelEnvironment, AppEnvironment> = {
     development: "local",
     preview: "staging",
@@ -84,9 +107,7 @@ function assertDeploymentEnvironment(parsed: z.infer<typeof baseSchema>): void {
       `VERCEL_ENV=${parsed.VERCEL_ENV} requires APP_ENV=${expected[parsed.VERCEL_ENV]}`,
     );
   }
-  if (parsed.APP_ENV === "test") {
-    throw new Error("APP_ENV=test is forbidden on Vercel deployments");
-  }
+  if (parsed.APP_ENV === "test") throw new Error("APP_ENV=test is forbidden on Vercel deployments");
 }
 
 function resolveAuthSecret(
@@ -94,7 +115,6 @@ function resolveAuthSecret(
   authEnabled: boolean,
 ): string | undefined {
   if (!authEnabled) return undefined;
-
   const isNonProduction = parsed.APP_ENV === "local" || parsed.APP_ENV === "test";
   if (isNonProduction && !parsed.BETTER_AUTH_SECRET) return TEST_ONLY_AUTH_SECRET;
   if (!parsed.BETTER_AUTH_SECRET) throw new Error("Better Auth secret is required");
@@ -123,15 +143,34 @@ function resolveEmailTransport(
   emailEnabled: boolean,
 ): EmailTransport {
   if (!emailEnabled) return "disabled";
-
   const isNonProduction = parsed.APP_ENV === "local" || parsed.APP_ENV === "test";
   const transport = parsed.EMAIL_TRANSPORT ?? (isNonProduction ? "test" : "resend");
-
   if (!isNonProduction && transport !== "resend") {
     throw new Error("staging and production email transport must use Resend");
   }
-
   return transport;
+}
+
+function resolveTurnstile(
+  parsed: z.infer<typeof baseSchema>,
+  magicLinkEnabled: boolean,
+): { siteKey: string | undefined; secretKey: string | undefined } {
+  if (!magicLinkEnabled) return { siteKey: undefined, secretKey: undefined };
+
+  const isNonProduction = parsed.APP_ENV === "local" || parsed.APP_ENV === "test";
+  if (isNonProduction) {
+    return {
+      siteKey: parsed.TURNSTILE_SITE_KEY ?? TEST_ONLY_TURNSTILE_SITE_KEY,
+      secretKey: parsed.TURNSTILE_SECRET_KEY ?? TEST_ONLY_TURNSTILE_SECRET_KEY,
+    };
+  }
+
+  const siteKey = requireSecret(parsed.TURNSTILE_SITE_KEY, "Turnstile site key");
+  const secretKey = requireSecret(parsed.TURNSTILE_SECRET_KEY, "Turnstile secret key");
+  if (isTurnstileTestKey(siteKey) || isTurnstileTestKey(secretKey)) {
+    throw new Error("Turnstile test keys are forbidden in staging and production");
+  }
+  return { siteKey, secretKey };
 }
 
 function validateRetentionKey(value: string): string {
@@ -164,7 +203,11 @@ export function loadRuntimeEnv(
   }
 
   const betterAuthSecret = resolveAuthSecret(parsed, features.auth.enabled);
-  const cronSecret = resolveCronSecret(parsed, features.auth.enabled || features.commerce.enabled);
+  const indexNowKey = resolveIndexNowKey(parsed);
+  const cronSecret = resolveCronSecret(
+    parsed,
+    features.auth.enabled || features.commerce.enabled || Boolean(indexNowKey),
+  );
   let googleClientId: string | undefined;
   let googleClientSecret: string | undefined;
   let resendApiKey: string | undefined;
@@ -179,6 +222,7 @@ export function loadRuntimeEnv(
   let commerceRetentionKey: string | undefined;
   let commerceRetentionKeyId: string | undefined;
   let ga4MeasurementId: string | undefined;
+  let clarityProjectId: string | undefined;
 
   if (features.auth.google) {
     googleClientId = requireSecret(parsed.GOOGLE_CLIENT_ID, "Google credentials");
@@ -193,14 +237,15 @@ export function loadRuntimeEnv(
     resendApiKey = requireSecret(parsed.RESEND_API_KEY, "Resend credentials");
     emailFrom = parsed.EMAIL_FROM;
     supportEmail = parsed.SUPPORT_EMAIL;
-    if (!emailFrom || !supportEmail) {
+    if (!emailFrom || !supportEmail)
       throw new Error("Email sender and support addresses are required");
-    }
   } else if (emailTransport === "test") {
     emailFrom = parsed.EMAIL_FROM ?? "test@localhost.invalid";
     supportEmail = parsed.SUPPORT_EMAIL ?? "support@localhost.invalid";
     testEmailDirectory = parsed.TEST_EMAIL_DIR ?? "/tmp/creat-web-test-emails";
   }
+
+  const turnstile = resolveTurnstile(parsed, features.auth.magicLink);
 
   if (features.commerce.enabled) {
     waffoMerchantId = requireSecret(parsed.WAFFO_MERCHANT_ID, "Waffo merchant configuration");
@@ -233,8 +278,11 @@ export function loadRuntimeEnv(
     }
   }
 
-  if (features.analytics.ga4) {
+  if (features.analytics.enabled && features.analytics.ga4) {
     ga4MeasurementId = requireSecret(parsed.GA4_MEASUREMENT_ID, "GA4 configuration");
+  }
+  if (features.analytics.enabled && features.analytics.clarity) {
+    clarityProjectId = requireSecret(parsed.CLARITY_PROJECT_ID, "Clarity configuration");
   }
 
   return {
@@ -244,6 +292,7 @@ export function loadRuntimeEnv(
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret,
     cronSecret,
+    indexNowKey,
     emailTransport,
     emailFrom,
     supportEmail,
@@ -251,6 +300,8 @@ export function loadRuntimeEnv(
     googleClientId,
     googleClientSecret,
     resendApiKey,
+    turnstileSiteKey: turnstile.siteKey,
+    turnstileSecretKey: turnstile.secretKey,
     waffoMerchantId,
     waffoPrivateKey,
     waffoStoreId,
@@ -260,5 +311,6 @@ export function loadRuntimeEnv(
     commerceRetentionKey,
     commerceRetentionKeyId,
     ga4MeasurementId,
+    clarityProjectId,
   };
 }

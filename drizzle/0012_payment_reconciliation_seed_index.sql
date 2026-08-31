@@ -1,0 +1,1 @@
+CREATE INDEX "order_payment_reconciliation_stale_idx" ON "orders" USING btree ("created_at","id") WHERE "orders"."checkout_state" = 'created' and "orders"."status" = 'pending';

@@ -1,97 +1,73 @@
-import { eq } from "drizzle-orm";
-
+import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import type { DatabaseClient } from "@/platform/database/client";
-import { fulfillmentJobs, paymentWebhookInbox } from "@/platform/database/commerce-schema";
 
-import { parseNormalizedProviderEvent } from "./event-json";
-import { claimFulfillmentJobs, claimWebhookInbox, retryDelay } from "./job-leases";
 import type { OrderFulfillment } from "./order-fulfillment";
-import { processProviderEvent } from "./process-provider-event";
-
-const MAX_ATTEMPTS = 12;
-
-function errorCode(error: unknown): string {
-  if (error instanceof Error && error.name) return error.name.slice(0, 120);
-  return "UNKNOWN_ERROR";
-}
+import { runFulfillmentWorker } from "./run-fulfillment-worker";
+import { runWebhookInboxWorker } from "./run-webhook-inbox-worker";
+import { runCommerceCommandWorker } from "./run-commerce-command-worker";
 
 export async function runCommerceWorker(input: {
   readonly database: DatabaseClient;
+  readonly provider: PaymentProvider;
   readonly fulfillment: OrderFulfillment;
   readonly owner: string;
   readonly now?: Date;
-}): Promise<{ readonly inboxProcessed: number; readonly fulfillmentProcessed: number }> {
-  const now = input.now ?? new Date();
-  let inboxProcessed = 0;
-  let fulfillmentProcessed = 0;
+  readonly limit?: number;
+  readonly onClaimed?: (count: number) => void;
+  readonly clock?: () => Date;
+}): Promise<{
+  readonly inboxProcessed: number;
+  readonly commandProcessed: number;
+  readonly fulfillmentProcessed: number;
+}> {
+  const clock = input.clock ?? (() => new Date());
+  const now = input.now ?? clock();
+  const batchLimit = Math.min(Math.max(input.limit ?? 60, 1), 100);
+  const inboxReserved = batchLimit >= 3 ? Math.floor(batchLimit / 3) : 1;
+  const commandReserved = batchLimit >= 3 ? Math.floor(batchLimit / 3) : batchLimit - 1;
+  const fulfillmentReserved = batchLimit - inboxReserved - commandReserved;
+  const inbox = await runWebhookInboxWorker({
+    database: input.database,
+    owner: input.owner,
+    now,
+    limit: inboxReserved,
+    clock,
+  });
 
-  for (const row of await claimWebhookInbox(input.database, { owner: input.owner, now })) {
-    try {
-      const event = parseNormalizedProviderEvent(row.normalizedPayloadJson);
-      await processProviderEvent(input.database, event, row.payloadHash);
-      await input.database
-        .update(paymentWebhookInbox)
-        .set({
-          state: "completed",
-          processedAt: now,
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: null,
+  const commandLimit = commandReserved + (inboxReserved - inbox.claimed);
+  let commandClaimed = 0;
+  const commandProcessed =
+    commandLimit > 0
+      ? await runCommerceCommandWorker({
+          database: input.database,
+          provider: input.provider,
+          owner: input.owner,
+          now,
+          limit: commandLimit,
+          clock,
+          onClaimed: (count) => {
+            commandClaimed = count;
+          },
         })
-        .where(eq(paymentWebhookInbox.id, row.id));
-      inboxProcessed += 1;
-    } catch (error) {
-      const attempts = row.attempts + 1;
-      const dead = attempts >= MAX_ATTEMPTS;
-      await input.database
-        .update(paymentWebhookInbox)
-        .set({
-          state: dead ? "dead_letter" : "retry",
-          attempts,
-          nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: errorCode(error),
-        })
-        .where(eq(paymentWebhookInbox.id, row.id));
-    }
-  }
+      : 0;
 
-  for (const job of await claimFulfillmentJobs(input.database, { owner: input.owner, now })) {
-    try {
-      await input.fulfillment.fulfill({
-        sourceType: job.sourceType,
-        sourceId: job.sourceId,
-        operation: job.operation,
-        operationKey: job.idempotencyKey,
-      });
-      await input.database
-        .update(fulfillmentJobs)
-        .set({
-          state: "completed",
-          completedAt: now,
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: null,
+  const fulfillmentLimit = fulfillmentReserved + (commandLimit - commandClaimed);
+  const fulfillment =
+    fulfillmentLimit > 0
+      ? await runFulfillmentWorker({
+          database: input.database,
+          fulfillment: input.fulfillment,
+          owner: input.owner,
+          now,
+          limit: fulfillmentLimit,
+          clock,
         })
-        .where(eq(fulfillmentJobs.id, job.id));
-      fulfillmentProcessed += 1;
-    } catch (error) {
-      const attempts = job.attempts + 1;
-      const dead = attempts >= MAX_ATTEMPTS;
-      await input.database
-        .update(fulfillmentJobs)
-        .set({
-          state: dead ? "dead_letter" : "pending",
-          attempts,
-          nextAttemptAt: new Date(now.getTime() + retryDelay(attempts)),
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          lastErrorCode: errorCode(error),
-        })
-        .where(eq(fulfillmentJobs.id, job.id));
-    }
-  }
+      : { claimed: 0, processed: 0 };
 
-  return { inboxProcessed, fulfillmentProcessed };
+  input.onClaimed?.(inbox.claimed + commandClaimed + fulfillment.claimed);
+  return {
+    inboxProcessed: inbox.processed,
+    commandProcessed,
+    fulfillmentProcessed: fulfillment.processed,
+  };
 }

@@ -8,12 +8,15 @@ const valid = {
     name: "Sample Product",
     canonicalOrigin: "https://example.com",
     defaultLocale: "en",
+    supportedLocales: ["en"],
+    localeLabels: { en: "English" },
+    localePrefixStrategy: "as-needed",
   },
   features: {
     auth: { enabled: false, google: false, magicLink: false, password: false },
     email: { enabled: false },
     commerce: { enabled: false, oneTime: false, subscriptions: false, credits: false },
-    analytics: { ga4: false, clarity: false, consentRequired: true },
+    analytics: { enabled: false, ga4: false, clarity: false, consentRequired: true },
   },
 } as const;
 
@@ -46,6 +49,18 @@ describe("validateProductConfig", () => {
     ).toThrow("subscriptions require commerce");
   });
 
+  it("accepts the commerce-enabled subscription release profile", () => {
+    const configured = validateProductConfig({
+      ...valid,
+      features: {
+        ...valid.features,
+        commerce: { ...valid.features.commerce, enabled: true, subscriptions: true },
+      },
+    });
+
+    expect(configured.features.commerce).toMatchObject({ enabled: true, subscriptions: true });
+  });
+
   it("rejects credits when commerce is disabled", () => {
     expect(() =>
       validateProductConfig({
@@ -56,6 +71,27 @@ describe("validateProductConfig", () => {
         },
       }),
     ).toThrow("credits require commerce");
+  });
+
+  it("rejects an enabled analytics provider when analytics is off", () => {
+    expect(() =>
+      validateProductConfig({
+        ...valid,
+        features: {
+          ...valid.features,
+          analytics: { ...valid.features.analytics, ga4: true },
+        },
+      }),
+    ).toThrow("analytics providers require analytics");
+  });
+
+  it("rejects unsupported default locales", () => {
+    expect(() =>
+      validateProductConfig({
+        ...valid,
+        site: { ...valid.site, defaultLocale: "de" },
+      }),
+    ).toThrow("default locale must be supported");
   });
 
   it("rejects non-HTTPS production origins", () => {

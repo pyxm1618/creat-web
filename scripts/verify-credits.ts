@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { creditFulfillmentDefinitions } from "@/config/credits.config";
 import { featuresConfig } from "@/config/features.config";
 import { productDefinitions } from "@/config/products.config";
-import type { CreditOrderFulfillmentDefinition } from "@/platform/commerce/fulfillment/credit-order-fulfillment";
+import type { CreditOrderFulfillmentDefinition } from "@/platform/credits/integration/commerce/credit-fulfillment";
 import type { ProductDefinition } from "@/platform/commerce/domain/product";
 
 const creditDefinitions: readonly CreditOrderFulfillmentDefinition[] = creditFulfillmentDefinitions;

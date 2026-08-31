@@ -138,6 +138,32 @@ export const creditLedgerEntries = pgTable(
   ],
 );
 
+export const creditReconciliationIncidents = pgTable(
+  "credit_reconciliation_incidents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    code: text("code").notNull(),
+    entityId: text("entity_id").notNull(),
+    detail: text("detail").notNull(),
+    status: text("status").default("open").notNull(),
+    occurrences: integer("occurrences").default(1).notNull(),
+    firstDetectedAt: timestamp("first_detected_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    lastDetectedAt: timestamp("last_detected_at", { withTimezone: true, mode: "date" })
+      .defaultNow()
+      .notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [
+    uniqueIndex("credit_reconciliation_incident_uq").on(table.code, table.entityId),
+    check(
+      "credit_reconciliation_incident_status_valid",
+      sql`${table.status} in ('open','resolved')`,
+    ),
+  ],
+);
+
 export const creditFinalizationJobs = pgTable(
   "credit_finalization_jobs",
   {
@@ -149,6 +175,7 @@ export const creditFinalizationJobs = pgTable(
     state: text("state").default("pending").notNull(),
     attempts: integer("attempts").default(0).notNull(),
     leaseOwner: text("lease_owner"),
+    leaseToken: text("lease_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" })
       .defaultNow()

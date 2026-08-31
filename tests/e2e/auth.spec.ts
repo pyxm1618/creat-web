@@ -1,4 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
+import { eq } from "drizzle-orm";
+
+import { createDatabaseClient } from "@/platform/database/client";
+import { session } from "@/platform/database/schema";
+
+const TURNSTILE_TEST_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
 function extractConfirmationUrl(html: string): string {
   const match = html.match(/href="([^"]+)"/);
@@ -6,10 +12,196 @@ function extractConfirmationUrl(html: string): string {
   return match[1].replaceAll("&amp;", "&");
 }
 
-test("mail scanners cannot consume a token and explicit confirmation signs in exactly once", async ({
-  page,
+async function installBrowserTurnstileMock(page: Page): Promise<void> {
+  await page.addInitScript((token) => {
+    let nextWidgetId = 0;
+    const turnstile = {
+      ready(callback: () => void) {
+        callback();
+      },
+      render(_container: HTMLElement, options: { callback: (value: string) => void }) {
+        const widgetId = `test-widget-${++nextWidgetId}`;
+        queueMicrotask(() => options.callback(token));
+        return widgetId;
+      },
+      reset(widgetId?: string) {
+        void widgetId;
+      },
+      remove(widgetId?: string) {
+        void widgetId;
+      },
+    };
+    (window as unknown as Window & { turnstile?: typeof turnstile }).turnstile = turnstile;
+  }, TURNSTILE_TEST_TOKEN);
+}
+
+async function signInWithMagicLink(input: {
+  readonly browser: Browser;
+  readonly request: APIRequestContext;
+  readonly email: string;
+}): Promise<Page> {
+  const send = await input.request.post("/api/auth/magic-link/request", {
+    headers: {
+      origin: "http://127.0.0.1:3000",
+      "content-type": "application/json",
+      "x-real-ip": "203.0.113.201",
+    },
+    data: { email: input.email, returnTo: "/account", turnstileToken: TURNSTILE_TEST_TOKEN },
+  });
+  expect(send.status()).toBe(202);
+  const mailbox = await input.request.get(
+    `/api/test/emails/latest?to=${encodeURIComponent(input.email)}`,
+  );
+  const message = (await mailbox.json()) as { html: string };
+  const context = await input.browser.newContext();
+  const page = await context.newPage();
+  await page.goto(extractConfirmationUrl(message.html));
+  await page.getByRole("button", { name: "Confirm sign in" }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  return page;
+}
+
+test("native Better Auth mutation endpoints are not public", async ({ request }) => {
+  for (const path of ["/api/auth/delete-user", "/api/auth/sign-in/magic-link"]) {
+    const response = await request.post(path, {
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status()).toBe(404);
+  }
+});
+
+test("session revocation keeps tokens out of rendered account security HTML", async ({
+  browser,
   request,
 }) => {
+  const email = `session-revocation-${Date.now()}@example.com`;
+  const targetPage = await signInWithMagicLink({ browser, request, email });
+  const currentPage = await signInWithMagicLink({ browser, request, email });
+  const currentContext = currentPage.context();
+
+  const sessionsResponse = await currentContext.request.get("/api/auth/list-sessions");
+  expect(sessionsResponse.ok()).toBeTruthy();
+  const sessions = (await sessionsResponse.json()) as Array<{ id: string; token: string }>;
+  const currentSessionResponse = await currentContext.request.get("/api/auth/get-session");
+  const currentSession = (await currentSessionResponse.json()) as {
+    session: { id: string; token: string };
+  };
+  const targetSession = sessions.find((session) => session.id !== currentSession.session.id);
+  if (!targetSession) throw new Error("target session missing");
+
+  await currentPage.goto("/account/security");
+  const html = await currentPage.content();
+  expect(html).not.toContain(targetSession.token);
+  expect(html).toContain('name="sessionId"');
+
+  await currentPage.getByRole("button", { name: "Revoke this session" }).click();
+
+  await expect
+    .poll(async () => {
+      const remainingResponse = await currentContext.request.get("/api/auth/list-sessions");
+      const remaining = (await remainingResponse.json()) as Array<{ id: string }>;
+      return remaining.map((session) => session.id);
+    })
+    .toEqual([currentSession.session.id]);
+  await targetPage.goto("/account");
+  await expect(targetPage).toHaveURL(/\/sign-in$/);
+  await expect(currentPage).toHaveURL(/\/account\/security$/);
+
+  await targetPage.context().close();
+  await currentContext.close();
+});
+
+test("forged session revocation cannot revoke the current session", async ({
+  browser,
+  request,
+}) => {
+  const email = `current-session-protection-${Date.now()}@example.com`;
+  const targetPage = await signInWithMagicLink({ browser, request, email });
+  const currentPage = await signInWithMagicLink({ browser, request, email });
+  const currentContext = currentPage.context();
+  const currentSessionResponse = await currentContext.request.get("/api/auth/get-session");
+  const currentSession = (await currentSessionResponse.json()) as { session: { id: string } };
+
+  await currentPage.goto("/account/security");
+  const sessionId = currentPage.locator('input[name="sessionId"]');
+  await expect(sessionId).toHaveCount(1);
+  await sessionId.evaluate((element, value) => {
+    (element as HTMLInputElement).value = value;
+  }, currentSession.session.id);
+
+  const actionResponse = currentPage.waitForResponse(
+    (response) =>
+      response.url().endsWith("/account/security") && response.request().method() === "POST",
+  );
+  await currentPage.getByRole("button", { name: "Revoke this session" }).click();
+  expect((await actionResponse).status()).toBeGreaterThanOrEqual(400);
+
+  const retainedSessionResponse = await currentContext.request.get("/api/auth/get-session");
+  expect(retainedSessionResponse.ok()).toBeTruthy();
+  expect(((await retainedSessionResponse.json()) as { session: { id: string } }).session.id).toBe(
+    currentSession.session.id,
+  );
+
+  await targetPage.context().close();
+  await currentContext.close();
+});
+
+test("billing mutations require a fresh session", async ({ browser, request }) => {
+  const page = await signInWithMagicLink({
+    browser,
+    request,
+    email: `stale-billing-${Date.now()}@example.com`,
+  });
+  const context = page.context();
+  const currentSessionResponse = await context.request.get("/api/auth/get-session");
+  const currentSession = (await currentSessionResponse.json()) as { session: { id: string } };
+  const databaseUrl = process.env.TEST_DATABASE_URL;
+  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required");
+  const database = createDatabaseClient(databaseUrl);
+  try {
+    const updated = await database.db
+      .update(session)
+      .set({ createdAt: new Date(Date.now() - 16 * 60 * 1000) })
+      .where(eq(session.id, currentSession.session.id))
+      .returning({ id: session.id });
+    expect(updated).toEqual([{ id: currentSession.session.id }]);
+  } finally {
+    await database.close();
+  }
+
+  const validBodies = {
+    "/api/commerce/refunds": {
+      paymentId: "00000000-0000-4000-8000-000000000001",
+      amount: "1.00",
+      currency: "USD",
+      reason: "customer request",
+    },
+    "/api/commerce/subscription/cancel": {
+      subscriptionId: "00000000-0000-4000-8000-000000000002",
+    },
+    "/api/commerce/subscription/resume": {
+      subscriptionId: "00000000-0000-4000-8000-000000000003",
+    },
+  } as const;
+
+  let index = 0;
+  for (const path of Object.keys(validBodies) as Array<keyof typeof validBodies>) {
+    const response = await context.request.post(path, {
+      headers: {
+        origin: "http://127.0.0.1:3000",
+        "content-type": "application/json",
+        "idempotency-key": `billing-stale:${index++}:${Date.now()}`,
+      },
+      data: validBodies[path],
+    });
+    expect(response.status()).toBe(403);
+    expect(await response.json()).toEqual({ error: "fresh_authentication_required" });
+  }
+
+  await context.close();
+});
+
+test("magic link confirmation is scanner-safe and single-use", async ({ page, request }) => {
   const email = `browser-${Date.now()}@example.com`;
   const externalRequests: string[] = [];
   const getRequests: string[] = [];
@@ -21,15 +213,18 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
     }
   });
 
+  await installBrowserTurnstileMock(page);
   await page.goto("/sign-in");
   await page.getByLabel("Email address").fill(email);
+  const sendButton = page.getByRole("button", { name: "Send secure sign-in link" });
+  await expect(sendButton).toBeEnabled({ timeout: 15_000 });
   const sendResponsePromise = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/auth/magic-link/request") &&
       response.request().method() === "POST",
     { timeout: 15_000 },
   );
-  await page.getByRole("button", { name: "Send secure sign-in link" }).click();
+  await sendButton.click();
   const sendResponse = await sendResponsePromise;
   expect(sendResponse.status()).toBe(202);
   await expect(page.getByText(/a sign-in link has been sent/i)).toBeVisible();
@@ -72,7 +267,9 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
 
   await page.goto(confirmationUrl);
   await expect(page).toHaveURL(/\/auth\/magic-link\/confirm$/);
-  expect(externalRequests).toEqual([]);
+  expect(
+    externalRequests.every((url) => new URL(url).hostname === "challenges.cloudflare.com"),
+  ).toBeTruthy();
   expect(getRequests.some((url) => token && url.includes(token))).toBeFalsy();
 
   const verificationResponsePromise = page.waitForResponse(
@@ -98,7 +295,22 @@ test("mail scanners cannot consume a token and explicit confirmation signs in ex
   expect(replay.ok()).toBeFalsy();
 });
 
-test("magic link sending is bounded per normalized email", async ({ request }) => {
+test("magic link requests fail closed without a Turnstile token", async ({ request }) => {
+  const response = await request.post("/api/auth/magic-link/request", {
+    headers: {
+      origin: "http://127.0.0.1:3000",
+      "content-type": "application/json",
+      "x-real-ip": "203.0.113.80",
+    },
+    data: {
+      email: `missing-challenge-${Date.now()}@example.com`,
+      returnTo: "/account",
+    },
+  });
+  expect(response.status()).toBe(400);
+});
+
+test("magic link email rate limits follow a valid challenge", async ({ request }) => {
   const email = `limited-${Date.now()}@example.com`;
   for (let index = 0; index < 3; index += 1) {
     const response = await request.post("/api/auth/magic-link/request", {
@@ -107,7 +319,11 @@ test("magic link sending is bounded per normalized email", async ({ request }) =
         "content-type": "application/json",
         "x-real-ip": `203.0.113.${30 + index}`,
       },
-      data: { email: index % 2 === 0 ? email.toUpperCase() : email, returnTo: "/account" },
+      data: {
+        email: index % 2 === 0 ? email.toUpperCase() : email,
+        returnTo: "/account",
+        turnstileToken: TURNSTILE_TEST_TOKEN,
+      },
     });
     expect(response.status()).toBe(202);
   }
@@ -118,7 +334,7 @@ test("magic link sending is bounded per normalized email", async ({ request }) =
       "content-type": "application/json",
       "x-real-ip": "203.0.113.99",
     },
-    data: { email, returnTo: "/account" },
+    data: { email, returnTo: "/account", turnstileToken: TURNSTILE_TEST_TOKEN },
   });
   expect(limited.status()).toBe(429);
 });

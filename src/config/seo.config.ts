@@ -5,10 +5,13 @@ export const seoConfig = {
   siteName: siteConfig.name,
   canonicalOrigin: siteConfig.canonicalOrigin,
   defaultLocale: siteConfig.defaultLocale,
+  supportedLocales: siteConfig.supportedLocales,
+  localeLabels: siteConfig.localeLabels,
+  localePrefixStrategy: siteConfig.localePrefixStrategy,
   defaultTitle: "Creat Web Sample",
   titleTemplate: "%s | Creat Web Sample",
   defaultDescription:
-    "A neutral starter for building secure, SEO-aware web products with reusable platform foundations.",
-  defaultOgImage: "/og/default.png",
+    "A neutral SEO-first starter for launching useful web products quickly with optional platform capabilities that remain disabled until needed.",
+  defaultOgImage: "/og/default.svg",
   releaseStatus: "draft",
 } as const satisfies SiteSeoConfig;

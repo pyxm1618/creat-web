@@ -73,17 +73,19 @@ export function createPostgresAccountSubjectRepository(
     },
 
     async detachAuthIdentity(subjectId, authUserId) {
-      const rows = await database
-        .update(accountSubjects)
-        .set({ authUserId: null })
-        .where(
-          and(
-            eq(accountSubjects.id, subjectId),
-            eq(accountSubjects.authUserId, authUserId),
-            eq(accountSubjects.status, "deletion_pending"),
-          ),
-        )
-        .returning();
+      const rows = authUserId
+        ? await database
+            .update(accountSubjects)
+            .set({ authUserId: null })
+            .where(
+              and(
+                eq(accountSubjects.id, subjectId),
+                eq(accountSubjects.authUserId, authUserId),
+                eq(accountSubjects.status, "deletion_pending"),
+              ),
+            )
+            .returning()
+        : [];
 
       if (rows[0]) return mapSubject(rows[0]);
       const detached = await database

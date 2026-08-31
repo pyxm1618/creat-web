@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("test environment is layered noindex with no production canonical or sitemap", async ({
+import { routeRegistry } from "@/config/routes.config";
+
+test("test environment is layered noindex with no production canonical, sitemap, or IndexNow key", async ({
   page,
   request,
 }) => {
@@ -17,16 +19,27 @@ test("test environment is layered noindex with no production canonical or sitema
 
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.status()).toBe(404);
+
+  const indexNowKey = await request.get("/indexnow-key.txt");
+  expect(indexNowKey.status()).toBe(404);
+  expect(indexNowKey.headers()["x-robots-tag"]).toBe("noindex, nofollow");
 });
 
-test("structured data parses and mirrors visible homepage facts", async ({ page }) => {
+test("structured data parses and matches registered homepage SEO facts", async ({ page }) => {
+  const home = routeRegistry.get("/");
+  if (home.class !== "public_indexable") throw new Error("homepage must be indexable");
+
   await page.goto("/");
   const scripts = page.locator('script[type="application/ld+json"]');
   expect(await scripts.count()).toBeGreaterThanOrEqual(2);
+  const structuredData = [] as unknown[];
   for (const text of await scripts.allTextContents()) {
-    expect(() => JSON.parse(text)).not.toThrow();
+    const parsed = JSON.parse(text) as unknown;
+    structuredData.push(parsed);
   }
-  await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "Build a focused web product",
-  );
+
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(home.h1);
+  const serialized = JSON.stringify(structuredData);
+  expect(serialized).toContain(home.title);
+  expect(serialized).toContain(home.description);
 });

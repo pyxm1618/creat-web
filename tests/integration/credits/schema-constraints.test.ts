@@ -33,6 +33,17 @@ async function createSubjectId() {
   return subject.id;
 }
 
+async function expectAppendOnlyRejection(operation: Promise<unknown>): Promise<void> {
+  try {
+    await operation;
+    throw new Error("ledger mutation unexpectedly succeeded");
+  } catch (error) {
+    const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as Error).message).toContain("credit ledger entries are append only");
+  }
+}
+
 it("rejects duplicate grant sources and non-positive quantities", async () => {
   const subjectId = await createSubjectId();
   const sourceId = `src-${crypto.randomUUID()}`;
@@ -124,4 +135,33 @@ it("rejects non-positive immutable ledger entries", async () => {
       .from(creditLedgerEntries)
       .where(eq(creditLedgerEntries.sourceId, "bad")),
   ).toHaveLength(0);
+});
+
+it("rejects updates and deletes of persisted ledger entries", async () => {
+  const subjectId = await createSubjectId();
+  const [entry] = await database.db
+    .insert(creditLedgerEntries)
+    .values({
+      subjectId,
+      creditType: "reading",
+      entryType: "grant",
+      quantity: 1,
+      sourceType: "promotion",
+      sourceId: `immutable-${crypto.randomUUID()}`,
+      correlationId: `immutable-${crypto.randomUUID()}`,
+      idempotencyKey: `immutable-${crypto.randomUUID()}`,
+      actorType: "system",
+    })
+    .returning();
+  if (!entry) throw new Error("ledger entry insert failed");
+
+  await expectAppendOnlyRejection(
+    database.db
+      .update(creditLedgerEntries)
+      .set({ quantity: 2 })
+      .where(eq(creditLedgerEntries.id, entry.id)),
+  );
+  await expectAppendOnlyRejection(
+    database.db.delete(creditLedgerEntries).where(eq(creditLedgerEntries.id, entry.id)),
+  );
 });

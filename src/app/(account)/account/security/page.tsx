@@ -1,8 +1,20 @@
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
+import { AccountShell } from "@/components/account/account-shell";
+import {
+  bodyText,
+  buttonDanger,
+  buttonSecondary,
+  input,
+  label,
+  listDivided,
+  metaText,
+  panel,
+  subTitle,
+} from "@/components/ui/styles";
 import { getAccountContext } from "@/platform/auth/account-context";
-import { auth } from "@/platform/auth/auth";
+import { getAuth } from "@/platform/auth/auth";
 
 import {
   revokeAllSessionsAction,
@@ -20,6 +32,8 @@ function formatDate(value: Date | string): string {
 }
 
 export default async function AccountSecurityPage() {
+  const auth = getAuth();
+  if (!auth) notFound();
   const requestHeaders = await headers();
   const context = await getAccountContext(requestHeaders);
   if (!context) redirect("/sign-in");
@@ -27,53 +41,67 @@ export default async function AccountSecurityPage() {
   const sessions = await auth.api.listSessions({ headers: requestHeaders });
 
   return (
-    <main className="shell">
-      <section className="card" aria-labelledby="security-title">
-        <p className="eyebrow">Account security</p>
-        <h1 id="security-title">Active sessions</h1>
-        <p>Review signed-in devices and revoke access you no longer recognize.</p>
-
-        <ul>
-          {sessions.map((session) => {
-            const current = session.token === context.session.token;
-            return (
-              <li key={session.id}>
-                <p>
-                  <strong>{current ? "Current session" : "Other session"}</strong>
-                  <br />
-                  {session.userAgent ?? "Unknown browser"}
-                  <br />
+    <AccountShell
+      eyebrow="Account security"
+      title="Active sessions"
+      titleId="security-title"
+      intro="Review signed-in devices and revoke access you no longer recognize."
+    >
+      <ul className={`${panel} ${listDivided} px-5`}>
+        {sessions.map((session) => {
+          const current = session.token === context.session.token;
+          return (
+            <li key={session.id} className="flex flex-wrap items-start justify-between gap-4 py-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  {current ? "Current session" : "Other session"}
+                </p>
+                <p className={`mt-1 ${metaText}`}>{session.userAgent ?? "Unknown browser"}</p>
+                <p className={`mt-1 ${metaText}`}>
                   Created {formatDate(session.createdAt)} · Expires {formatDate(session.expiresAt)}
                 </p>
-                {!current ? (
-                  <form action={revokeSessionAction}>
-                    <input type="hidden" name="token" value={session.token} />
-                    <button type="submit">Revoke this session</button>
-                  </form>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+              </div>
+              {!current ? (
+                <form action={revokeSessionAction}>
+                  <input type="hidden" name="sessionId" value={session.id} />
+                  <button type="submit" className={buttonSecondary}>
+                    Revoke this session
+                  </button>
+                </form>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
 
+      <div className="mt-6 flex flex-wrap gap-3">
         <form action={revokeOtherSessionsAction}>
-          <button type="submit">Revoke all other sessions</button>
+          <button type="submit" className={buttonSecondary}>
+            Revoke all other sessions
+          </button>
         </form>
         <form action={signOutAction}>
-          <button type="submit">Sign out this session</button>
+          <button type="submit" className={buttonSecondary}>
+            Sign out this session
+          </button>
         </form>
         <form action={revokeAllSessionsAction}>
-          <button type="submit">Revoke every session</button>
+          <button type="submit" className={buttonSecondary}>
+            Revoke every session
+          </button>
         </form>
+      </div>
 
-        <hr />
-        <h2>Delete account</h2>
-        <p>
+      <div className="mt-12 rounded-xl border border-red-200 bg-red-50/50 p-6 dark:border-red-900/60 dark:bg-red-950/20">
+        <h2 className={subTitle}>Delete account</h2>
+        <p className={`mt-3 ${bodyText}`}>
           This revokes all access and permanently removes your authentication identity. Required
           financial or security records may remain pseudonymized according to the published policy.
         </p>
-        <form action="/api/account/delete" method="post">
-          <label htmlFor="delete-confirmation">Type DELETE to confirm</label>
+        <form action="/api/account/delete" method="post" className="mt-5 max-w-sm">
+          <label htmlFor="delete-confirmation" className={label}>
+            Type DELETE to confirm
+          </label>
           <input
             id="delete-confirmation"
             name="confirmation"
@@ -81,10 +109,13 @@ export default async function AccountSecurityPage() {
             autoComplete="off"
             pattern="DELETE"
             required
+            className={input}
           />
-          <button type="submit">Permanently delete account</button>
+          <button type="submit" className={`mt-4 ${buttonDanger}`}>
+            Permanently delete account
+          </button>
         </form>
-      </section>
-    </main>
+      </div>
+    </AccountShell>
   );
 }

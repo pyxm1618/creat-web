@@ -1,4 +1,4 @@
-import type { CreditOrderFulfillmentDefinition } from "@/platform/commerce/fulfillment/credit-order-fulfillment";
+import type { CreditOrderFulfillmentDefinition } from "@/platform/credits/integration/commerce/credit-fulfillment";
 
 export const creditFulfillmentDefinitions =
   [] as const satisfies readonly CreditOrderFulfillmentDefinition[];

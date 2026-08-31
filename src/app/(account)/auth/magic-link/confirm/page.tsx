@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { AccountShell } from "@/components/account/account-shell";
+
 import { MagicLinkConfirmation } from "./magic-link-confirmation";
 
 export const dynamic = "force-dynamic";
@@ -12,12 +14,8 @@ export const metadata: Metadata = {
 
 export default function MagicLinkConfirmationPage() {
   return (
-    <main className="shell">
-      <section className="card" aria-labelledby="confirm-title">
-        <p className="eyebrow">Security confirmation</p>
-        <h1 id="confirm-title">Confirm sign in</h1>
-        <MagicLinkConfirmation />
-      </section>
-    </main>
+    <AccountShell eyebrow="Security confirmation" title="Confirm sign in" titleId="confirm-title">
+      <MagicLinkConfirmation />
+    </AccountShell>
   );
 }
