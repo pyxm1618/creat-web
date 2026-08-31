@@ -105,6 +105,92 @@ const commerceCreditsBoundaryRule = {
   },
 };
 
+const modulesRoot = path.join(workspaceRoot, "src/modules");
+const productConfigRoot = path.join(workspaceRoot, "src/config");
+
+/**
+ * Product code lives in `src/modules/<product>/`. Two edges are enforced:
+ *
+ * - A module may not import product configuration. Configuration composes
+ *   modules (a `tool-demo` surface pulls in product UI), so the reverse edge
+ *   would close a cycle.
+ * - Everything outside a module reaches it only through its public entry,
+ *   `@/modules/<product>`, leaving the module free to rearrange its internals.
+ *
+ * Platform code is covered separately by `no-restricted-imports`, which bans
+ * `@/modules/*` outright.
+ */
+const productModuleBoundaryRule = {
+  meta: {
+    type: "problem",
+    schema: [],
+    messages: {
+      configDependency:
+        "Product modules must not import product configuration; configuration composes modules, not the reverse.",
+      deepImport:
+        "Import a product module through its public entry (@/modules/<product>) instead of reaching into its internals.",
+    },
+  },
+  create(context) {
+    const filename = context.filename;
+    const insideModules = isWithin(modulesRoot, filename);
+    const ownModule = insideModules
+      ? path.relative(modulesRoot, filename).split(path.sep)[0]
+      : undefined;
+
+    function check(node, sourceNode) {
+      const specifier = staticModuleSpecifier(sourceNode);
+      if (!specifier) return;
+      const target = resolveModuleSpecifier(specifier, filename);
+      if (!target) return;
+
+      if (insideModules && isWithin(productConfigRoot, target)) {
+        context.report({ node: sourceNode, messageId: "configDependency" });
+        return;
+      }
+
+      if (!isWithin(modulesRoot, target)) return;
+      const segments = path.relative(modulesRoot, target).split(path.sep);
+      const targetModule = segments[0];
+      if (!targetModule) return;
+      if (insideModules && targetModule === ownModule) return;
+
+      const entry = segments
+        .slice(1)
+        .join("/")
+        .replace(/\.(?:ts|tsx)$/, "");
+      if (entry !== "" && entry !== "index") {
+        context.report({ node: sourceNode, messageId: "deepImport" });
+      }
+    }
+
+    return {
+      ImportDeclaration(node) {
+        check(node, node.source);
+      },
+      ExportNamedDeclaration(node) {
+        if (node.source) check(node, node.source);
+      },
+      ExportAllDeclaration(node) {
+        check(node, node.source);
+      },
+      ImportExpression(node) {
+        check(node, node.source);
+      },
+      CallExpression(node) {
+        if (node.callee.type === "Identifier" && node.callee.name === "require") {
+          check(node, node.arguments[0]);
+        }
+      },
+      TSImportEqualsDeclaration(node) {
+        if (node.moduleReference.type === "TSExternalModuleReference") {
+          check(node, node.moduleReference.expression);
+        }
+      },
+    };
+  },
+};
+
 export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
@@ -139,6 +225,17 @@ export default defineConfig([
     },
     rules: {
       "creat-web/commerce-credits-boundary": "error",
+    },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: {
+      "creat-web-modules": {
+        rules: { "product-module-boundary": productModuleBoundaryRule },
+      },
+    },
+    rules: {
+      "creat-web-modules/product-module-boundary": "error",
     },
   },
 ]);

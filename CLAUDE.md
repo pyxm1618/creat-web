@@ -152,6 +152,14 @@ Account deletion, webhook application, fulfillment, credits, subscription comman
 
 `account_subjects` is a non-auth subject owning financial/entitlement history, distinct from the Better Auth user. Deleting an auth identity must not destroy that history or silently reattach it to a new identity (`src/platform/accounts/`).
 
+### Where product code lives
+
+The starter is the shell around a product, not the product. Product code — the actual tool, calculator or generator — belongs in `src/modules/<product>/`, with `domain/` for pure logic, `ui/` for components, and `index.ts` as the only entry anything outside may import.
+
+Two edges are enforced by `creat-web-modules/product-module-boundary` in `eslint.config.mjs`: a module may not import `@/config/*` (configuration composes modules, so the reverse would close a cycle), and nothing outside a module may reach past its public entry (including one module into another). Platform code is separately barred from `@/modules/*` by `no-restricted-imports`. `tests/unit/architecture/product-module-boundary.test.ts` covers both.
+
+Configuration wires a module in by importing its entry into a `tool-demo` section's `surface`. Full rationale and the dependency table: `docs/setup/product-modules.md`.
+
 ### UI and styling
 
 Tailwind CSS v4 via PostCSS (`postcss.config.mjs`, `@tailwindcss/postcss`). There is no `tailwind.config.js` — v4 is configured in CSS. `src/app/globals.css` is small and holds only three things: the `@import "tailwindcss"`, the design tokens, and a short `@layer base`.
