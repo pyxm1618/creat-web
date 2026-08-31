@@ -1,5 +1,9 @@
 # Create a new product from a clean checkout
 
+> Chinese speakers: [建站手册](./建站手册.md) walks the same ground in
+> chronological order, from an empty checkout to a site indexed by Google,
+> and lists the pitfalls that only show up when you actually build one.
+
 This starter is configuration-first. Do not duplicate or edit platform code merely to rename a product.
 
 ## Prerequisites
