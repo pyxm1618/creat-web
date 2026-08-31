@@ -77,6 +77,9 @@ describe("product module boundary", () => {
     );
   });
 
+  // Linting the whole tree takes several seconds on CI hardware, well past the
+  // 5s default. verify:architecture covers the same ground, but running it here
+  // surfaces a mis-scoped rule before the slower gates start.
   it("reports no boundary violation across the existing source tree", async () => {
     const results = await eslint.lintFiles(["src/**/*.{ts,tsx}"]);
     expect(
@@ -84,5 +87,5 @@ describe("product module boundary", () => {
         result.messages.filter((message) => message.ruleId === boundaryRuleId),
       ),
     ).toEqual([]);
-  });
+  }, 30_000);
 });
