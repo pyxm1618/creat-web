@@ -31,7 +31,7 @@ Platform capabilities that landed on `main` after the `0.1.0` entry was written,
 
 ### Documentation
 
-- Consolidated 52 English documents (13,616 lines) into 9 Chinese ones. The removed material was build-time scaffolding — implementation plans, proposals still marked *proposed for independent review*, and review briefs — superseded by the implementation that followed; `git log` retains it.
+- Consolidated 52 English documents (13,616 lines) into 9 Chinese ones. The removed material was build-time scaffolding — implementation plans, proposals still marked _proposed for independent review_, and review briefs — superseded by the implementation that followed; `git log` retains it.
 - `docs/建站手册.md` is the manual; reference material is under `docs/参考/`, operational procedures under `docs/运维/`, indexed by `docs/README.md`.
 - `scripts/verify-commerce.ts` asserts the Waffo activation gate's exact wording so the checklist cannot be quietly watered down; those assertions now match the Chinese document.
 
