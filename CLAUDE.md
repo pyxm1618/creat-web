@@ -146,7 +146,7 @@ Non-negotiable domain invariants:
 
 ### Durable work, not background timers
 
-Account deletion, webhook application, fulfillment, credits, subscription commands and refund reversal are all **persisted jobs** with idempotency keys, leases, exponential retry, expired-lease recovery and dead-letter states (`src/platform/operations/`, `src/platform/commerce/application/job-leases.ts`). Entry points are the cron routes in `vercel.json` → `/api/internal/jobs/*`, authenticated via `authenticate-internal-request.ts`. Dead-letter and reconciliation states are deliberate, operator-visible failure modes — never convert one into silent success. Runbooks live in `docs/runbooks/` and `docs/operations/`.
+Account deletion, webhook application, fulfillment, credits, subscription commands and refund reversal are all **persisted jobs** with idempotency keys, leases, exponential retry, expired-lease recovery and dead-letter states (`src/platform/operations/`, `src/platform/commerce/application/job-leases.ts`). Entry points are the cron routes in `vercel.json` → `/api/internal/jobs/*`, authenticated via `authenticate-internal-request.ts`. Dead-letter and reconciliation states are deliberate, operator-visible failure modes — never convert one into silent success. Runbooks live in `docs/运维/` (Chinese).
 
 ### Account identity
 
@@ -158,7 +158,7 @@ The starter is the shell around a product, not the product. Product code — the
 
 Two edges are enforced by `creat-web-modules/product-module-boundary` in `eslint.config.mjs`: a module may not import `@/config/*` (configuration composes modules, so the reverse would close a cycle), and nothing outside a module may reach past its public entry (including one module into another). Platform code is separately barred from `@/modules/*` by `no-restricted-imports`. `tests/unit/architecture/product-module-boundary.test.ts` covers both.
 
-Configuration wires a module in by importing its entry into a `tool-demo` section's `surface`. Full rationale and the dependency table: `docs/setup/product-modules.md`.
+Configuration wires a module in by importing its entry into a `tool-demo` section's `surface`. Full rationale and the dependency table: `docs/参考/产品模块.md`.
 
 ### UI and styling
 

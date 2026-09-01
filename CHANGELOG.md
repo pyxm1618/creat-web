@@ -1,6 +1,6 @@
 # Changelog
 
-All notable starter-platform changes are recorded here. This repository is an internal starter; owned products do not automatically inherit changes and must follow the upgrade procedure in `docs/upgrade/owned-project-upgrades.md`.
+All notable starter-platform changes are recorded here. This repository is an internal starter; owned products do not automatically inherit changes and must follow the upgrade procedure in `docs/参考/扩展与升级.md`.
 
 ## 0.1.0 - 2026-08-09
 

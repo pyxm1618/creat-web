@@ -4,8 +4,8 @@ Private, SEO-first Next.js starter for launching overseas web products quickly, 
 
 `pyxm1618/quickiching` is a strictly read-only reference project. `creat-web` does not modify it, depend on it, or copy its product identity/content.
 
-> **中文用户**：[docs/setup/建站手册.md](docs/setup/建站手册.md) 是一份按时间顺序
-> 的完整操作手册，从空仓库到被 Google 收录，含实际建站时才会撞到的坑。
+> **中文用户**：[docs/建站手册.md](docs/建站手册.md) 是一份按时间顺序的完整操作手册，
+> 从空仓库到被 Google 收录，含实际建站时才会撞到的坑。全部文档索引见 [docs/README.md](docs/README.md)。
 
 ## Default mode: SEO launch
 
@@ -309,7 +309,7 @@ Partial refunds intentionally require an explicit product/operator entitlement p
 
 ### Future Stripe adapter
 
-The domain uses the provider-neutral `PaymentProvider` interface. A future Stripe adapter should map Stripe checkout/payment/subscription/refund facts into the existing order/payment/subscription/refund/entitlement domain rather than duplicating those domains. See `docs/providers/payment-provider-extension.md`.
+The domain uses the provider-neutral `PaymentProvider` interface. A future Stripe adapter should map Stripe checkout/payment/subscription/refund facts into the existing order/payment/subscription/refund/entitlement domain rather than duplicating those domains. See `docs/参考/扩展与升级.md`.
 
 ## Enabling analytics
 
@@ -415,9 +415,9 @@ Durable account deletion, payment webhook application, fulfillment, credits, sub
 
 Operational references:
 
-- `docs/operations/commerce-runbook.md`
-- `docs/operations/credits-runbook.md`
-- existing account/auth lifecycle design and runbooks under `docs/`
+- `docs/运维/交易与积分.md` — commerce, subscription, refund, credit ledger and webhook retention
+- `docs/运维/故障处理.md` — dead letters, release rollback, database backup/restore
+- `docs/运维/密钥轮换.md` — purpose-specific credential rotation
 
 Dead-letter/reconciliation states are intentional operator-visible failure modes. Do not convert them to silent success.
 
@@ -437,11 +437,17 @@ The code can be prepared without these resources; the repository owner supplies 
 
 ## Architecture references
 
-The repository retains the design and Superpowers plan history for maintainers who need the deeper rationale. The current implementation remains governed by the corrected architecture/security invariants in those documents, but ordinary product launch work should start from this README and the configuration files above.
+Design and execution-plan history from the initial build was removed once the implementation superseded it; `git log` retains it. Architecture and security invariants now live in the code, the release gates and `CLAUDE.md`.
 
-- `docs/specs/creat-web-v1-master-design.md`
-- `docs/specs/auth-security-design.md`
-- `docs/specs/payments-subscriptions-credits-design.md`
-- `docs/specs/seo-home-legal-design.md`
-- `docs/specs/quality-migration-release-design.md`
-- `docs/superpowers/plans/2026-08-06-creat-web-master-execution-plan-v3.md`
+Current documentation is indexed in [docs/README.md](docs/README.md):
+
+| Document | Read when |
+| --- | --- |
+| `docs/建站手册.md` | Launching a new site (Chinese, chronological) |
+| `docs/参考/产品模块.md` | Writing product code under `src/modules/` |
+| `docs/参考/扩展与升级.md` | Upgrading an owned product, or adding a payment provider |
+| `docs/参考/waffo-合约与验收.md` | Verifying the Waffo contract before enabling commerce |
+| `docs/运维/上线检查清单.md` | Preparing a staging or production activation |
+| `docs/运维/交易与积分.md` | Operating commerce, subscriptions, credits, webhook retention |
+| `docs/运维/故障处理.md` | Dead letters, rollback, database recovery |
+| `docs/运维/密钥轮换.md` | Rotating any credential |

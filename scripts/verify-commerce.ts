@@ -32,28 +32,28 @@ if (!featuresConfig.commerce.enabled && enabledProducts.length > 0) {
   throw new Error("disabled commerce must not ship enabled products");
 }
 
-const contract = await readFile("docs/providers/waffo-contract-2026-08-08.md", "utf8");
-if (!contract.includes("live merchant resource validation still required")) {
+const contract = await readFile("docs/参考/waffo-合约与验收.md", "utf8");
+if (!contract.includes("真实商户资源验证仍未完成")) {
   throw new Error("Waffo contract document must state the live-resource gate");
 }
 if (contract.includes("WAFFO_CONTRACT_VERIFIED=1") === false) {
   throw new Error("Waffo contract document must describe the deployment gate");
 }
-const paymentGateHeading = "## Mandatory live payment-query activation gate";
+const paymentGateHeading = "## 支付查询的强制激活门禁";
 const paymentGate = contract.slice(contract.indexOf(paymentGateHeading));
 if (!paymentGate.startsWith(paymentGateHeading)) {
   throw new Error("Waffo contract document must define the live payment-query gate");
 }
 for (const requirement of [
-  "authenticated merchant GraphQL introspection",
-  "`String!` variables",
-  "identical list/count filter",
-  "bounded list and count completeness",
-  "one-time relation, `testMode`, store, amount, currency, and `createdAt`",
-  "representative one-time payment snapshot",
-  "payment-level immutable subscription period",
-  "subscription automatic recovery remains **NO-GO**",
-  "must not be set until both the original live-resource checklist and this payment-query gate pass",
+  "已认证的商户 GraphQL 内省",
+  "`String!` 变量",
+  "完全相同的过滤条件",
+  "没有截断、数量不符或重复 ID",
+  "`testMode`、店铺、金额、币种和 `createdAt`",
+  "有代表性的一次性支付快照",
+  "支付级不可变订阅周期",
+  "订阅自动恢复保持 NO-GO",
+  "在原始资源清单和这份支付查询门禁都通过之前，不得设置",
 ]) {
   if (!paymentGate.includes(requirement)) {
     throw new Error(`Waffo payment-query activation gate is incomplete: ${requirement}`);
