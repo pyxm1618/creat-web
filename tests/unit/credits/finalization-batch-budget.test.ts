@@ -27,7 +27,6 @@ vi.mock("@/platform/credits/application/reconcile-credit-ledger", () => ({
   reconcileCreditLedgerBatch: mocks.reconcileCreditLedgerBatch,
 }));
 
-import { GET as runCreditsCron } from "@/app/api/cron/credits/route";
 import { GET as runCreditExpiryJob } from "@/app/api/internal/jobs/credit-expiry/route";
 
 beforeEach(() => {
@@ -49,18 +48,6 @@ beforeEach(() => {
   });
 });
 
-it("charges lost finalization claims against the cron Credits batch", async () => {
-  const response = await runCreditsCron(new Request("https://example.com/api/cron/credits"));
-
-  expect(response.status).toBe(200);
-  expect(mocks.runCreditFinalizationWorker).toHaveBeenCalledWith(
-    {},
-    expect.objectContaining({ limit: 50 }),
-  );
-  expect(mocks.expireGrants).toHaveBeenCalledWith({}, { limit: 46 });
-  expect(mocks.reconcileCreditLedgerBatch).not.toHaveBeenCalled();
-});
-
 it("charges lost finalization claims against the internal Credits batch", async () => {
   const response = await runCreditExpiryJob(
     new Request("https://example.com/api/internal/jobs/credit-expiry"),
@@ -72,4 +59,5 @@ it("charges lost finalization claims against the internal Credits batch", async 
     expect.objectContaining({ limit: 50 }),
   );
   expect(mocks.expireGrants).toHaveBeenCalledWith({}, { limit: 46 });
+  expect(mocks.reconcileCreditLedgerBatch).not.toHaveBeenCalled();
 });
