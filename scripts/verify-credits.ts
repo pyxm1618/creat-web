@@ -57,7 +57,7 @@ const vercel = JSON.parse(await readFile("vercel.json", "utf8")) as {
 };
 if (
   featuresConfig.commerce.credits &&
-  !vercel.crons?.some((cron) => cron.path === "/api/cron/credits")
+  !vercel.crons?.some((cron) => cron.path === "/api/internal/jobs/credit-expiry")
 ) {
   throw new Error("credit recovery cron is required when credits are enabled");
 }

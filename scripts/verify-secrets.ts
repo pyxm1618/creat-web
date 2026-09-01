@@ -9,9 +9,6 @@ const ALLOWED_FAKE_VALUES_BY_FILE: Readonly<Record<string, readonly string[]>> =
     "schema-generation-secret-with-at-least-32-characters",
     "e2e-better-auth-secret-with-at-least-32-characters",
   ],
-  "docs/superpowers/plans/2026-08-06-creat-web-authentication-plan.md": [
-    "schema-generation-secret-with-at-least-32-characters",
-  ],
   "scripts/verify-clean-setup.ts": [
     "clean-setup-auth-secret-with-more-than-32-characters",
     "clean-setup-google-client-secret-value",

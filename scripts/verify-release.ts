@@ -456,12 +456,12 @@ await verifyCreditsReleaseArtifacts(".");
 for (const requiredFile of [
   "SECURITY.md",
   "CHANGELOG.md",
-  "docs/runbooks/database-backup-restore.md",
-  "docs/runbooks/key-rotation.md",
-  "docs/runbooks/release-rollback.md",
-  "docs/runbooks/dead-letters.md",
-  "docs/runbooks/data-retention.md",
-  "docs/upgrade/owned-project-upgrades.md",
+  "docs/建站手册.md",
+  "docs/运维/故障处理.md",
+  "docs/运维/密钥轮换.md",
+  "docs/运维/交易与积分.md",
+  "docs/运维/上线检查清单.md",
+  "docs/参考/扩展与升级.md",
 ]) {
   await readFile(requiredFile, "utf8");
 }

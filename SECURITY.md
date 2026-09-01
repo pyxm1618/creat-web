@@ -7,7 +7,7 @@
 | 0.1.x                      | Supported                  |
 | Earlier/unversioned copies | Manual assessment required |
 
-Owned products are independent codebases. A fix in this starter does not automatically patch an already-created product; maintainers must follow `docs/upgrade/owned-project-upgrades.md`.
+Owned products are independent codebases. A fix in this starter does not automatically patch an already-created product; maintainers must follow `docs/参考/扩展与升级.md`.
 
 ## Private reporting
 
