@@ -46,12 +46,8 @@ function ensureTurnstileScript(onReady: () => void): () => void {
   const script = document.createElement("script");
   script.id = SCRIPT_ID;
   script.src = SCRIPT_SRC;
-  // Turnstile refuses `turnstile.ready()` when its own script tag carries
-  // async or defer, and throws instead of rendering the widget. A dynamically
-  // inserted script is already non-blocking, so clearing both attributes costs
-  // nothing and keeps ready() usable.
-  script.async = false;
-  script.defer = false;
+  script.async = true;
+  script.defer = true;
   script.addEventListener("load", handleReady);
   document.head.append(script);
   return () => script.removeEventListener("load", handleReady);
