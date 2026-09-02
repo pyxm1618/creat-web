@@ -2,6 +2,21 @@
 
 All notable starter-platform changes are recorded here. This repository is an internal starter; owned products do not automatically inherit changes and must follow the upgrade procedure in `docs/参考/扩展与升级.md`.
 
+## 0.2.1 - 2026-09-02
+
+### Fixed
+
+- `TurnstileWidget` injected the Turnstile script with `async` and `defer` set and then called `turnstile.ready()`. Cloudflare rejects that combination (`TurnstileError: Remove async/defer from the Turnstile api.js script tag before using turnstile.ready()`), so the widget never rendered, no token was ever produced, and the sign-in button stayed disabled forever — magic-link sign-in was unusable in a real browser whenever the genuine Turnstile script loaded. Both attributes are now cleared; a dynamically inserted script is non-blocking regardless. The e2e suite installs a `window.turnstile` mock before load, so the real script path was never exercised and CI stayed green throughout.
+
+### Documentation
+
+- `docs/建站手册.md`: added a tested local walkthrough for taking a one-time payment end to end (tunnel, `APP_ORIGIN`, registering the webhook through the SDK, the four rows to check in the database), the requirement that every `fulfillmentKey` has a handler, the legal-configuration facts that enabling commerce forces (and the misleading way that failure surfaces — a dozen unrelated security tests turning red because they shell out to `verify-release.ts`), and four newly hit traps — a `reviewed` SEO route without `reviewFingerprint` breaking every gate that imports `routes.config.ts`, `COMMERCE_RETENTION_KEY` needing exactly 32 base64 bytes, `drizzle.config.ts` not reading `.env.local`, and stale `.next` type files producing phantom typecheck errors.
+- Recorded that `verify:commerce` cannot see credit-based fulfillment: it inspects only the static `fulfillmentHandlers` registry, while credit handlers are injected at runtime by `commerce-runtime.ts`. The gate is unchanged; the limitation is now documented rather than rediscovered.
+
+### Owned-project action
+
+No migrations and no environment-variable changes. Any product with `auth.magicLink` enabled should take this fix — without it the sign-in form cannot be submitted.
+
 ## 0.2.0 - 2026-09-01
 
 Platform capabilities that landed on `main` after the `0.1.0` entry was written, plus the documentation consolidation and two corrections.
