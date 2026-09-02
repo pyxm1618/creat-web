@@ -10,7 +10,7 @@ All notable starter-platform changes are recorded here. This repository is an in
 
 ### Documentation
 
-- `docs/建站手册.md`: added a tested local walkthrough for taking a one-time payment end to end (tunnel, `APP_ORIGIN`, registering the webhook through the SDK, the four rows to check in the database), the requirement that every `fulfillmentKey` has a handler, and four newly hit traps — a `reviewed` SEO route without `reviewFingerprint` breaking every gate that imports `routes.config.ts`, `COMMERCE_RETENTION_KEY` needing exactly 32 base64 bytes, `drizzle.config.ts` not reading `.env.local`, and stale `.next` type files producing phantom typecheck errors.
+- `docs/建站手册.md`: added a tested local walkthrough for taking a one-time payment end to end (tunnel, `APP_ORIGIN`, registering the webhook through the SDK, the four rows to check in the database), the requirement that every `fulfillmentKey` has a handler, the legal-configuration facts that enabling commerce forces (and the misleading way that failure surfaces — a dozen unrelated security tests turning red because they shell out to `verify-release.ts`), and four newly hit traps — a `reviewed` SEO route without `reviewFingerprint` breaking every gate that imports `routes.config.ts`, `COMMERCE_RETENTION_KEY` needing exactly 32 base64 bytes, `drizzle.config.ts` not reading `.env.local`, and stale `.next` type files producing phantom typecheck errors.
 - Recorded that `verify:commerce` cannot see credit-based fulfillment: it inspects only the static `fulfillmentHandlers` registry, while credit handlers are injected at runtime by `commerce-runtime.ts`. The gate is unchanged; the limitation is now documented rather than rediscovered.
 
 ### Owned-project action
