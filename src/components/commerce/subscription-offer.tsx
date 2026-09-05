@@ -6,7 +6,7 @@ import { useRef, useState } from "react";
 import { bodyText, buttonPrimary, inlineLink, metaText } from "@/components/ui/styles";
 
 type CheckoutResponse = { readonly checkoutUrl?: unknown };
-type State = "idle" | "pending" | "signin" | "error";
+type State = "idle" | "pending" | "signin" | "conflict" | "error";
 
 function newIdempotencyKey(): string {
   return `subscription-checkout:${crypto.randomUUID()}`;
@@ -41,8 +41,7 @@ export function SubscriptionOffer({
         return;
       }
       if (response.status === 409) {
-        keyRef.current = null;
-        setState("error");
+        setState("conflict");
         return;
       }
       if (!response.ok) {
@@ -67,10 +66,14 @@ export function SubscriptionOffer({
       <button
         type="button"
         className={`mt-5 ${buttonPrimary}`}
-        disabled={state === "pending"}
+        disabled={state === "pending" || state === "conflict"}
         onClick={() => void startCheckout()}
       >
-        {state === "pending" ? "Opening checkout…" : `Subscribe for ${priceLabel}`}
+        {state === "pending"
+          ? "Opening checkout…"
+          : state === "conflict"
+            ? "Checkout requires review"
+            : `Subscribe for ${priceLabel}`}
       </button>
       {state === "signin" ? (
         <p className={`mt-3 ${metaText}`}>
@@ -83,6 +86,11 @@ export function SubscriptionOffer({
       ) : null}
       {state === "error" ? (
         <p className={`mt-3 ${metaText}`}>Subscription checkout could not be started.</p>
+      ) : null}
+      {state === "conflict" ? (
+        <p className={`mt-3 ${metaText}`}>
+          Checkout requires review. Do not retry this subscription checkout.
+        </p>
       ) : null}
     </article>
   );

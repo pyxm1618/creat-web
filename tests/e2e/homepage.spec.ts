@@ -45,3 +45,35 @@ test("enabled Test Mode exposes the subscription checkout entry", async ({ page 
   await expect(page.getByRole("heading", { name: "test2 monthly" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Subscribe for $1.88 / month" })).toBeVisible();
 });
+
+test("does not create a second checkout after a 409 conflict", async ({ page }) => {
+  const idempotencyKeys: string[] = [];
+
+  await page.route("**/api/commerce/checkout", async (route) => {
+    idempotencyKeys.push(route.request().headers()["idempotency-key"] ?? "");
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "checkout_conflict" }),
+    });
+  });
+
+  await page.goto("/");
+
+  const subscribeButton = page.getByRole("button", {
+    name: /^(Subscribe for \$1\.88 \/ month|Checkout requires review)$/,
+  });
+  await subscribeButton.click();
+
+  await expect(
+    page.getByText("Checkout requires review. Do not retry this subscription checkout."),
+  ).toBeVisible();
+  await expect(subscribeButton).toBeDisabled();
+
+  await subscribeButton.evaluate((button) => {
+    (button as HTMLButtonElement).click();
+  });
+
+  await expect.poll(() => idempotencyKeys.length).toBe(1);
+  expect(idempotencyKeys[0]).toMatch(/^subscription-checkout:/);
+});
