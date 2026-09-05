@@ -1,9 +1,8 @@
 import { expect, it } from "vitest";
 
-import { test2UsageCredits } from "@/config/credits.config";
+import { test2ProductDefinition, test2UsageCredits } from "@/config/test2-subscription.config";
 import { featuresConfig } from "@/config/features.config";
 import { homeConfig } from "@/config/home.config";
-import { test2ProductDefinition } from "@/config/products.config";
 import { productSnapshot } from "@/platform/commerce/domain/product";
 
 it("defines the approved Waffo Test monthly subscription and usage credits", () => {

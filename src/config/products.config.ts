@@ -1,19 +1,7 @@
 import { createProductCatalog } from "@/platform/commerce/application/product-catalog";
 import { featuresConfig } from "@/config/features.config";
 import type { ProductDefinition } from "@/platform/commerce/domain/product";
-
-export const test2ProductDefinition = {
-  key: "test2",
-  version: 1,
-  enabled: true,
-  commercialModel: "subscription",
-  billingInterval: "month",
-  currency: "USD",
-  expectedPrice: "1.88",
-  providerProductIdByEnvironment: { test: "PROD_3caeAywntktbBjnkRonFVn" },
-  fulfillmentKey: "test2-usage-credits",
-  refundPolicyKey: "default-subscription",
-} as const satisfies ProductDefinition;
+import { test2ProductDefinition } from "./test2-subscription.config";
 
 export const productDefinitions = [
   {

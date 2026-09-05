@@ -1,11 +1,6 @@
 import type { CreditOrderFulfillmentDefinition } from "@/platform/credits/integration/commerce/credit-fulfillment";
 import { featuresConfig } from "@/config/features.config";
-
-const test2UsageCredits = {
-  fulfillmentKey: "test2-usage-credits",
-  creditType: "usage",
-  quantity: 100,
-} as const satisfies CreditOrderFulfillmentDefinition;
+import { test2UsageCredits } from "./test2-subscription.config";
 
 export { test2UsageCredits };
 
