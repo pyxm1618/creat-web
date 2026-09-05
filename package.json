@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.6.25",
-    "@waffo/pancake-ts": "0.16.0",
+    "@waffo/pancake-ts": "0.18.0",
     "better-auth": "1.6.25",
     "drizzle-orm": "0.45.2",
     "next": "16.2.12",

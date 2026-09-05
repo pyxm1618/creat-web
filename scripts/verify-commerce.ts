@@ -8,8 +8,8 @@ import { createProductCatalog } from "@/platform/commerce/application/product-ca
 const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
   dependencies?: Record<string, string>;
 };
-if (packageJson.dependencies?.["@waffo/pancake-ts"] !== "0.16.0") {
-  throw new Error("Waffo Pancake SDK must be exactly pinned to 0.16.0");
+if (packageJson.dependencies?.["@waffo/pancake-ts"] !== "0.18.0") {
+  throw new Error("Waffo Pancake SDK must be exactly pinned to 0.18.0");
 }
 
 const catalog = createProductCatalog(productDefinitions);

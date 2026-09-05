@@ -1,16 +1,17 @@
 # Waffo 支付合约与上线验收
 
-**合约捕获日期：2026-08-08，对应 SDK `@waffo/pancake-ts` 0.16.0（精确锁定）。**
+**合约复核日期：2026-09-05，对应 SDK `@waffo/pancake-ts` 0.18.0（精确锁定）。**
 
 状态：**SDK 合约已捕获；真实商户资源验证仍未完成，部署环境的交易功能不得开启。**
 
 ## 基本信息
 
 - 包名：`@waffo/pancake-ts`
-- 版本：`0.16.0`（精确锁定，不允许版本范围）
+- 版本：`0.18.0`（精确锁定，不允许版本范围）
 - 产品：Waffo Pancake Merchant of Record SDK
 - 默认 API 地址：`https://api.waffo.ai`
 - 商户请求通过 SDK 用 RSA-SHA256 签名并携带商户身份头
+- customer session 请求必须显式携带与本地环境对应的 `X-Environment`（`test` 或 `prod`）
 
 ## 结账合约
 
@@ -83,7 +84,7 @@ query ($reference: String!, $paymentId: String!) {
 
 每次查询都创建一个请求级 SDK 客户端，其自定义 fetch 接收合并后的调用方 abort 信号和一个有界超时。服务商警告不会被丢弃：只有 `message`、`layer` 和可选的 `aiHint` 会离开适配器，供对账任务持久化成白名单审计记录。
 
-这些测试是拿代码对照仓库里存档的 SDK 0.16.0 文档和一份受控的线上装置做的验证。**它们不能证明已认证的真实商户 schema 或资源。**
+这些测试是拿代码对照仓库里存档的 SDK 0.18.0 文档和一份受控的线上装置做的验证。**它们不能证明已认证的真实商户 schema 或资源。**
 
 ## 漏收 webhook 的恢复边界
 
@@ -112,7 +113,7 @@ query ($reference: String!, $paymentId: String!) {
 - `mode`
 - `data`
 
-SDK 0.16.0 暴露的相关事件类型：
+SDK 0.18.0 暴露的相关事件类型：
 
 ```
 order.completed

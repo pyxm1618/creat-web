@@ -235,6 +235,15 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       ...(config.webhookPublicKey ? { webhookPublicKey: config.webhookPublicKey } : {}),
     });
   const client = createClient(config.fetch);
+  const customerSessionClient = createClient(async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname !== "/v1/actions/auth/issue-session-token") {
+      return baseFetch(input, init);
+    }
+    const headers = new Headers(init?.headers);
+    headers.delete("X-Idempotency-Key");
+    return baseFetch(input, { ...init, headers });
+  });
 
   async function createCheckout(input: CreateCheckoutInput): Promise<CreatedCheckout> {
     const result = await client.checkout.authenticated.create({
@@ -251,14 +260,16 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
     };
   }
 
-  async function customerSession(buyerIdentity: string) {
+  async function customerSession(buyerIdentity: string, environment: CommerceEnvironment) {
     if (!config.storeId)
       throw new ProviderContractError("Waffo customer operations require storeId");
-    const session = await client.auth.issueSessionToken({
+    const session = await customerSessionClient.auth.issueSessionToken({
       storeId: config.storeId,
       buyerIdentity,
     });
-    return client.customer(session.token);
+    return customerSessionClient.customer(session.token, {
+      environment: providerEnvironment(environment),
+    });
   }
 
   return {
@@ -269,17 +280,17 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       return createCheckout({ ...input, model: "one_time" });
     },
     async cancelSubscription(input) {
-      const customer = await customerSession(input.buyerIdentity);
+      const customer = await customerSession(input.buyerIdentity, input.environment);
       const result = await customer.cancelSubscription({ orderId: input.externalOrderId });
       return { externalOrderId: result.orderId, status: subscriptionStatus(result.status) };
     },
     async resumeSubscription(input) {
-      const customer = await customerSession(input.buyerIdentity);
+      const customer = await customerSession(input.buyerIdentity, input.environment);
       const result = await customer.reactivateSubscription({ orderId: input.externalOrderId });
       return { externalOrderId: result.orderId, status: subscriptionStatus(result.status) };
     },
     async requestRefund(input: RefundRequest) {
-      const customer = await customerSession(input.buyerIdentity);
+      const customer = await customerSession(input.buyerIdentity, input.environment);
       const result = await customer.createRefundTicket({
         paymentId: input.externalPaymentId,
         reason: input.reason,

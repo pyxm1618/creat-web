@@ -63,7 +63,7 @@ function paymentQueryProvider(input: {
   });
 }
 
-describe("Waffo Pancake 0.16 contract", () => {
+describe("Waffo Pancake provider contract", () => {
   it("maps authenticated checkout without accepting browser-owned price facts", async () => {
     const keyPair = keys();
     const requestBodies: Record<string, unknown>[] = [];
@@ -122,6 +122,73 @@ describe("Waffo Pancake 0.16 contract", () => {
       productId,
       buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
     });
+  });
+
+  it("sends the Test Mode environment on customer refund requests", async () => {
+    const keyPair = keys();
+    const authHeaders: Headers[] = [];
+    const refundHeaders: Headers[] = [];
+    const provider = createWaffoPaymentProvider({
+      merchantId,
+      privateKey: keyPair.privateKey,
+      storeId,
+      baseUrl: "https://api.example.test",
+      fetch: async (input, init) => {
+        const url = String(input);
+        if (url.includes("issue-session-token")) {
+          authHeaders.push(new Headers(init?.headers));
+          return Response.json({
+            data: {
+              token: "test-token",
+              expiresAt: "2026-08-08T12:00:00.000Z",
+            },
+          });
+        }
+        if (url.includes("refund-ticket/create-ticket")) {
+          refundHeaders.push(new Headers(init?.headers));
+          return Response.json({
+            data: {
+              ticket: {
+                id: "TKT_0123456789ABCDEFGHIJKL",
+                status: "pending",
+              },
+            },
+          });
+        }
+        throw new Error(`unexpected Waffo request: ${url}`);
+      },
+    });
+
+    await expect(
+      provider.requestRefund({
+        environment: "test",
+        buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
+        externalPaymentId: paymentId,
+        amount: { currency: "USD", minor: 188n },
+        reason: "Customer requested a full refund",
+        idempotencyKey: "01989ef5-c3f7-7000-8000-000000000003",
+      }),
+    ).resolves.toEqual({
+      externalRefundReference: "TKT_0123456789ABCDEFGHIJKL",
+      status: "pending",
+    });
+
+    await expect(
+      provider.requestRefund({
+        environment: "production",
+        buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
+        externalPaymentId: paymentId,
+        amount: { currency: "USD", minor: 188n },
+        reason: "Customer requested a full refund",
+        idempotencyKey: "01989ef5-c3f7-7000-8000-000000000004",
+      }),
+    ).resolves.toEqual({
+      externalRefundReference: "TKT_0123456789ABCDEFGHIJKL",
+      status: "pending",
+    });
+
+    expect(refundHeaders.map((headers) => headers.get("X-Environment"))).toEqual(["test", "prod"]);
+    expect(authHeaders.every((headers) => headers.get("X-Idempotency-Key") === null)).toBe(true);
   });
 
   it("verifies an exact raw signed order.completed event and normalizes decimal money", async () => {
