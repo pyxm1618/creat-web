@@ -1,16 +1,17 @@
 # Waffo 支付合约与上线验收
 
-**合约捕获日期：2026-08-08，对应 SDK `@waffo/pancake-ts` 0.16.0（精确锁定）。**
+**合约复核日期：2026-09-05，对应 SDK `@waffo/pancake-ts` 0.18.0（精确锁定）。**
 
 状态：**SDK 合约已捕获；真实商户资源验证仍未完成，部署环境的交易功能不得开启。**
 
 ## 基本信息
 
 - 包名：`@waffo/pancake-ts`
-- 版本：`0.16.0`（精确锁定，不允许版本范围）
+- 版本：`0.18.0`（精确锁定，不允许版本范围）
 - 产品：Waffo Pancake Merchant of Record SDK
 - 默认 API 地址：`https://api.waffo.ai`
 - 商户请求通过 SDK 用 RSA-SHA256 签名并携带商户身份头
+- customer session 请求必须显式携带与本地环境对应的 `X-Environment`（`test` 或 `prod`）
 
 ## 结账合约
 
@@ -83,7 +84,7 @@ query ($reference: String!, $paymentId: String!) {
 
 每次查询都创建一个请求级 SDK 客户端，其自定义 fetch 接收合并后的调用方 abort 信号和一个有界超时。服务商警告不会被丢弃：只有 `message`、`layer` 和可选的 `aiHint` 会离开适配器，供对账任务持久化成白名单审计记录。
 
-这些测试是拿代码对照仓库里存档的 SDK 0.16.0 文档和一份受控的线上装置做的验证。**它们不能证明已认证的真实商户 schema 或资源。**
+这些测试是拿代码对照仓库里存档的 SDK 0.18.0 文档和一份受控的线上装置做的验证。**它们不能证明已认证的真实商户 schema 或资源。**
 
 ## 漏收 webhook 的恢复边界
 
@@ -112,7 +113,7 @@ query ($reference: String!, $paymentId: String!) {
 - `mode`
 - `data`
 
-SDK 0.16.0 暴露的相关事件类型：
+SDK 0.18.0 暴露的相关事件类型：
 
 ```
 order.completed
@@ -130,6 +131,12 @@ refund.failed
 相关 data 字段包括 `orderId`、`orderMerchantExternalId`、`paymentId`、`paymentStatus`、`currency`、`amount`、订阅周期字段和退款字段。
 
 已验证 webhook 路径处理一次性、退款和带类型的订阅事件。**订阅激活/支付变更所需的周期边界必须来自那个签名事件本身。** 这和 GraphQL 漏收恢复是两回事：查询结果不能拿当前订单周期字段去顶替缺失的支付级历史。
+
+### SDK 0.18.0 的签名时间容差与重试
+
+Waffo SDK 0.18.0 的 webhook 签名时间容差默认是：过去 **45 分钟**（`toleranceMs = 2700000`），未来 **1 分钟**（`futureToleranceMs = 60000`）。过去方向放宽是为了覆盖 Waffo 的 webhook retry：签名时间在第一次投递前生成，后续重试沿用同一个签名头，因此最后一次重试可能明显晚于首次投递。
+
+容差放宽不替代去重。creat-web 依赖 `(environment, providerEventId)` 的数据库唯一性和 event-id dedupe，在同一事件重试时防止支付、退款或权益被重复应用。
 
 ## 留存合约
 
