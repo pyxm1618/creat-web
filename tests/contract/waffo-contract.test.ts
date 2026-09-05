@@ -226,12 +226,57 @@ describe("Waffo Pancake provider contract", () => {
     });
     expect(event).toMatchObject({
       type: "one_time_payment_succeeded",
-      eventId: webhookId,
+      eventId: paymentId,
       environment: "test",
       externalOrderId: orderId,
       merchantOrderReference: "01989ef5-c3f7-7000-8000-000000000001",
       externalPaymentId: paymentId,
       amount: { currency: "USD", minor: 2900n },
+      storeId,
+    });
+  });
+
+  it("uses Waffo eventId for subscription delivery deduplication", async () => {
+    const keyPair = keys();
+    const provider = createWaffoPaymentProvider({
+      merchantId,
+      privateKey: keyPair.privateKey,
+      storeId,
+      webhookPublicKey: { test: keyPair.publicKey },
+    });
+    const deliveryEventId = `${orderId}-2026-08-08T04:00:01.000Z`;
+    const raw = JSON.stringify({
+      id: orderId,
+      timestamp: "2026-08-08T04:00:01.000Z",
+      eventType: "subscription.canceling",
+      eventId: deliveryEventId,
+      storeId,
+      storeName: "Test Store",
+      mode: "test",
+      data: {
+        orderId,
+        orderStatus: "canceling",
+        buyerEmail: "buyer@example.com",
+        orderMerchantExternalId: merchantOrderReference,
+        currentPeriodStart: "2026-08-08T04:00:00.000Z",
+        currentPeriodEnd: "2026-09-08T04:00:00.000Z",
+      },
+    });
+
+    const event = await provider.verifyAndNormalizeWebhook({
+      rawBody: new TextEncoder().encode(raw),
+      signature: signatureHeader(raw, keyPair.privateKey),
+      environment: "test",
+    });
+
+    expect(event).toMatchObject({
+      type: "subscription_canceling",
+      eventId: deliveryEventId,
+      environment: "test",
+      externalOrderId: orderId,
+      merchantOrderReference,
+      currentPeriodStart: new Date("2026-08-08T04:00:00.000Z"),
+      currentPeriodEnd: new Date("2026-09-08T04:00:00.000Z"),
       storeId,
     });
   });

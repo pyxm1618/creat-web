@@ -104,10 +104,11 @@ query ($reference: String!, $paymentId: String!) {
 
 已验证事件信封字段：
 
-- `id`：用于去重的 webhook 投递标识
+- `id`：provider payload 中的字段；本合约不假定它在所有事件类型中具有统一语义
 - `timestamp`
 - `eventType`
-- `eventId`
+- `eventId`：经过 SDK 验签的 provider event identity；creat-web 将它作为
+  `providerEventId`，用于事件去重
 - `storeId`
 - `storeName`
 - `mode`
@@ -136,7 +137,10 @@ refund.failed
 
 Waffo SDK 0.18.0 的 webhook 签名时间容差默认是：过去 **45 分钟**（`toleranceMs = 2700000`），未来 **1 分钟**（`futureToleranceMs = 60000`）。过去方向放宽是为了覆盖 Waffo 的 webhook retry：签名时间在第一次投递前生成，后续重试沿用同一个签名头，因此最后一次重试可能明显晚于首次投递。
 
-容差放宽不替代去重。creat-web 依赖 `(environment, providerEventId)` 的数据库唯一性和 event-id dedupe，在同一事件重试时防止支付、退款或权益被重复应用。
+容差放宽不替代去重。creat-web 只把经过验签 payload 的 `eventId` 归一化为
+`providerEventId`，并依赖 `(environment, providerEventId)` 的数据库唯一约束；因此
+同一 `eventId` 的重试不会重复应用，不同 `eventId` 的生命周期事件即使 `id` 相同也
+不会被错误合并。
 
 ## 留存合约
 
@@ -156,7 +160,8 @@ Waffo SDK 0.18.0 的 webhook 签名时间容差默认是：过去 **45 分钟**�
 5. `orderMerchantExternalId` 能原样往返回本地订单 UUID。
 6. `order.completed` 暴露出预期的订单/支付/金额/币种事实。
 7. 退款事件、以及启用订阅时的订阅事件，形状与已捕获的 SDK 合约一致。
-8. 同一次投递重放会被去重。
+8. 同一个已验签事件（相同 `eventId`）重放会被去重；不同 `eventId` 的生命周期事件
+   不会因 `id` 相同而被合并。
 
 ## 支付查询的强制激活门禁
 

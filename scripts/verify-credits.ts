@@ -40,14 +40,10 @@ if (featuresConfig.commerce.credits) {
   if (creditDefinitions.length === 0) {
     throw new Error("enabled credits require at least one explicit credit fulfillment definition");
   }
-  const enabledOneTime = products.filter(
-    (product) => product.enabled && product.commercialModel === "one_time",
-  );
+  const enabledProducts = products.filter((product) => product.enabled);
   for (const definition of creditDefinitions) {
-    if (!enabledOneTime.some((product) => product.fulfillmentKey === definition.fulfillmentKey)) {
-      throw new Error(
-        `credit fulfillment has no enabled one-time product: ${definition.fulfillmentKey}`,
-      );
+    if (!enabledProducts.some((product) => product.fulfillmentKey === definition.fulfillmentKey)) {
+      throw new Error(`credit fulfillment has no enabled product: ${definition.fulfillmentKey}`);
     }
   }
 }

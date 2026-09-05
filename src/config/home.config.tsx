@@ -1,5 +1,7 @@
 import type { LandingSection } from "@/components/landing/landing-page";
+import { SubscriptionOffer } from "@/components/commerce/subscription-offer";
 
+import { featuresConfig } from "./features.config";
 import { routeRegistry } from "./routes.config";
 
 const homeRoute = routeRegistry.get("/");
@@ -109,6 +111,22 @@ export const homeConfig = {
           title: "No fabricated proof",
           body: "Do not add ratings, reviews or claims merely to populate a schema or landing-page pattern.",
         },
+      ],
+    },
+    {
+      type: "pricing",
+      enabled: featuresConfig.commerce.subscriptions,
+      order: 60,
+      heading: "Test Mode subscription",
+      body: "Subscribe in Waffo Test Mode to receive 100 usage credits for each successful monthly payment.",
+      cards: [
+        <SubscriptionOffer
+          key="test2-subscription"
+          productKey="test2"
+          headline="test2 monthly"
+          body="A Test Mode subscription for the current end-to-end acceptance run."
+          priceLabel="$1.88 / month"
+        />,
       ],
     },
     {

@@ -9,7 +9,7 @@ const enabledTestFeaturesConfig = {
 
 const commerceEnabledTestFeaturesConfig = {
   ...enabledTestFeaturesConfig,
-  commerce: { enabled: true, oneTime: false, subscriptions: true, credits: false },
+  commerce: { enabled: true, oneTime: false, subscriptions: true, credits: true },
 } as const satisfies ProductConfig["features"];
 
 const analyticsEnabledPerformanceFeaturesConfig = {
