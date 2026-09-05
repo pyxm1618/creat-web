@@ -38,3 +38,10 @@ test("homepage does not overflow a 375px viewport", async ({ page }) => {
   );
   expect(overflow).toBe(false);
 });
+
+test("enabled Test Mode exposes the subscription checkout entry", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Test Mode subscription" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "test2 monthly" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Subscribe for $1.88 / month" })).toBeVisible();
+});

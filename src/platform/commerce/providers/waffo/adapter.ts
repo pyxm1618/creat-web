@@ -415,7 +415,7 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
       if (config.storeId && event.storeId !== config.storeId)
         throw new ProviderContractError("Waffo webhook store mismatch");
       const occurredAt = eventDate(event.timestamp);
-      const eventId = requireString(event.id, "id");
+      const eventId = requireString(event.eventId, "eventId");
       const merchantOrderReference = optionalString(event.data.orderMerchantExternalId);
 
       if (event.eventType === "order.completed") {

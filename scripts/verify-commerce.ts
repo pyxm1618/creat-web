@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import { creditFulfillmentDefinitions } from "@/config/credits.config";
 import { featuresConfig } from "@/config/features.config";
 import { fulfillmentHandlers } from "@/config/fulfillment.config";
 import { productDefinitions } from "@/config/products.config";
@@ -14,16 +15,21 @@ if (packageJson.dependencies?.["@waffo/pancake-ts"] !== "0.18.0") {
 
 const catalog = createProductCatalog(productDefinitions);
 const enabledProducts = catalog.definitions.filter((product) => product.enabled);
+const providerEnvironment = process.env.APP_ENV === "production" ? "production" : "test";
+const fulfillmentOperations = new Set(Object.keys(fulfillmentHandlers));
+for (const definition of creditFulfillmentDefinitions) {
+  fulfillmentOperations.add(`fulfill:${definition.fulfillmentKey}`);
+}
 
 if (featuresConfig.commerce.enabled) {
   if (enabledProducts.length === 0)
     throw new Error("enabled commerce requires at least one enabled product");
 
   for (const product of enabledProducts) {
-    catalog.getEnabled(product.key, "production");
+    catalog.getEnabled(product.key, providerEnvironment);
     const operation = `fulfill:${product.fulfillmentKey}`;
-    if (!(operation in fulfillmentHandlers)) {
-      throw new Error(`missing production fulfillment handler: ${operation}`);
+    if (!fulfillmentOperations.has(operation)) {
+      throw new Error(`missing fulfillment handler: ${operation}`);
     }
   }
 }
@@ -65,6 +71,7 @@ console.log(
     event: "commerce_verified",
     commerceEnabled: featuresConfig.commerce.enabled,
     enabledProducts: enabledProducts.length,
+    providerEnvironment,
     sdkVersion: packageJson.dependencies?.["@waffo/pancake-ts"],
   }),
 );
