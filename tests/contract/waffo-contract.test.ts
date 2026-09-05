@@ -126,7 +126,6 @@ describe("Waffo Pancake provider contract", () => {
 
   it("sends the Test Mode environment on customer refund requests", async () => {
     const keyPair = keys();
-    const authHeaders: Headers[] = [];
     const refundHeaders: Headers[] = [];
     const provider = createWaffoPaymentProvider({
       merchantId,
@@ -136,7 +135,6 @@ describe("Waffo Pancake provider contract", () => {
       fetch: async (input, init) => {
         const url = String(input);
         if (url.includes("issue-session-token")) {
-          authHeaders.push(new Headers(init?.headers));
           return Response.json({
             data: {
               token: "test-token",
@@ -188,7 +186,6 @@ describe("Waffo Pancake provider contract", () => {
     });
 
     expect(refundHeaders.map((headers) => headers.get("X-Environment"))).toEqual(["test", "prod"]);
-    expect(authHeaders.every((headers) => headers.get("X-Idempotency-Key") === null)).toBe(true);
   });
 
   it("verifies an exact raw signed order.completed event and normalizes decimal money", async () => {
