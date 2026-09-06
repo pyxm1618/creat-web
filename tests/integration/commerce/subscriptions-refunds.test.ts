@@ -1796,6 +1796,102 @@ it("does not retire a pending partial refund after an unrelated partial settleme
   ).not.toBeNull();
 });
 
+it("does not double-count a provider settlement already projected by a webhook", async () => {
+  const fixture = await refundCommandFixture(500n);
+  const workerNow = new Date("2030-09-20T00:00:00Z");
+  const providerSettlementReference = `REF_PROVIDER_ORIGINATED_${crypto.randomUUID()}`;
+
+  const provider = refundProvider(async () => {
+    throw new Error("the initial provider write is intentionally ambiguous");
+  });
+  await expect(
+    runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: workerNow,
+      clock: () => workerNow,
+      limit: 1,
+    }),
+  ).resolves.toBe(0);
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-provider-originated-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      externalRefundReference: providerSettlementReference,
+      amount: { currency: "USD", minor: 500n },
+      occurredAt: new Date(workerNow.getTime() + 1_000),
+    },
+    "provider-originated-refund".padEnd(64, "0"),
+  );
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  let readCalls = 0;
+  const reconciliationProvider = refundProvider(
+    async () => {
+      throw new Error("scheduled reconciliation must not issue a provider write");
+    },
+    async () => {
+      readCalls += 1;
+      return {
+        status: "succeeded" as const,
+        externalRefundReference: "TKT_ORIGINAL_INTENT",
+        externalSettlementReference: providerSettlementReference,
+        amount: { currency: "USD" as const, minor: 500n },
+      };
+    },
+  );
+
+  await expect(
+    reconcileRefundSettlements(database.db, reconciliationProvider, {
+      now: new Date(workerNow.getTime() + 2_000),
+      limit: 1,
+    }),
+  ).resolves.toBe(1);
+  expect(readCalls).toBe(1);
+
+  const persistedPayment = await database.db.query.payments.findFirst({
+    where: eq(payments.id, fixture.payment.id),
+  });
+  expect(persistedPayment).toMatchObject({ refundStatus: "partial", refundedMinor: 500n });
+
+  const persistedRefunds = await database.db
+    .select()
+    .from(refunds)
+    .where(eq(refunds.paymentId, fixture.payment.id));
+  expect(persistedRefunds).toHaveLength(2);
+  expect(persistedRefunds).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: fixture.refund.id,
+        status: "reconciliation_required",
+        succeededMinor: 0n,
+        providerWriteState: "ambiguous",
+        operatorReviewReason: "provider settlement already applied by another local refund",
+      }),
+      expect.objectContaining({
+        externalRefundReference: providerSettlementReference,
+        status: "succeeded",
+        succeededMinor: 500n,
+      }),
+    ]),
+  );
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+  ).toHaveLength(0);
+});
+
 it("stops automatic refund reads at the reconciliation attempt cap and serves a new candidate", async () => {
   const exhausted = await refundCommandFixture(1000n);
   const now = new Date("2030-10-01T00:00:00Z");

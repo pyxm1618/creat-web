@@ -375,6 +375,97 @@ async function ignoreStaleProviderRead(
   });
 }
 
+async function ignoreAlreadyProjectedProviderSettlement(
+  tx: DatabaseTransaction,
+  candidate: RefundSettlementCandidate,
+  current: CurrentRefundSettlementState,
+  result: ProviderReadResult,
+  now: Date,
+): Promise<boolean> {
+  if (
+    result.status !== "succeeded" ||
+    !result.amount ||
+    !result.externalRefundReference ||
+    !result.externalSettlementReference ||
+    result.amount.currency !== candidate.refund.currency ||
+    result.amount.minor !== candidate.refund.requestedMinor
+  ) {
+    return false;
+  }
+
+  const projectedSettlements = await tx
+    .select()
+    .from(refunds)
+    .where(
+      and(
+        eq(refunds.environment, candidate.refund.environment),
+        eq(refunds.externalRefundReference, result.externalSettlementReference),
+      ),
+    )
+    .limit(2)
+    .for("update");
+  if (projectedSettlements.length === 0) return false;
+
+  const [projectedSettlement] = projectedSettlements;
+  if (projectedSettlements.length > 1 || !projectedSettlement) {
+    if (matchesSourceState(candidate, current, now)) {
+      await markAmbiguous(
+        tx,
+        candidate,
+        now,
+        "provider settlement identity matches multiple local refunds",
+        "contract_error",
+      );
+    } else {
+      await ignoreStaleProviderRead(tx, candidate, current, result, now, false);
+    }
+    return true;
+  }
+
+  if (projectedSettlement.id === candidate.refund.id) return false;
+
+  if (
+    projectedSettlement.paymentId === candidate.refund.paymentId &&
+    projectedSettlement.status === "succeeded" &&
+    projectedSettlement.currency === result.amount.currency &&
+    projectedSettlement.succeededMinor === result.amount.minor
+  ) {
+    await tx
+      .update(refunds)
+      .set({
+        nextProviderReconciliationAt: null,
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
+        operatorReviewReason: "provider settlement already applied by another local refund",
+        updatedAt: now,
+      })
+      .where(eq(refunds.id, candidate.refund.id));
+    await insertReadAudit(tx, {
+      candidate,
+      beforeStatus: candidate.refund.status,
+      beforeWriteState: candidate.refund.providerWriteState,
+      result: result.status,
+      afterStatus: current.refund.status,
+      reason: "provider settlement already applied by another local refund",
+      auditResult: "provider_settlement_already_applied",
+    });
+    return true;
+  }
+
+  if (matchesSourceState(candidate, current, now)) {
+    await markAmbiguous(
+      tx,
+      candidate,
+      now,
+      "provider settlement identity conflicts with another local refund",
+      "contract_error",
+    );
+  } else {
+    await ignoreStaleProviderRead(tx, candidate, current, result, now, false);
+  }
+  return true;
+}
+
 export async function applyRefundSettlementResultInTransaction(
   tx: DatabaseTransaction,
   candidate: RefundSettlementCandidate,
@@ -383,6 +474,7 @@ export async function applyRefundSettlementResultInTransaction(
 ): Promise<void> {
   const current = await reloadRefundSettlementState(tx, candidate);
   if (!current) throw new Error("refund settlement target disappeared");
+  if (await ignoreAlreadyProjectedProviderSettlement(tx, candidate, current, result, now)) return;
   if (reflectsAuthoritativeSettlement(candidate, current)) {
     await ignoreStaleProviderRead(tx, candidate, current, result, now, true);
     return;
