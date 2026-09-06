@@ -23,6 +23,7 @@ const routeState = vi.hoisted(() => ({
   refundCalls: 0,
   refundSettlementResult: 0,
   refundSettlementCalls: 0,
+  refundSettlementArgs: null as unknown,
   purgeCalls: 0,
   creditCalls: 0,
   alertsEmitted: 0,
@@ -56,7 +57,8 @@ vi.mock("@/platform/commerce/application/reconcile-stale-refunds", () => ({
   },
 }));
 vi.mock("@/platform/commerce/application/reconcile-refund-settlements", () => ({
-  reconcileRefundSettlements: async () => {
+  reconcileRefundSettlements: async (...args: unknown[]) => {
+    routeState.refundSettlementArgs = args[2];
     routeState.refundSettlementCalls += 1;
     return routeState.refundSettlementResult;
   },
@@ -193,6 +195,7 @@ beforeEach(async () => {
   routeState.refundCalls = 0;
   routeState.refundSettlementResult = 0;
   routeState.refundSettlementCalls = 0;
+  routeState.refundSettlementArgs = null;
   routeState.purgeCalls = 0;
   routeState.creditCalls = 0;
   routeState.alertsEmitted = 0;
@@ -300,6 +303,24 @@ it("runs provider-read refund reconciliation before stale refund marking", async
     staleRefundsReconciled: 0,
   });
   expect(routeState.refundSettlementCalls).toBe(1);
+});
+
+it("passes the bounded-job cancellation and remaining-runtime checks to refund reconciliation", async () => {
+  routeState.runtime = {
+    database: database.db,
+    provider: paymentProvider(async () => ({ payments: [], warnings: [] })),
+    environment: "test",
+  };
+
+  const response = await GET(authorizedRequest());
+
+  expect(response.status).toBe(200);
+  expect(routeState.refundSettlementArgs).toEqual(
+    expect.objectContaining({
+      signal: expect.any(AbortSignal),
+      canContinue: expect.any(Function),
+    }),
+  );
 });
 
 it("caps the independent payment opportunity at five stale orders", async () => {

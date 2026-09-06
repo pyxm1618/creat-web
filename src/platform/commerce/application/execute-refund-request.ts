@@ -131,7 +131,10 @@ function candidateFromRow(row: {
   readonly refund: typeof refunds.$inferSelect;
   readonly externalPaymentId: string;
   readonly paymentAmount: { readonly currency: string; readonly minor: bigint };
+  readonly paymentRefundStatus: string;
+  readonly paymentRefundedMinor: bigint;
   readonly orderId: string;
+  readonly orderStatus: string;
   readonly externalOrderId: string | null;
 }): RefundSettlementCandidate {
   return {
@@ -139,6 +142,16 @@ function candidateFromRow(row: {
     paymentAmount: {
       currency: row.paymentAmount.currency as RefundCurrency,
       minor: row.paymentAmount.minor,
+    },
+    sourceState: {
+      refundStatus: row.refund.status,
+      providerWriteState: row.refund.providerWriteState,
+      reversalStatus: row.refund.reversalStatus,
+      succeededMinor: row.refund.succeededMinor,
+      externalRefundReference: row.refund.externalRefundReference,
+      paymentRefundStatus: row.paymentRefundStatus,
+      paymentRefundedMinor: row.paymentRefundedMinor,
+      orderStatus: row.orderStatus,
     },
   };
 }
@@ -157,7 +170,10 @@ export async function executeRefundRequest(input: {
         currency: payments.currency,
         minor: payments.amountMinor,
       },
+      paymentRefundStatus: payments.refundStatus,
+      paymentRefundedMinor: payments.refundedMinor,
       orderId: orders.id,
+      orderStatus: orders.status,
       externalOrderId: orders.externalOrderId,
     })
     .from(refunds)

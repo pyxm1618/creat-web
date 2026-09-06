@@ -3,8 +3,8 @@ ALTER TABLE "refunds" ADD COLUMN "provider_reconciliation_attempts" integer DEFA
 ALTER TABLE "refunds" ADD COLUMN "next_provider_reconciliation_at" timestamp with time zone;--> statement-breakpoint
 UPDATE "refunds"
 SET "provider_write_state" = CASE
-  WHEN "external_refund_reference" IS NULL THEN 'legacy_unsafe'
-  ELSE 'confirmed'
+  WHEN "status" IN ('succeeded', 'failed') THEN 'confirmed'
+  ELSE 'legacy_unsafe'
 END;--> statement-breakpoint
 CREATE INDEX "refund_provider_reconciliation_due_idx" ON "refunds" USING btree ("provider_write_state","next_provider_reconciliation_at");--> statement-breakpoint
 ALTER TABLE "refunds" ADD CONSTRAINT "refund_provider_write_state_valid" CHECK ("refunds"."provider_write_state" in ('not_started','dispatched','confirmed','ambiguous','legacy_unsafe'));--> statement-breakpoint

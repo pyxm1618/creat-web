@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import {
@@ -11,7 +11,10 @@ import { createPostgresAccountSubjectRepository } from "@/platform/accounts/post
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
-import { reconcileRefundSettlements } from "@/platform/commerce/application/reconcile-refund-settlements";
+import {
+  applyRefundSettlementResultInTransaction,
+  reconcileRefundSettlements,
+} from "@/platform/commerce/application/reconcile-refund-settlements";
 import { runCommerceCommandWorker } from "@/platform/commerce/application/run-commerce-command-worker";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
@@ -1239,6 +1242,204 @@ it("settles a dispatched refund from scheduled provider read without a webhook l
   ).toMatchObject({ status: "succeeded", externalRefundReference: "TKT_SCHEDULED" });
 });
 
+it("does not apply a stale provider read after a webhook settlement commits", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+
+  const staleRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  if (!staleRefund) throw new Error("stale refund fixture missing");
+  const staleCandidate = {
+    refund: staleRefund,
+    externalPaymentId: fixture.payment.externalPaymentId,
+    paymentAmount: { currency: "USD" as const, minor: 1000n },
+    orderId: fixture.order.id,
+    externalOrderId: fixture.order.externalOrderId,
+    sourceState: {
+      refundStatus: staleRefund.status,
+      providerWriteState: staleRefund.providerWriteState,
+      reversalStatus: staleRefund.reversalStatus,
+      succeededMinor: staleRefund.succeededMinor,
+      externalRefundReference: staleRefund.externalRefundReference,
+      paymentRefundStatus: fixture.payment.refundStatus,
+      paymentRefundedMinor: fixture.payment.refundedMinor,
+      orderStatus: fixture.order.status,
+    },
+  } as Parameters<typeof applyRefundSettlementResultInTransaction>[1];
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-refund-stale-read-race-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      amount: { currency: "USD", minor: 1000n },
+      occurredAt: new Date("2030-09-01T00:00:01Z"),
+    },
+    "f".repeat(64),
+  );
+
+  await database.db.transaction(async (tx) => {
+    await applyRefundSettlementResultInTransaction(
+      tx,
+      staleCandidate,
+      {
+        status: "succeeded",
+        externalRefundReference: "TKT_STALE_PROVIDER_READ",
+        externalSettlementReference: "REF_STALE_PROVIDER_READ",
+        amount: { currency: "USD", minor: 1000n },
+      },
+      new Date("2030-09-01T00:00:02Z"),
+    );
+  });
+
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "succeeded",
+    succeededMinor: 1000n,
+    reversalStatus: "pending",
+    providerWriteState: "confirmed",
+    externalRefundReference: null,
+  });
+  const persistedPayment = await database.db.query.payments.findFirst({
+    where: eq(payments.id, fixture.payment.id),
+  });
+  expect(persistedPayment).toMatchObject({ refundedMinor: 1000n, refundStatus: "refunded" });
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+  ).toHaveLength(1);
+});
+
+it("stops automatic refund reads at the reconciliation attempt cap and serves a new candidate", async () => {
+  const exhausted = await refundCommandFixture(1000n);
+  const now = new Date("2030-10-01T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "reconciliation_required",
+      reversalStatus: "reconciliation_required",
+      providerWriteState: "ambiguous",
+      providerReconciliationAttempts: 11,
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, exhausted.refund.id));
+
+  const fresh = await refundCommandFixture(1000n);
+  await database.db
+    .update(refunds)
+    .set({
+      status: "reconciliation_required",
+      reversalStatus: "reconciliation_required",
+      providerWriteState: "ambiguous",
+      nextProviderReconciliationAt: new Date(now.getTime() + 10 * 60 * 1000),
+    })
+    .where(eq(refunds.id, fresh.refund.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(and(ne(refunds.id, exhausted.refund.id), ne(refunds.id, fresh.refund.id)));
+
+  const readReferences: string[] = [];
+  const provider = refundProvider(
+    async () => {
+      throw new Error("attempt-cap regression must not issue a provider write");
+    },
+    async (input) => {
+      readReferences.push(input.refundIntentReference);
+      return { status: "not_found" as const };
+    },
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  const exhaustedAfter = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, exhausted.refund.id),
+  });
+  expect(exhaustedAfter).toMatchObject({
+    providerReconciliationAttempts: 12,
+    nextProviderReconciliationAt: null,
+    status: "reconciliation_required",
+  });
+
+  await expect(
+    reconcileRefundSettlements(database.db, provider, {
+      now: new Date(now.getTime() + 10 * 60 * 1000),
+      limit: 1,
+    }),
+  ).resolves.toBe(1);
+  expect(readReferences).toEqual([exhausted.refund.id, fresh.refund.id]);
+});
+
+it("stops refund lookup work when the runtime signal aborts and does not claim the next candidate", async () => {
+  const first = await refundCommandFixture(1000n);
+  const second = await refundCommandFixture(1000n);
+  const now = new Date("2030-11-01T00:00:00Z");
+  for (const fixture of [first, second]) {
+    await database.db
+      .update(refunds)
+      .set({
+        status: "processing",
+        reversalStatus: "pending",
+        providerWriteState: "dispatched",
+        nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+      })
+      .where(eq(refunds.id, fixture.refund.id));
+  }
+
+  const controller = new AbortController();
+  const firstReadStarted = deferred<void>();
+  let readCalls = 0;
+  let providerReceivedSignal = false;
+  const provider = refundProvider(
+    async () => {
+      throw new Error("runtime-deadline regression must not issue a provider write");
+    },
+    async (input) => {
+      readCalls += 1;
+      providerReceivedSignal ||= input.signal === controller.signal;
+      if (readCalls === 1) {
+        firstReadStarted.resolve();
+        await new Promise<never>((_resolve, reject) => {
+          const rejectOnAbort = () => reject(controller.signal.reason ?? new Error("aborted"));
+          if (controller.signal.aborted) rejectOnAbort();
+          else controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
+        });
+      }
+      return { status: "not_found" as const };
+    },
+  );
+
+  const reconciliation = reconcileRefundSettlements(database.db, provider, {
+    now,
+    limit: 2,
+    signal: controller.signal,
+    canContinue: () => true,
+  } as never);
+  await firstReadStarted.promise;
+  controller.abort(new Error("runtime deadline"));
+
+  await expect(reconciliation).rejects.toThrow("runtime deadline");
+  expect(providerReceivedSignal).toBe(true);
+  expect(readCalls).toBe(1);
+});
+
 it("preserves a legacy unsafe refund and never auto-rebinds it to provider state", async () => {
   const fixture = await refundCommandFixture(1000n);
   await database.db
@@ -1246,7 +1447,7 @@ it("preserves a legacy unsafe refund and never auto-rebinds it to provider state
     .set({
       providerWriteState: "legacy_unsafe",
       status: "pending",
-      externalRefundReference: null,
+      externalRefundReference: "TKT_LEGACY_UNSAFE",
       updatedAt: new Date("2000-01-01T00:00:00Z"),
     })
     .where(eq(refunds.id, fixture.refund.id));
@@ -1288,7 +1489,7 @@ it("preserves a legacy unsafe refund and never auto-rebinds it to provider state
   ).toMatchObject({
     providerWriteState: "legacy_unsafe",
     status: "pending",
-    externalRefundReference: null,
+    externalRefundReference: "TKT_LEGACY_UNSAFE",
   });
 });
 

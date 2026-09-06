@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, lte, lt, sql } from "drizzle-orm";
 
 import type { DatabaseClient, DatabaseTransaction } from "@/platform/database/client";
 import { commerceReconciliationRuns, orders, payments } from "@/platform/database/commerce-schema";
@@ -10,6 +10,7 @@ import { applyProviderReadRefundSettlementInTransaction } from "./process-refund
 const REFUND_RECONCILIATION_DELAY_MS = 5 * 60 * 1000;
 const MAX_REFUND_RECONCILIATION_ATTEMPTS = 12;
 const MAX_REFUND_RECONCILIATION_BATCH = 20;
+const MIN_REFUND_LOOKUP_REMAINING_MS = 6_000;
 
 type RefundCurrency = "USD" | "EUR" | "GBP" | "SGD" | "AUD" | "CAD" | "JPY" | "KRW";
 type RefundDatabase = DatabaseClient | DatabaseTransaction;
@@ -24,7 +25,21 @@ type RefundSettlementCandidate = {
   };
   readonly orderId: string;
   readonly externalOrderId: string | null;
+  readonly sourceState: {
+    readonly refundStatus: string;
+    readonly providerWriteState: string;
+    readonly reversalStatus: string;
+    readonly succeededMinor: bigint;
+    readonly externalRefundReference: string | null;
+    readonly paymentRefundStatus: string;
+    readonly paymentRefundedMinor: bigint;
+    readonly orderStatus: string;
+  };
 };
+
+type ProviderReadResult =
+  | ProviderRefundSettlement
+  | { readonly status: "provider_read_failed"; readonly reason: string };
 
 function environment(value: string): "production" | "test" {
   return value === "production" ? "production" : "test";
@@ -51,9 +66,10 @@ async function insertReadAudit(
     readonly candidate: RefundSettlementCandidate;
     readonly beforeStatus: string;
     readonly beforeWriteState: string;
-    readonly result: ProviderRefundSettlement["status"] | "provider_read_failed";
+    readonly result: ProviderReadResult["status"];
     readonly afterStatus: string;
     readonly reason?: string;
+    readonly auditResult?: string;
   },
 ): Promise<void> {
   await tx.insert(commerceReconciliationRuns).values({
@@ -71,7 +87,8 @@ async function insertReadAudit(
       providerReadStatus: input.result,
       ...(input.reason ? { reason: input.reason } : {}),
     },
-    result: input.result === "succeeded" ? "applied" : "operator_review_required",
+    result:
+      input.auditResult ?? (input.result === "succeeded" ? "applied" : "operator_review_required"),
   });
 }
 
@@ -80,7 +97,7 @@ async function markAmbiguous(
   candidate: RefundSettlementCandidate,
   now: Date,
   reason: string,
-  result: ProviderRefundSettlement["status"] | "provider_read_failed",
+  result: ProviderReadResult["status"],
 ): Promise<void> {
   await tx
     .update(refunds)
@@ -90,7 +107,7 @@ async function markAmbiguous(
       reversalStatus: "reconciliation_required",
       operatorReviewReason: reason,
       providerReconciliationAttempts: sql`least(${refunds.providerReconciliationAttempts} + 1, ${MAX_REFUND_RECONCILIATION_ATTEMPTS})`,
-      nextProviderReconciliationAt: retryAt(now),
+      nextProviderReconciliationAt: sql`case when ${refunds.providerReconciliationAttempts} >= ${MAX_REFUND_RECONCILIATION_ATTEMPTS - 1} then null else ${retryAt(now).toISOString()}::timestamptz end`,
       updatedAt: now,
     })
     .where(eq(refunds.id, candidate.refund.id));
@@ -107,9 +124,14 @@ async function markAmbiguous(
 async function applyReadResult(
   tx: DatabaseTransaction,
   candidate: RefundSettlementCandidate,
-  result: ProviderRefundSettlement,
+  result: ProviderReadResult,
   now: Date,
 ): Promise<void> {
+  if (result.status === "provider_read_failed") {
+    await markAmbiguous(tx, candidate, now, result.reason, result.status);
+    return;
+  }
+
   const expectedAmount = amount(candidate.refund);
   if (
     result.status === "succeeded" &&
@@ -216,51 +238,202 @@ async function applyReadResult(
   await markAmbiguous(tx, candidate, now, reason, result.status);
 }
 
+async function reloadRefundSettlementState(
+  tx: DatabaseTransaction,
+  candidate: RefundSettlementCandidate,
+) {
+  const [current] = await tx
+    .select({
+      refund: refunds,
+      paymentRefundStatus: payments.refundStatus,
+      paymentRefundedMinor: payments.refundedMinor,
+      orderStatus: orders.status,
+    })
+    .from(refunds)
+    .innerJoin(payments, eq(payments.id, refunds.paymentId))
+    .innerJoin(orders, eq(orders.id, payments.orderId))
+    .where(eq(refunds.id, candidate.refund.id))
+    .limit(1)
+    .for("update");
+  return current;
+}
+
+type CurrentRefundSettlementState = NonNullable<
+  Awaited<ReturnType<typeof reloadRefundSettlementState>>
+>;
+
+function matchesSourceState(
+  candidate: RefundSettlementCandidate,
+  current: CurrentRefundSettlementState,
+): boolean {
+  return (
+    current.refund.status === candidate.sourceState.refundStatus &&
+    current.refund.providerWriteState === candidate.sourceState.providerWriteState &&
+    current.refund.reversalStatus === candidate.sourceState.reversalStatus &&
+    current.refund.succeededMinor === candidate.sourceState.succeededMinor &&
+    current.refund.externalRefundReference === candidate.sourceState.externalRefundReference &&
+    current.paymentRefundStatus === candidate.sourceState.paymentRefundStatus &&
+    current.paymentRefundedMinor === candidate.sourceState.paymentRefundedMinor &&
+    current.orderStatus === candidate.sourceState.orderStatus
+  );
+}
+
+function reflectsAuthoritativeSettlement(
+  candidate: RefundSettlementCandidate,
+  current: CurrentRefundSettlementState,
+): boolean {
+  return (
+    current.refund.status === "succeeded" ||
+    current.refund.reversalStatus === "completed" ||
+    current.paymentRefundedMinor > candidate.sourceState.paymentRefundedMinor ||
+    current.paymentRefundStatus === "refunded" ||
+    current.orderStatus === "refunded"
+  );
+}
+
+async function ignoreStaleProviderRead(
+  tx: DatabaseTransaction,
+  candidate: RefundSettlementCandidate,
+  current: CurrentRefundSettlementState,
+  result: ProviderReadResult,
+): Promise<void> {
+  await insertReadAudit(tx, {
+    candidate,
+    beforeStatus: candidate.refund.status,
+    beforeWriteState: candidate.refund.providerWriteState,
+    result: result.status,
+    afterStatus: current.refund.status,
+    reason: "provider read ignored because authoritative local refund state changed before apply",
+    auditResult: "stale_provider_read_ignored",
+  });
+}
+
 export async function applyRefundSettlementResultInTransaction(
   tx: DatabaseTransaction,
   candidate: RefundSettlementCandidate,
-  result: ProviderRefundSettlement,
+  result: ProviderReadResult,
   now: Date,
 ): Promise<void> {
-  await applyReadResult(tx, candidate, result, now);
-}
-
-export async function reconcileRefundSettlementInTransaction(
-  tx: DatabaseTransaction,
-  provider: PaymentProvider,
-  candidate: RefundSettlementCandidate,
-  now: Date,
-): Promise<void> {
-  let result: ProviderRefundSettlement;
-  try {
-    result = await provider.getRefundSettlement({
-      environment: environment(candidate.refund.environment),
-      externalPaymentId: candidate.externalPaymentId,
-      ...(candidate.externalOrderId ? { externalOrderId: candidate.externalOrderId } : {}),
-      merchantOrderReference: candidate.orderId,
-      paymentAmount: candidate.paymentAmount,
-      amount: amount(candidate.refund),
-      refundIntentReference: candidate.refund.id,
-      ...(candidate.refund.externalRefundReference
-        ? { externalRefundReference: candidate.refund.externalRefundReference }
-        : {}),
-    });
-  } catch (error) {
-    const reason =
-      error instanceof Error
-        ? `provider refund read failed: ${error.message}`
-        : "provider refund read failed";
-    await markAmbiguous(tx, candidate, now, reason, "provider_read_failed");
+  const current = await reloadRefundSettlementState(tx, candidate);
+  if (!current) throw new Error("refund settlement target disappeared");
+  if (
+    reflectsAuthoritativeSettlement(candidate, current) ||
+    !matchesSourceState(candidate, current)
+  ) {
+    await ignoreStaleProviderRead(tx, candidate, current, result);
     return;
   }
-  await applyReadResult(tx, candidate, result, now);
+  await applyReadResult(tx, { ...candidate, refund: current.refund }, result, now);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function awaitProviderLookup<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation();
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      queueMicrotask(() => reject(signal.reason ?? new DOMException("aborted", "AbortError")));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    let result: Promise<T>;
+    try {
+      result = operation();
+    } catch (error) {
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+      return;
+    }
+    result.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(signal.aborted && isAbortError(error) ? (signal.reason ?? error) : error);
+      },
+    );
+  });
+}
+
+async function lookupRefundSettlement(
+  provider: PaymentProvider,
+  candidate: RefundSettlementCandidate,
+  signal?: AbortSignal,
+): Promise<ProviderReadResult> {
+  try {
+    return await awaitProviderLookup(
+      () =>
+        provider.getRefundSettlement({
+          environment: environment(candidate.refund.environment),
+          externalPaymentId: candidate.externalPaymentId,
+          ...(candidate.externalOrderId ? { externalOrderId: candidate.externalOrderId } : {}),
+          merchantOrderReference: candidate.orderId,
+          paymentAmount: candidate.paymentAmount,
+          amount: amount(candidate.refund),
+          refundIntentReference: candidate.refund.id,
+          ...(candidate.refund.externalRefundReference
+            ? { externalRefundReference: candidate.refund.externalRefundReference }
+            : {}),
+          ...(signal ? { signal } : {}),
+        }),
+      signal,
+    );
+  } catch (error) {
+    if (signal?.aborted || error === signal?.reason || isAbortError(error)) throw error;
+    return {
+      status: "provider_read_failed",
+      reason:
+        error instanceof Error
+          ? `provider refund read failed: ${error.message}`
+          : "provider refund read failed",
+    };
+  }
+}
+
+function candidateFromRow(row: {
+  readonly refund: RefundRow;
+  readonly externalPaymentId: string;
+  readonly paymentAmount: { readonly currency: string; readonly minor: bigint };
+  readonly paymentRefundStatus: string;
+  readonly paymentRefundedMinor: bigint;
+  readonly orderId: string;
+  readonly orderStatus: string;
+  readonly externalOrderId: string | null;
+}): RefundSettlementCandidate {
+  return {
+    ...row,
+    paymentAmount: {
+      currency: row.paymentAmount.currency as RefundCurrency,
+      minor: row.paymentAmount.minor,
+    },
+    sourceState: {
+      refundStatus: row.refund.status,
+      providerWriteState: row.refund.providerWriteState,
+      reversalStatus: row.refund.reversalStatus,
+      succeededMinor: row.refund.succeededMinor,
+      externalRefundReference: row.refund.externalRefundReference,
+      paymentRefundStatus: row.paymentRefundStatus,
+      paymentRefundedMinor: row.paymentRefundedMinor,
+      orderStatus: row.orderStatus,
+    },
+  };
 }
 
 export async function reconcileRefundSettlements(
   database: DatabaseClient,
   provider: PaymentProvider,
-  input: { readonly now?: Date; readonly limit?: number } = {},
+  input: {
+    readonly now?: Date;
+    readonly limit?: number;
+    readonly signal?: AbortSignal;
+    readonly canContinue?: (minimumRemainingMs?: number) => boolean;
+  } = {},
 ): Promise<number> {
+  input.signal?.throwIfAborted();
   const now = input.now ?? new Date();
   const limit = Math.min(
     Math.max(input.limit ?? MAX_REFUND_RECONCILIATION_BATCH, 1),
@@ -269,8 +442,9 @@ export async function reconcileRefundSettlements(
 
   if (!isRootDatabase(database))
     throw new Error("refund reconciliation requires a database client");
-  return database.transaction(async (tx) => {
-    const candidates = await tx
+  const candidates = await database.transaction(async (tx) => {
+    input.signal?.throwIfAborted();
+    const rows = await tx
       .select({
         refund: refunds,
         externalPaymentId: payments.externalPaymentId,
@@ -278,7 +452,10 @@ export async function reconcileRefundSettlements(
           currency: payments.currency,
           minor: payments.amountMinor,
         },
+        paymentRefundStatus: payments.refundStatus,
+        paymentRefundedMinor: payments.refundedMinor,
         orderId: orders.id,
+        orderStatus: orders.status,
         externalOrderId: orders.externalOrderId,
       })
       .from(refunds)
@@ -288,29 +465,35 @@ export async function reconcileRefundSettlements(
         and(
           inArray(refunds.providerWriteState, ["dispatched", "ambiguous", "confirmed"]),
           inArray(refunds.status, ["processing", "reconciliation_required"]),
+          lt(refunds.providerReconciliationAttempts, MAX_REFUND_RECONCILIATION_ATTEMPTS),
           lte(refunds.nextProviderReconciliationAt, now),
         ),
       )
       .orderBy(refunds.nextProviderReconciliationAt, refunds.updatedAt)
       .limit(limit)
       .for("update", { skipLocked: true });
-
-    for (const candidate of candidates) {
-      await reconcileRefundSettlementInTransaction(
-        tx,
-        provider,
-        {
-          ...candidate,
-          paymentAmount: {
-            currency: candidate.paymentAmount.currency as RefundCurrency,
-            minor: candidate.paymentAmount.minor,
-          },
-        },
-        now,
-      );
-    }
-    return candidates.length;
+    return rows.map(candidateFromRow);
   });
+
+  let reconciled = 0;
+  for (const candidate of candidates) {
+    if (input.signal?.aborted) {
+      if (reconciled > 0) break;
+      input.signal.throwIfAborted();
+    }
+    if (input.canContinue && !input.canContinue(MIN_REFUND_LOOKUP_REMAINING_MS)) break;
+
+    const result = await lookupRefundSettlement(provider, candidate, input.signal);
+    if (input.signal?.aborted) {
+      if (reconciled > 0) break;
+      input.signal.throwIfAborted();
+    }
+    await database.transaction(async (tx) => {
+      await applyRefundSettlementResultInTransaction(tx, candidate, result, now);
+    });
+    reconciled += 1;
+  }
+  return reconciled;
 }
 
 export type { RefundSettlementCandidate };
