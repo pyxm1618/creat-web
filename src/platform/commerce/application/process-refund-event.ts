@@ -91,7 +91,12 @@ async function matchingRefunds(
       and(
         eq(refunds.paymentId, paymentId),
         eq(refunds.environment, event.environment),
-        inArray(refunds.status, ["pending", "processing"]),
+        inArray(
+          refunds.status,
+          event.type === "refund_succeeded"
+            ? ["pending", "processing", "reconciliation_required"]
+            : ["pending", "processing"],
+        ),
       ),
     )
     .for("update");

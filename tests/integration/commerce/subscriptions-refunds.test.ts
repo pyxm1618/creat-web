@@ -1375,6 +1375,75 @@ it("preserves partial-refund operator review after provider-read settlement", as
   });
 });
 
+it("binds a reference-less successful webhook to its unique ambiguous refund intent", async () => {
+  const fixture = await refundCommandFixture(500n);
+  const workerNow = new Date("2030-09-03T00:00:00Z");
+  const provider = refundProvider(async () => {
+    throw new Error("the initial provider write is intentionally ambiguous");
+  });
+
+  await expect(
+    runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: workerNow,
+      clock: () => workerNow,
+      limit: 1,
+    }),
+  ).resolves.toBe(0);
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-reference-less-refund-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      amount: { currency: "USD", minor: 500n },
+      occurredAt: new Date(workerNow.getTime() + 1_000),
+    },
+    "reference-less-refund".padEnd(64, "0"),
+  );
+
+  let readCalls = 0;
+  const reconciliationProvider = refundProvider(
+    async () => {
+      throw new Error("reference-less webhook regression must not issue a provider write");
+    },
+    async () => {
+      readCalls += 1;
+      return {
+        status: "succeeded" as const,
+        externalRefundReference: "TKT_REFERENCE_LESS_READ",
+        externalSettlementReference: "REF_REFERENCE_LESS_READ",
+        amount: { currency: "USD" as const, minor: 500n },
+      };
+    },
+  );
+
+  await expect(
+    reconcileRefundSettlements(database.db, reconciliationProvider, {
+      now: new Date(workerNow.getTime() + 2_000),
+      limit: 1,
+    }),
+  ).resolves.toBe(0);
+  expect(readCalls).toBe(0);
+  expect(
+    await database.db.query.payments.findFirst({ where: eq(payments.id, fixture.payment.id) }),
+  ).toMatchObject({ refundStatus: "partial", refundedMinor: 500n });
+  expect(
+    await database.db.select().from(refunds).where(eq(refunds.paymentId, fixture.payment.id)),
+  ).toHaveLength(1);
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+  ).toHaveLength(0);
+});
+
 it("does not apply a stale provider read after a webhook settlement commits", async () => {
   const fixture = await refundCommandFixture(1000n);
   await database.db
