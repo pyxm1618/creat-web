@@ -1,4 +1,4 @@
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
@@ -91,6 +91,7 @@ async function matchingRefunds(
       and(
         eq(refunds.paymentId, paymentId),
         eq(refunds.environment, event.environment),
+        ne(refunds.providerWriteState, "legacy_unsafe"),
         inArray(
           refunds.status,
           event.type === "refund_succeeded"

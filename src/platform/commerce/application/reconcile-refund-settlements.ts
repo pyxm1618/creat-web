@@ -6,7 +6,10 @@ import { refunds } from "@/platform/database/subscription-schema";
 
 import type { PaymentProvider, ProviderRefundSettlement } from "./payment-provider";
 import { applyProviderReadRefundSettlementInTransaction } from "./process-refund-event";
-import { PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON } from "../domain/refund";
+import {
+  PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON,
+  REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON,
+} from "../domain/refund";
 
 const REFUND_RECONCILIATION_DELAY_MS = 5 * 60 * 1000;
 const MAX_REFUND_RECONCILIATION_ATTEMPTS = 12;
@@ -240,6 +243,8 @@ async function applyReadResult(
   }
 
   if (result.status === "found_pending" || result.status === "found_processing") {
+    const staleEscalated =
+      candidate.refund.operatorReviewReason === REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON;
     await tx
       .update(refunds)
       .set({
@@ -248,11 +253,11 @@ async function applyReadResult(
           ? { externalSettlementReference: result.externalSettlementReference }
           : {}),
         providerWriteState: "confirmed",
-        status: "processing",
-        nextProviderReconciliationAt: retryAt(now),
+        status: staleEscalated ? "reconciliation_required" : "processing",
+        nextProviderReconciliationAt: staleEscalated ? null : retryAt(now),
         reconciliationLeaseOwner: null,
         reconciliationLeaseExpiresAt: null,
-        operatorReviewReason: null,
+        operatorReviewReason: staleEscalated ? REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON : null,
         providerUpdatedAt: now,
       })
       .where(eq(refunds.id, candidate.refund.id));
@@ -261,7 +266,8 @@ async function applyReadResult(
       beforeStatus: candidate.refund.status,
       beforeWriteState: candidate.refund.providerWriteState,
       result: result.status,
-      afterStatus: "processing",
+      afterStatus: staleEscalated ? "reconciliation_required" : "processing",
+      ...(staleEscalated ? { reason: REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON } : {}),
     });
     return;
   }

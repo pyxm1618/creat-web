@@ -3,6 +3,7 @@ import { and, eq, inArray, lte, ne } from "drizzle-orm";
 import type { DatabaseClient } from "@/platform/database/client";
 import { commerceReconciliationRuns } from "@/platform/database/commerce-schema";
 import { refunds } from "@/platform/database/subscription-schema";
+import { REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON } from "../domain/refund";
 
 const DEFAULT_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -49,8 +50,7 @@ export async function reconcileStaleRefunds(
           status: "reconciliation_required",
           providerWriteState: "ambiguous",
           reversalStatus,
-          operatorReviewReason:
-            "provider refund settlement webhook did not arrive within threshold",
+          operatorReviewReason: REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON,
           nextProviderReconciliationAt: now,
           updatedAt: now,
         })

@@ -1869,14 +1869,18 @@ it("lets stale refund reconciliation escalate after provider pending polling", a
     .set({ nextProviderReconciliationAt: null, updatedAt: now })
     .where(ne(refunds.id, fixture.refund.id));
 
+  let readCalls = 0;
   const provider = refundProvider(
     async () => {
       throw new Error("pending reconciliation must not issue a provider write");
     },
-    async () => ({
-      status: "found_pending" as const,
-      externalRefundReference: "TKT_PENDING_STALE",
-    }),
+    async () => {
+      readCalls += 1;
+      return {
+        status: "found_pending" as const,
+        externalRefundReference: "TKT_PENDING_STALE",
+      };
+    },
   );
 
   await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
@@ -1899,6 +1903,28 @@ it("lets stale refund reconciliation escalate after provider pending polling", a
     status: "reconciliation_required",
     operatorReviewReason: "provider refund settlement webhook did not arrive within threshold",
   });
+
+  await expect(
+    reconcileRefundSettlements(database.db, provider, {
+      now: new Date("2030-09-18T00:00:02Z"),
+      limit: 1,
+    }),
+  ).resolves.toBe(1);
+  expect(readCalls).toBe(2);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    status: "reconciliation_required",
+    operatorReviewReason: "provider refund settlement webhook did not arrive within threshold",
+    nextProviderReconciliationAt: null,
+  });
+  await expect(
+    reconcileRefundSettlements(database.db, provider, {
+      now: new Date("2030-09-19T00:00:00Z"),
+      limit: 1,
+    }),
+  ).resolves.toBe(0);
+  expect(readCalls).toBe(2);
 });
 
 it("does not retire a pending partial refund after an unrelated partial settlement", async () => {
@@ -2205,7 +2231,7 @@ it("stops refund lookup work when the runtime signal aborts and does not claim t
 });
 
 it("preserves a legacy unsafe refund and never auto-rebinds it to provider state", async () => {
-  const fixture = await refundCommandFixture(1000n);
+  const fixture = await refundCommandFixture(500n);
   await database.db
     .update(refunds)
     .set({
@@ -2255,6 +2281,52 @@ it("preserves a legacy unsafe refund and never auto-rebinds it to provider state
     status: "pending",
     externalRefundReference: "TKT_LEGACY_UNSAFE",
   });
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-legacy-reference-less-refund-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      amount: { currency: "USD", minor: 500n },
+      occurredAt: new Date("2030-08-01T00:00:01Z"),
+    },
+    "legacy-reference-less-refund".padEnd(64, "0"),
+  );
+
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    providerWriteState: "legacy_unsafe",
+    status: "pending",
+    externalRefundReference: "TKT_LEGACY_UNSAFE",
+  });
+  expect(
+    await database.db.query.payments.findFirst({ where: eq(payments.id, fixture.payment.id) }),
+  ).toMatchObject({ refundStatus: "partial", refundedMinor: 500n });
+  const persistedRefunds = await database.db
+    .select()
+    .from(refunds)
+    .where(eq(refunds.paymentId, fixture.payment.id));
+  expect(persistedRefunds).toHaveLength(2);
+  expect(persistedRefunds).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        providerWriteState: "legacy_unsafe",
+        status: "pending",
+        externalRefundReference: "TKT_LEGACY_UNSAFE",
+      }),
+      expect.objectContaining({
+        providerWriteState: "confirmed",
+        status: "succeeded",
+        succeededMinor: 500n,
+        externalRefundReference: null,
+        operatorReviewReason: "partial refund entitlement reversal requires operator policy",
+      }),
+    ]),
+  );
 });
 
 it("does not overwrite webhook success when the final provider attempt dead-letters", async () => {
