@@ -1270,6 +1270,7 @@ it("does not apply a stale provider read after a webhook settlement commits", as
       reversalStatus: staleRefund.reversalStatus,
       succeededMinor: staleRefund.succeededMinor,
       externalRefundReference: staleRefund.externalRefundReference,
+      nextProviderReconciliationAt: staleRefund.nextProviderReconciliationAt,
       paymentRefundStatus: fixture.payment.refundStatus,
       paymentRefundedMinor: fixture.payment.refundedMinor,
       orderStatus: fixture.order.status,
@@ -1324,6 +1325,109 @@ it("does not apply a stale provider read after a webhook settlement commits", as
       .from(fulfillmentJobs)
       .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
   ).toHaveLength(1);
+});
+
+it("retires a refund read candidate after an authoritative payment settlement", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  const now = new Date("2030-09-15T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(payments)
+    .set({ refundStatus: "refunded", refundedMinor: 1000n })
+    .where(eq(payments.id, fixture.payment.id));
+  await database.db
+    .update(orders)
+    .set({ status: "refunded" })
+    .where(eq(orders.id, fixture.order.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  let readCalls = 0;
+  const provider = refundProvider(
+    async () => {
+      throw new Error("authoritative settlement must not issue a provider write");
+    },
+    async () => {
+      readCalls += 1;
+      return { status: "not_found" as const };
+    },
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  expect(readCalls).toBe(1);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    status: "processing",
+    nextProviderReconciliationAt: null,
+    operatorReviewReason:
+      "provider read ignored because authoritative local refund state changed before apply",
+  });
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    0,
+  );
+  expect(readCalls).toBe(1);
+});
+
+it("claims a refund candidate before provider lookup so overlapping jobs read it once", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  const now = new Date("2030-09-16T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  const firstReadStarted = deferred<void>();
+  const releaseFirstRead = deferred<void>();
+  let readCalls = 0;
+  const provider = refundProvider(
+    async () => {
+      throw new Error("overlapping reconciliation must not issue a provider write");
+    },
+    async () => {
+      readCalls += 1;
+      if (readCalls === 1) {
+        firstReadStarted.resolve();
+        await releaseFirstRead.promise;
+      }
+      return { status: "not_found" as const };
+    },
+  );
+
+  const firstReconciliation = reconcileRefundSettlements(database.db, provider, {
+    now,
+    limit: 1,
+  });
+  await firstReadStarted.promise;
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    0,
+  );
+
+  releaseFirstRead.resolve();
+  await expect(firstReconciliation).resolves.toBe(1);
+  expect(readCalls).toBe(1);
 });
 
 it("stops automatic refund reads at the reconciliation attempt cap and serves a new candidate", async () => {

@@ -173,7 +173,14 @@ function refundAmount(value: unknown) {
 }
 
 function refundTicketSettlementStatus(status: string): ProviderRefundSettlement["status"] {
-  if (status === "failed" || status === "rejected" || status === "returned") return "failed";
+  if (
+    status === "failed" ||
+    status === "rejected" ||
+    status === "returned" ||
+    status === "cancelled"
+  ) {
+    return "failed";
+  }
   if (status === "pending" || status === "under_review") return "found_pending";
   if (status === "approved" || status === "processing" || status === "succeeded") {
     return "found_processing";
@@ -184,7 +191,7 @@ function refundTicketSettlementStatus(status: string): ProviderRefundSettlement[
 function refundSettlementStatus(status: string): ProviderRefundSettlement["status"] {
   if (status === "succeeded") return "succeeded";
   if (status === "pending") return "found_processing";
-  if (status === "failed") return "failed";
+  if (status === "failed" || status === "cancelled") return "failed";
   throw new ProviderContractError(`unsupported Waffo refund status: ${status}`);
 }
 

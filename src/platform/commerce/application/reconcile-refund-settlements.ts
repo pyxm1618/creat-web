@@ -11,6 +11,7 @@ const REFUND_RECONCILIATION_DELAY_MS = 5 * 60 * 1000;
 const MAX_REFUND_RECONCILIATION_ATTEMPTS = 12;
 const MAX_REFUND_RECONCILIATION_BATCH = 20;
 const MIN_REFUND_LOOKUP_REMAINING_MS = 6_000;
+const REFUND_RECONCILIATION_LEASE_MS = 30_000;
 
 type RefundCurrency = "USD" | "EUR" | "GBP" | "SGD" | "AUD" | "CAD" | "JPY" | "KRW";
 type RefundDatabase = DatabaseClient | DatabaseTransaction;
@@ -31,6 +32,7 @@ type RefundSettlementCandidate = {
     readonly reversalStatus: string;
     readonly succeededMinor: bigint;
     readonly externalRefundReference: string | null;
+    readonly nextProviderReconciliationAt: Date | null;
     readonly paymentRefundStatus: string;
     readonly paymentRefundedMinor: bigint;
     readonly orderStatus: string;
@@ -54,6 +56,15 @@ function amount(refund: RefundRow) {
 
 function retryAt(now: Date): Date {
   return new Date(now.getTime() + REFUND_RECONCILIATION_DELAY_MS);
+}
+
+function leaseUntil(now: Date): Date {
+  return new Date(now.getTime() + REFUND_RECONCILIATION_LEASE_MS);
+}
+
+function sameDate(left: Date | null, right: Date | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.getTime() === right.getTime();
 }
 
 function isRootDatabase(database: RefundDatabase): database is DatabaseClient {
@@ -272,6 +283,10 @@ function matchesSourceState(
     current.refund.reversalStatus === candidate.sourceState.reversalStatus &&
     current.refund.succeededMinor === candidate.sourceState.succeededMinor &&
     current.refund.externalRefundReference === candidate.sourceState.externalRefundReference &&
+    sameDate(
+      current.refund.nextProviderReconciliationAt,
+      candidate.sourceState.nextProviderReconciliationAt,
+    ) &&
     current.paymentRefundStatus === candidate.sourceState.paymentRefundStatus &&
     current.paymentRefundedMinor === candidate.sourceState.paymentRefundedMinor &&
     current.orderStatus === candidate.sourceState.orderStatus
@@ -296,7 +311,22 @@ async function ignoreStaleProviderRead(
   candidate: RefundSettlementCandidate,
   current: CurrentRefundSettlementState,
   result: ProviderReadResult,
+  now: Date,
+  retireCandidate: boolean,
 ): Promise<void> {
+  if (retireCandidate) {
+    await tx
+      .update(refunds)
+      .set({
+        nextProviderReconciliationAt: null,
+        operatorReviewReason:
+          current.refund.status === "succeeded"
+            ? null
+            : "provider read ignored because authoritative local refund state changed before apply",
+        updatedAt: now,
+      })
+      .where(eq(refunds.id, candidate.refund.id));
+  }
   await insertReadAudit(tx, {
     candidate,
     beforeStatus: candidate.refund.status,
@@ -316,11 +346,12 @@ export async function applyRefundSettlementResultInTransaction(
 ): Promise<void> {
   const current = await reloadRefundSettlementState(tx, candidate);
   if (!current) throw new Error("refund settlement target disappeared");
-  if (
-    reflectsAuthoritativeSettlement(candidate, current) ||
-    !matchesSourceState(candidate, current)
-  ) {
-    await ignoreStaleProviderRead(tx, candidate, current, result);
+  if (reflectsAuthoritativeSettlement(candidate, current)) {
+    await ignoreStaleProviderRead(tx, candidate, current, result, now, true);
+    return;
+  }
+  if (!matchesSourceState(candidate, current)) {
+    await ignoreStaleProviderRead(tx, candidate, current, result, now, false);
     return;
   }
   await applyReadResult(tx, { ...candidate, refund: current.refund }, result, now);
@@ -416,6 +447,7 @@ function candidateFromRow(row: {
       reversalStatus: row.refund.reversalStatus,
       succeededMinor: row.refund.succeededMinor,
       externalRefundReference: row.refund.externalRefundReference,
+      nextProviderReconciliationAt: row.refund.nextProviderReconciliationAt,
       paymentRefundStatus: row.paymentRefundStatus,
       paymentRefundedMinor: row.paymentRefundedMinor,
       orderStatus: row.orderStatus,
@@ -472,7 +504,19 @@ export async function reconcileRefundSettlements(
       .orderBy(refunds.nextProviderReconciliationAt, refunds.updatedAt)
       .limit(limit)
       .for("update", { skipLocked: true });
-    return rows.map(candidateFromRow);
+    const claimedAt = leaseUntil(now);
+    const candidates: RefundSettlementCandidate[] = [];
+    for (const row of rows) {
+      const [claimedRefund] = await tx
+        .update(refunds)
+        .set({ nextProviderReconciliationAt: claimedAt, updatedAt: now })
+        .where(eq(refunds.id, row.refund.id))
+        .returning();
+      if (claimedRefund) {
+        candidates.push(candidateFromRow({ ...row, refund: claimedRefund }));
+      }
+    }
+    return candidates;
   });
 
   let reconciled = 0;

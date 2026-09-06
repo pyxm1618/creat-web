@@ -149,6 +149,7 @@ function candidateFromRow(row: {
       reversalStatus: row.refund.reversalStatus,
       succeededMinor: row.refund.succeededMinor,
       externalRefundReference: row.refund.externalRefundReference,
+      nextProviderReconciliationAt: row.refund.nextProviderReconciliationAt,
       paymentRefundStatus: row.paymentRefundStatus,
       paymentRefundedMinor: row.paymentRefundedMinor,
       orderStatus: row.orderStatus,

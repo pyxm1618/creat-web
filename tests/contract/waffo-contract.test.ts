@@ -306,6 +306,57 @@ describe("Waffo Pancake provider contract", () => {
     });
   });
 
+  it("maps a cancelled refund ticket to a terminal failed settlement", async () => {
+    const keyPair = keys();
+    const refundIntentReference = "01989ef5-c3f7-7000-8000-000000000100";
+    const provider = createWaffoPaymentProvider({
+      merchantId,
+      privateKey: keyPair.privateKey,
+      storeId,
+      baseUrl: "https://api.example.test",
+      fetch: async () =>
+        Response.json({
+          data: {
+            payments: [validPayment({ snapshotAmountDetails: { currency: "USD", total: "1.88" } })],
+            paymentsCount: 1,
+            refundTickets: [
+              {
+                id: "TKT_0123456789ABCDEFGHIJKL",
+                status: "cancelled",
+                subjectId: paymentId,
+                metadata: JSON.stringify({ creatWebRefundIntentId: refundIntentReference }),
+                refundTicketMerchantExternalId: refundIntentReference,
+              },
+            ],
+            refundTicketsCount: 1,
+            refunds: [],
+            refundsCount: 0,
+          },
+        }),
+    });
+
+    const settlement = await (
+      provider as unknown as {
+        getRefundSettlement(input: unknown): Promise<Record<string, unknown>>;
+      }
+    ).getRefundSettlement({
+      environment: "test",
+      externalPaymentId: paymentId,
+      externalOrderId: orderId,
+      merchantOrderReference,
+      expectedStoreId: storeId,
+      paymentAmount: { currency: "USD", minor: 188n },
+      amount: { currency: "USD", minor: 188n },
+      refundIntentReference,
+    });
+
+    expect(settlement).toMatchObject({
+      status: "failed",
+      externalRefundReference: "TKT_0123456789ABCDEFGHIJKL",
+      amount: { currency: "USD", minor: 188n },
+    });
+  });
+
   it("verifies an exact raw signed order.completed event and normalizes decimal money", async () => {
     const keyPair = keys();
     const provider = createWaffoPaymentProvider({
