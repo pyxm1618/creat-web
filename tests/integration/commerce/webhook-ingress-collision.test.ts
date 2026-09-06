@@ -64,6 +64,7 @@ function provider(normalize: (rawBody: Uint8Array) => NormalizedProviderEvent): 
     cancelSubscription: unsupported,
     resumeSubscription: unsupported,
     requestRefund: unsupported,
+    getRefundSettlement: async () => ({ status: "not_found" as const }),
     async getPayment() {
       return { payments: [], warnings: [] };
     },

@@ -7,6 +7,7 @@ import {
   type PaymentReconciliationResult,
 } from "@/platform/commerce/application/reconcile-stale-payments";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
+import { reconcileRefundSettlements } from "@/platform/commerce/application/reconcile-refund-settlements";
 import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
@@ -77,6 +78,15 @@ export async function GET(request: Request): Promise<Response> {
       job.signal.throwIfAborted();
 
       let remaining = job.batchLimit;
+      const refundSettlementsReconciled =
+        remaining > 0
+          ? await reconcileRefundSettlements(commerce.database, commerce.provider, {
+              limit: remaining,
+            })
+          : 0;
+      remaining = Math.max(0, remaining - refundSettlementsReconciled);
+      job.assertWithinBudget();
+
       const staleRefundsReconciled = await reconcileStaleRefunds(commerce.database, {
         limit: remaining,
       });
@@ -126,6 +136,7 @@ export async function GET(request: Request): Promise<Response> {
         paymentApplied: paymentReconciliation.applied,
         paymentRetried: paymentReconciliation.retried,
         paymentOperatorReview: paymentReconciliation.operatorReview,
+        refundSettlementsReconciled,
         staleRefundsReconciled,
         purgedPayloads,
         creditReconciliationIssues: creditReconciliation?.issues.length ?? 0,

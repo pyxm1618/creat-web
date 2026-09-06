@@ -97,6 +97,14 @@ export const refunds = pgTable(
     environment: text("environment").notNull(),
     externalRefundReference: text("external_refund_reference"),
     idempotencyKey: text("idempotency_key").notNull(),
+    providerWriteState: text("provider_write_state").default("not_started").notNull(),
+    providerReconciliationAttempts: integer("provider_reconciliation_attempts")
+      .default(0)
+      .notNull(),
+    nextProviderReconciliationAt: timestamp("next_provider_reconciliation_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     currency: text("currency").notNull(),
     requestedMinor: bigint("requested_minor", { mode: "bigint" }).notNull(),
     succeededMinor: bigint("succeeded_minor", { mode: "bigint" })
@@ -117,6 +125,10 @@ export const refunds = pgTable(
       .where(sql`${table.externalRefundReference} is not null`),
     index("refund_payment_idx").on(table.paymentId, table.createdAt),
     index("refund_operator_review_idx").on(table.status, table.reversalStatus),
+    index("refund_provider_reconciliation_due_idx").on(
+      table.providerWriteState,
+      table.nextProviderReconciliationAt,
+    ),
     check("refund_environment_valid", sql`${table.environment} in ('test','production')`),
     check("refund_requested_minor_positive", sql`${table.requestedMinor} > 0`),
     check(
@@ -130,6 +142,14 @@ export const refunds = pgTable(
     check(
       "refund_reversal_status_valid",
       sql`${table.reversalStatus} in ('pending','completed','not_required','reconciliation_required')`,
+    ),
+    check(
+      "refund_provider_write_state_valid",
+      sql`${table.providerWriteState} in ('not_started','dispatched','confirmed','ambiguous','legacy_unsafe')`,
+    ),
+    check(
+      "refund_provider_reconciliation_attempts_valid",
+      sql`${table.providerReconciliationAttempts} >= 0 and ${table.providerReconciliationAttempts} <= 12`,
     ),
   ],
 );

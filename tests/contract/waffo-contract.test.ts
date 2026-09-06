@@ -165,6 +165,7 @@ describe("Waffo Pancake provider contract", () => {
         amount: { currency: "USD", minor: 188n },
         reason: "Customer requested a full refund",
         idempotencyKey: "01989ef5-c3f7-7000-8000-000000000003",
+        refundIntentReference: "01989ef5-c3f7-7000-8000-000000000099",
       }),
     ).resolves.toEqual({
       externalRefundReference: "TKT_0123456789ABCDEFGHIJKL",
@@ -179,6 +180,7 @@ describe("Waffo Pancake provider contract", () => {
         amount: { currency: "USD", minor: 188n },
         reason: "Customer requested a full refund",
         idempotencyKey: "01989ef5-c3f7-7000-8000-000000000004",
+        refundIntentReference: "01989ef5-c3f7-7000-8000-000000000098",
       }),
     ).resolves.toEqual({
       externalRefundReference: "TKT_0123456789ABCDEFGHIJKL",
@@ -186,6 +188,122 @@ describe("Waffo Pancake provider contract", () => {
     });
 
     expect(refundHeaders.map((headers) => headers.get("X-Environment"))).toEqual(["test", "prod"]);
+  });
+
+  it("sends a durable refund-intent correlation and never relies on gateway idempotency", async () => {
+    const keyPair = keys();
+    const refundBodies: Record<string, unknown>[] = [];
+    const refundHeaders: Headers[] = [];
+    const refundIntentReference = "01989ef5-c3f7-7000-8000-000000000099";
+    const provider = createWaffoPaymentProvider({
+      merchantId,
+      privateKey: keyPair.privateKey,
+      storeId,
+      baseUrl: "https://api.example.test",
+      fetch: async (input, init) => {
+        const url = String(input);
+        if (url.includes("issue-session-token")) {
+          return Response.json({
+            data: {
+              token: "test-token",
+              expiresAt: "2026-08-08T12:00:00.000Z",
+            },
+          });
+        }
+        if (url.includes("refund-ticket/create-ticket")) {
+          refundBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          refundHeaders.push(new Headers(init?.headers));
+          return Response.json({
+            data: {
+              ticket: {
+                id: "TKT_0123456789ABCDEFGHIJKL",
+                status: "pending",
+              },
+            },
+          });
+        }
+        throw new Error(`unexpected Waffo request: ${url}`);
+      },
+    });
+
+    await provider.requestRefund({
+      environment: "test",
+      buyerIdentity: "01989ef5-c3f7-7000-8000-000000000002",
+      externalPaymentId: paymentId,
+      amount: { currency: "USD", minor: 188n },
+      reason: "Customer requested a full refund",
+      idempotencyKey: "request-key-that-is-not-the-correlation",
+      refundIntentReference,
+    });
+
+    expect(refundBodies[0]).toMatchObject({
+      refundTicketMerchantExternalId: refundIntentReference,
+      metadata: { creatWebRefundIntentId: refundIntentReference },
+    });
+    expect(refundHeaders[0]?.get("X-Idempotency-Key")).toBeNull();
+  });
+
+  it("reads an exact refund settlement through payment, metadata, and ticket cross-checks", async () => {
+    const keyPair = keys();
+    const refundIntentReference = "01989ef5-c3f7-7000-8000-000000000099";
+    const provider = createWaffoPaymentProvider({
+      merchantId,
+      privateKey: keyPair.privateKey,
+      storeId,
+      baseUrl: "https://api.example.test",
+      fetch: async () =>
+        Response.json({
+          data: {
+            payments: [validPayment({ snapshotAmountDetails: { currency: "USD", total: "1.88" } })],
+            paymentsCount: 1,
+            refundTickets: [
+              {
+                id: "TKT_0123456789ABCDEFGHIJKL",
+                status: "succeeded",
+                subjectId: paymentId,
+                metadata: JSON.stringify({ creatWebRefundIntentId: refundIntentReference }),
+                refundTicketMerchantExternalId: refundIntentReference,
+              },
+            ],
+            refundTicketsCount: 1,
+            refunds: [
+              {
+                id: "REF_0123456789ABCDEFGHIJKL",
+                paymentId,
+                ticketId: "TKT_0123456789ABCDEFGHIJKL",
+                status: "succeeded",
+                testMode: true,
+                requestedAmountDetails: { amount: "1.88", currency: "USD" },
+                orderMerchantExternalId: merchantOrderReference,
+                refundTicketMerchantExternalId: refundIntentReference,
+              },
+            ],
+            refundsCount: 1,
+          },
+        }),
+    });
+
+    const settlement = await (
+      provider as unknown as {
+        getRefundSettlement(input: unknown): Promise<Record<string, unknown>>;
+      }
+    ).getRefundSettlement({
+      environment: "test",
+      externalPaymentId: paymentId,
+      externalOrderId: orderId,
+      merchantOrderReference,
+      expectedStoreId: storeId,
+      paymentAmount: { currency: "USD", minor: 188n },
+      amount: { currency: "USD", minor: 188n },
+      refundIntentReference,
+    });
+
+    expect(settlement).toMatchObject({
+      status: "succeeded",
+      externalRefundReference: "TKT_0123456789ABCDEFGHIJKL",
+      externalSettlementReference: "REF_0123456789ABCDEFGHIJKL",
+      amount: { currency: "USD", minor: 188n },
+    });
   });
 
   it("verifies an exact raw signed order.completed event and normalizes decimal money", async () => {

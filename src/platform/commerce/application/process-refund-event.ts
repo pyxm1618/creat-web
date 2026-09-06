@@ -12,11 +12,22 @@ import { refunds, subscriptionPeriods } from "@/platform/database/subscription-s
 
 import type { NormalizedProviderEvent } from "../domain/events";
 import { transitionOrder, type OrderStatus } from "../domain/order";
+import type { Money } from "../domain/money";
 
 type RefundEvent = Extract<NormalizedProviderEvent, { type: "refund_succeeded" | "refund_failed" }>;
+type RefundSettlementEvent<T = RefundEvent> = T extends unknown
+  ? Omit<T, "eventId"> & { readonly eventId?: string }
+  : never;
 type CommerceTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 type RefundRow = typeof refunds.$inferSelect;
 type PaymentRefundStatus = "none" | "partial" | "refunded" | "failed";
+
+export type RefundSettlementSource = "webhook" | "provider_read_reconciliation";
+
+type RefundSettlementContext = {
+  readonly source: RefundSettlementSource;
+  readonly refundId?: string;
+};
 
 function parseOrderStatus(value: string): OrderStatus {
   if (
@@ -37,7 +48,26 @@ function aggregateRefundStatus(payment: typeof payments.$inferSelect): PaymentRe
   return "failed";
 }
 
-async function matchingRefunds(tx: CommerceTransaction, paymentId: string, event: RefundEvent) {
+async function matchingRefunds(
+  tx: CommerceTransaction,
+  paymentId: string,
+  event: RefundSettlementEvent,
+  refundId?: string,
+) {
+  if (refundId) {
+    return tx
+      .select()
+      .from(refunds)
+      .where(
+        and(
+          eq(refunds.id, refundId),
+          eq(refunds.paymentId, paymentId),
+          eq(refunds.environment, event.environment),
+        ),
+      )
+      .limit(2)
+      .for("update");
+  }
   if (event.externalRefundReference) {
     return tx
       .select()
@@ -73,12 +103,14 @@ async function recordRefundReconciliation(
     readonly targetType: "payment_refund" | "refund_entitlement";
     readonly before: Record<string, unknown>;
     readonly after: Record<string, unknown>;
+    readonly source?: RefundSettlementSource;
   },
 ): Promise<void> {
   await tx.insert(commerceReconciliationRuns).values({
     targetType: input.targetType,
     targetId: input.targetId,
-    actorType: "webhook",
+    actorType:
+      input.source === "provider_read_reconciliation" ? "provider_read_reconciliation" : "webhook",
     beforeJson: input.before,
     afterJson: input.after,
     result: "operator_review_required",
@@ -88,7 +120,8 @@ async function recordRefundReconciliation(
 async function handleSettledRefundReplay(
   tx: CommerceTransaction,
   refund: RefundRow,
-  event: Extract<RefundEvent, { type: "refund_succeeded" }>,
+  event: Extract<RefundSettlementEvent, { type: "refund_succeeded" }>,
+  source: RefundSettlementSource,
 ): Promise<boolean> {
   if (refund.status !== "succeeded") return false;
   const sameAmount = refund.succeededMinor === event.amount.minor;
@@ -101,6 +134,7 @@ async function handleSettledRefundReplay(
   await recordRefundReconciliation(tx, {
     targetType: "payment_refund",
     targetId: refund.paymentId,
+    source,
     before: {
       refundId: refund.id,
       succeededMinor: refund.succeededMinor.toString(),
@@ -117,9 +151,10 @@ async function handleSettledRefundReplay(
   return true;
 }
 
-export async function processRefundEvent(
+async function processRefundEventInternal(
   tx: CommerceTransaction,
-  event: RefundEvent,
+  event: RefundSettlementEvent,
+  context: RefundSettlementContext,
 ): Promise<void> {
   const [payment] = await tx
     .select()
@@ -146,6 +181,7 @@ export async function processRefundEvent(
     await recordRefundReconciliation(tx, {
       targetType: "payment_refund",
       targetId: payment.id,
+      source: context.source,
       before: {
         orderId: order.id,
         refundStatus: payment.refundStatus,
@@ -161,13 +197,18 @@ export async function processRefundEvent(
     return;
   }
 
-  const candidates = await matchingRefunds(tx, payment.id, event);
+  const candidates = await matchingRefunds(tx, payment.id, event, context.refundId);
   const matched = candidates.length === 1 ? candidates[0]! : undefined;
+
+  if (context.refundId && !matched) {
+    throw new Error("provider refund settlement target not found");
+  }
 
   if (matched && matched.paymentId !== payment.id) {
     await recordRefundReconciliation(tx, {
       targetType: "payment_refund",
       targetId: payment.id,
+      source: context.source,
       before: { refundStatus: payment.refundStatus },
       after: {
         reason: "external_refund_reference_payment_mismatch",
@@ -189,6 +230,7 @@ export async function processRefundEvent(
         await recordRefundReconciliation(tx, {
           targetType: "payment_refund",
           targetId: payment.id,
+          source: context.source,
           before: {
             refundId: matched.id,
             status: matched.status,
@@ -213,6 +255,8 @@ export async function processRefundEvent(
         .set({
           status: "failed",
           reversalStatus: "not_required",
+          providerWriteState: "confirmed",
+          nextProviderReconciliationAt: null,
           providerUpdatedAt: event.occurredAt,
           updatedAt: new Date(),
         })
@@ -235,6 +279,7 @@ export async function processRefundEvent(
       await recordRefundReconciliation(tx, {
         targetType: "payment_refund",
         targetId: payment.id,
+        source: context.source,
         before: { refundStatus: payment.refundStatus },
         after: { ambiguousFailedRefund: true, candidateCount: candidates.length },
       });
@@ -242,6 +287,7 @@ export async function processRefundEvent(
       await recordRefundReconciliation(tx, {
         targetType: "payment_refund",
         targetId: payment.id,
+        source: context.source,
         before: { refundStatus: payment.refundStatus },
         after: {
           unmatchedFailedRefund: true,
@@ -252,7 +298,7 @@ export async function processRefundEvent(
     return;
   }
 
-  if (matched && (await handleSettledRefundReplay(tx, matched, event))) return;
+  if (matched && (await handleSettledRefundReplay(tx, matched, event, context.source))) return;
 
   if (event.amount.currency !== payment.currency || event.amount.minor <= 0n) {
     throw new Error("invalid refund amount");
@@ -270,6 +316,7 @@ export async function processRefundEvent(
 
   let refund = matched;
   if (!refund) {
+    if (!event.eventId) throw new Error("provider-originated refund event missing event id");
     if (candidates.length > 1) {
       await tx
         .update(refunds)
@@ -288,6 +335,7 @@ export async function processRefundEvent(
       await recordRefundReconciliation(tx, {
         targetType: "payment_refund",
         targetId: payment.id,
+        source: context.source,
         before: { refundedMinor: payment.refundedMinor.toString() },
         after: {
           refundedMinor: refundedMinor.toString(),
@@ -310,6 +358,7 @@ export async function processRefundEvent(
         reason: "provider-originated refund",
         status: "succeeded",
         reversalStatus: full ? "pending" : "reconciliation_required",
+        providerWriteState: "confirmed",
         operatorReviewReason: full
           ? null
           : "partial refund entitlement reversal requires operator policy",
@@ -367,6 +416,8 @@ export async function processRefundEvent(
         status: "succeeded",
         succeededMinor: event.amount.minor,
         reversalStatus: "reconciliation_required",
+        providerWriteState: "confirmed",
+        nextProviderReconciliationAt: null,
         operatorReviewReason: "partial refund entitlement reversal requires operator policy",
         providerUpdatedAt: event.occurredAt,
         updatedAt: new Date(),
@@ -375,6 +426,7 @@ export async function processRefundEvent(
     await recordRefundReconciliation(tx, {
       targetType: "refund_entitlement",
       targetId: refund.id,
+      source: context.source,
       before: { reversalStatus: refund.reversalStatus },
       after: { reversalStatus: "reconciliation_required", reason: "partial_refund" },
     });
@@ -387,6 +439,8 @@ export async function processRefundEvent(
       status: "succeeded",
       succeededMinor: event.amount.minor,
       reversalStatus: "pending",
+      providerWriteState: "confirmed",
+      nextProviderReconciliationAt: null,
       providerUpdatedAt: event.occurredAt,
       updatedAt: new Date(),
     })
@@ -401,4 +455,40 @@ export async function processRefundEvent(
       idempotencyKey: `refund:${refund.id}:${operation}`,
     })
     .onConflictDoNothing({ target: fulfillmentJobs.idempotencyKey });
+}
+
+export async function processRefundEvent(
+  tx: CommerceTransaction,
+  event: RefundEvent,
+): Promise<void> {
+  await processRefundEventInternal(tx, event, { source: "webhook" });
+}
+
+export async function applyProviderReadRefundSettlementInTransaction(
+  tx: CommerceTransaction,
+  input: {
+    readonly refundId: string;
+    readonly environment: "test" | "production";
+    readonly externalPaymentId: string;
+    readonly merchantOrderReference: string;
+    readonly externalRefundReference?: string;
+    readonly amount: Money;
+    readonly occurredAt: Date;
+  },
+): Promise<void> {
+  await processRefundEventInternal(
+    tx,
+    {
+      type: "refund_succeeded",
+      environment: input.environment,
+      externalPaymentId: input.externalPaymentId,
+      merchantOrderReference: input.merchantOrderReference,
+      ...(input.externalRefundReference
+        ? { externalRefundReference: input.externalRefundReference }
+        : {}),
+      amount: input.amount,
+      occurredAt: input.occurredAt,
+    },
+    { source: "provider_read_reconciliation", refundId: input.refundId },
+  );
 }

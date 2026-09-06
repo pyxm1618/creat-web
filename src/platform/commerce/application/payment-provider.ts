@@ -44,6 +44,34 @@ export type RefundRequest = {
   readonly amount: Money;
   readonly reason: string;
   readonly idempotencyKey: string;
+  readonly refundIntentReference: string;
+};
+
+export type RefundSettlementLookupInput = {
+  readonly environment: CommerceEnvironment;
+  readonly externalPaymentId: string;
+  readonly externalOrderId?: string;
+  readonly merchantOrderReference: string;
+  readonly paymentAmount: Money;
+  readonly amount: Money;
+  readonly refundIntentReference: string;
+  readonly externalRefundReference?: string;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+};
+
+export type ProviderRefundSettlement = {
+  readonly status:
+    | "found_pending"
+    | "found_processing"
+    | "succeeded"
+    | "failed"
+    | "not_found"
+    | "ambiguous"
+    | "contract_error";
+  readonly externalRefundReference?: string;
+  readonly externalSettlementReference?: string;
+  readonly amount?: Money;
 };
 
 export type ProviderQueryWarning = {
@@ -96,6 +124,7 @@ export interface PaymentProvider {
     readonly externalRefundReference: string;
     readonly status: "pending" | "processing" | "succeeded" | "failed";
   }>;
+  getRefundSettlement(input: RefundSettlementLookupInput): Promise<ProviderRefundSettlement>;
   getPayment(input: PaymentLookupInput): Promise<PaymentLookupResult>;
   verifyAndNormalizeWebhook(input: {
     readonly rawBody: Uint8Array;

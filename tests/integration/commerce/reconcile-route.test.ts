@@ -21,6 +21,8 @@ const routeState = vi.hoisted(() => ({
   creditsEnabled: false,
   refundResult: 0,
   refundCalls: 0,
+  refundSettlementResult: 0,
+  refundSettlementCalls: 0,
   purgeCalls: 0,
   creditCalls: 0,
   alertsEmitted: 0,
@@ -51,6 +53,12 @@ vi.mock("@/platform/commerce/application/reconcile-stale-refunds", () => ({
   reconcileStaleRefunds: async () => {
     routeState.refundCalls += 1;
     return routeState.refundResult;
+  },
+}));
+vi.mock("@/platform/commerce/application/reconcile-refund-settlements", () => ({
+  reconcileRefundSettlements: async () => {
+    routeState.refundSettlementCalls += 1;
+    return routeState.refundSettlementResult;
   },
 }));
 vi.mock("@/platform/commerce/application/purge-webhook-payloads", () => ({
@@ -108,6 +116,7 @@ function paymentProvider(getPayment: PaymentProvider["getPayment"]): PaymentProv
     cancelSubscription: unsupported,
     resumeSubscription: unsupported,
     requestRefund: unsupported,
+    getRefundSettlement: async () => ({ status: "not_found" as const }),
     getPayment,
     verifyAndNormalizeWebhook: unsupported,
   };
@@ -182,6 +191,8 @@ beforeEach(async () => {
   routeState.creditsEnabled = false;
   routeState.refundResult = 0;
   routeState.refundCalls = 0;
+  routeState.refundSettlementResult = 0;
+  routeState.refundSettlementCalls = 0;
   routeState.purgeCalls = 0;
   routeState.creditCalls = 0;
   routeState.alertsEmitted = 0;
@@ -268,6 +279,27 @@ it("runs payment reconciliation with exact counters even when refunds consume al
   expect(providerCalls).toBe(1);
   expect(routeState.refundCalls).toBe(1);
   expect(routeState.alertsEmitted).toBe(1);
+});
+
+it("runs provider-read refund reconciliation before stale refund marking", async () => {
+  const provider = paymentProvider(async () => {
+    return { payments: [], warnings: [] };
+  });
+  routeState.runtime = {
+    database: database.db,
+    provider,
+    environment: "test",
+  };
+  routeState.refundSettlementResult = 3;
+
+  const response = await GET(authorizedRequest());
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    refundSettlementsReconciled: 3,
+    staleRefundsReconciled: 0,
+  });
+  expect(routeState.refundSettlementCalls).toBe(1);
 });
 
 it("caps the independent payment opportunity at five stale orders", async () => {

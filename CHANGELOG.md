@@ -2,6 +2,21 @@
 
 All notable starter-platform changes are recorded here. This repository is an internal starter; owned products do not automatically inherit changes and must follow the upgrade procedure in `docs/参考/扩展与升级.md`.
 
+## 0.2.3 - 2026-09-06
+
+### Fixed
+
+- Refund intent correlation now uses the durable local refund ID in both Waffo merchant reference and metadata; the Waffo customer-session SDK path does not claim gateway idempotency.
+- A refund provider write is fenced by a durable `dispatched` state. Once the write may have been sent, an unknown result is never retried as a second POST.
+- Unknown refund writes reconcile through bounded, read-only provider queries that cross-check payment, order, amount, currency, environment, ticket correlation, and final refund state.
+- Provider-read reconciliation and webhook settlement share the same idempotent payment/refund/fulfillment projection without fabricating webhook or applied-event records.
+- Existing refunds without a trustworthy provider correlation are migrated to `legacy_unsafe` and are never automatically rebound or submitted again.
+
+### Added / Verification
+
+- Added contract, integration, migration, DB-persist-failure, scheduled-reconciliation, and legacy-unsafe regression coverage.
+- Added the Test Mode refund E2E gate; a provider gateway block is reported as BLOCKED rather than converted into local success.
+
 ## 0.2.2 - 2026-09-05
 
 ### Fixed

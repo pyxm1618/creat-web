@@ -139,6 +139,36 @@ refund.failed
 
 相关 data 字段包括 `orderId`、`orderMerchantExternalId`、`paymentId`、`paymentStatus`、`currency`、`amount`、订阅周期字段和退款字段。
 
+## 退款写入与恢复合约
+
+creat-web 使用本地退款行的 `refunds.id` 作为 durable refund intent correlation。每次
+`createRefundTicket` 请求必须把它同时写入 `refundTicketMerchantExternalId` 和
+`metadata.creatWebRefundIntentId`；本地 `idempotencyKey` 只负责命令去重。SDK 0.18.0 的
+customer-session refund path 不发送 `X-Idempotency-Key`，因此应用不得声称 Waffo 网关已经
+提供了幂等 POST 保护。
+
+本地写入状态遵循：
+
+```
+not_started -> dispatched -> confirmed
+                    \\-> ambiguous -> provider-read reconciliation
+```
+
+在 `dispatched` 之后，写入结果未知（包括 provider 已可能接受但本地落库失败）时，worker
+只能做只读查询，绝不能盲目再次调用 `createRefundTicket`。provider read 必须以 payment
+身份、local order merchant reference、金额/币种、环境、ticket subject、metadata/merchant
+reference 和最终 refund 逐项交叉核对；零个、多个或任何不一致都只能进入
+`reconciliation_required`，不能猜测。
+
+provider-read reconciliation 与 `refund.succeeded` / `refund.failed` webhook 共用同一个
+事务结算核心和履约幂等键，但 provider-read 不写入伪造的 webhook inbox 或
+`commerce_applied_events`。对账日志的 actor source 必须区分 `webhook` 与
+`provider_read_reconciliation`。
+
+迁移前没有可信 provider correlation 的旧退款被标为 `legacy_unsafe`。它们保持原状态，
+不自动重新提交、不自动 provider-read、不重绑 ticket；历史退款不得通过手工 DB mutation
+或伪造 webhook 改成成功。
+
 已验证 webhook 路径处理一次性、退款和带类型的订阅事件。**订阅激活/支付变更所需的周期边界必须来自那个签名事件本身。** 这和 GraphQL 漏收恢复是两回事：查询结果不能拿当前订单周期字段去顶替缺失的支付级历史。
 
 ### SDK 0.18.0 的签名时间容差与重试

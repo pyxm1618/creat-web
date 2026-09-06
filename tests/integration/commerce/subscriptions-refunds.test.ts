@@ -11,6 +11,7 @@ import { createPostgresAccountSubjectRepository } from "@/platform/accounts/post
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
 import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
+import { reconcileRefundSettlements } from "@/platform/commerce/application/reconcile-refund-settlements";
 import { runCommerceCommandWorker } from "@/platform/commerce/application/run-commerce-command-worker";
 import { createDatabaseClient } from "@/platform/database/client";
 import {
@@ -136,7 +137,12 @@ async function paidFixture(amountMinor = 1000n) {
   return { subject, product, order, payment };
 }
 
-function refundProvider(requestRefund: PaymentProvider["requestRefund"]): PaymentProvider {
+function refundProvider(
+  requestRefund: PaymentProvider["requestRefund"],
+  getRefundSettlement: PaymentProvider["getRefundSettlement"] = async () => ({
+    status: "not_found" as const,
+  }),
+): PaymentProvider {
   return {
     name: "test-provider",
     capabilities: { oneTime: true, subscriptions: true, partialRefunds: true },
@@ -153,6 +159,7 @@ function refundProvider(requestRefund: PaymentProvider["requestRefund"]): Paymen
       throw new Error("not used");
     },
     requestRefund,
+    getRefundSettlement,
     async getPayment() {
       return { payments: [], warnings: [] };
     },
@@ -233,7 +240,7 @@ async function expectFinalAttemptDeadLetter(input: {
   expect(persistedJob).toMatchObject({
     state: "dead_letter",
     attempts: 12,
-    lastErrorCode: "Error",
+    lastErrorCode: "ProviderWriteOutcomeUnknownError",
   });
   expect(await securityEventCount("dead_letter_created")).toBe(input.deadLetterCountBefore + 1);
 }
@@ -784,6 +791,7 @@ it("does not let a late provider response overwrite an authoritative refund webh
     expect(request).toMatchObject({
       externalPaymentId: fixture.payment.externalPaymentId,
       idempotencyKey: fixture.idempotencyKey,
+      refundIntentReference: fixture.refund.id,
       amount: { currency: "USD", minor: 1000n },
     });
     providerCalled.resolve();
@@ -866,6 +874,11 @@ it("does not let a late provider response overwrite stale-refund reconciliation"
   });
   await providerCalled.promise;
 
+  await database.db
+    .update(refunds)
+    .set({ updatedAt: new Date("2000-01-01T00:00:00Z") })
+    .where(eq(refunds.id, fixture.refund.id));
+
   expect(
     await reconcileStaleRefunds(database.db, {
       now: new Date("2030-02-03T00:00:00Z"),
@@ -885,8 +898,9 @@ it("does not let a late provider response overwrite stale-refund reconciliation"
   });
   expect(persistedRefund).toMatchObject({
     status: "reconciliation_required",
-    reversalStatus: "pending",
+    reversalStatus: "reconciliation_required",
     externalRefundReference: null,
+    providerWriteState: "ambiguous",
   });
   await expectAdditionalRefundRejected({
     subjectId: fixture.subject.id,
@@ -931,7 +945,7 @@ it("does not call the provider again once a refund requires reconciliation", asy
   });
   expect(persistedRefund).toMatchObject({
     status: "reconciliation_required",
-    reversalStatus: "pending",
+    reversalStatus: "reconciliation_required",
     externalRefundReference: null,
   });
   const persistedJob = await database.db.query.commerceCommandJobs.findFirst({
@@ -1003,8 +1017,8 @@ it("backs off a thrown provider request while preserving refund capacity", async
     where: eq(refunds.id, fixture.refund.id),
   });
   expect(persistedRefund).toMatchObject({
-    status: "pending",
-    reversalStatus: "pending",
+    status: "reconciliation_required",
+    reversalStatus: "reconciliation_required",
     externalRefundReference: null,
     providerUpdatedAt: null,
   });
@@ -1014,12 +1028,267 @@ it("backs off a thrown provider request while preserving refund capacity", async
   expect(persistedJob).toMatchObject({
     state: "pending",
     attempts: 1,
-    lastErrorCode: "Error",
+    lastErrorCode: "ProviderWriteOutcomeUnknownError",
   });
   expect(persistedJob?.nextAttemptAt.toISOString()).toBe("2030-05-01T00:00:02.000Z");
   await expectAdditionalRefundRejected({
     subjectId: fixture.subject.id,
     paymentId: fixture.payment.id,
+  });
+});
+
+it("reconciles an ambiguous provider write without issuing a second refund request", async () => {
+  const fixture = await refundCommandFixture();
+  const workerNow = new Date("2030-06-01T00:00:00Z");
+  let requestCalls = 0;
+  let settlementReads = 0;
+  const provider = refundProvider(
+    async () => {
+      requestCalls += 1;
+      throw new Error("provider response lost after dispatch");
+    },
+    async (input) => {
+      settlementReads += 1;
+      expect(input).toMatchObject({
+        externalPaymentId: fixture.payment.externalPaymentId,
+        refundIntentReference: fixture.refund.id,
+      });
+      return {
+        status: "succeeded" as const,
+        externalRefundReference: "TKT_RECONCILED",
+        externalSettlementReference: "REF_RECONCILED",
+        amount: { currency: "USD" as const, minor: 700n },
+      };
+    },
+  );
+
+  expect(
+    await runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: workerNow,
+      clock: () => workerNow,
+      limit: 1,
+    }),
+  ).toBe(0);
+  expect(
+    await runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: new Date(workerNow.getTime() + 2_000),
+      clock: () => new Date(workerNow.getTime() + 2_000),
+      limit: 1,
+    }),
+  ).toBe(1);
+
+  expect(requestCalls).toBe(1);
+  expect(settlementReads).toBe(1);
+  const persistedRefund = await database.db.query.refunds.findFirst({
+    where: eq(refunds.id, fixture.refund.id),
+  });
+  expect(persistedRefund).toMatchObject({
+    status: "succeeded",
+    externalRefundReference: "TKT_RECONCILED",
+  });
+});
+
+it("reconciles after local persistence fails without issuing a second provider write", async () => {
+  const fixture = await refundCommandFixture();
+  const workerNow = new Date("2030-06-15T00:00:00Z");
+  let requestCalls = 0;
+  let settlementReads = 0;
+  await database.db.execute(
+    sql.raw(`
+      CREATE OR REPLACE FUNCTION refund_persist_failure_test()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        IF NEW.provider_write_state = 'confirmed' AND OLD.provider_write_state = 'dispatched' THEN
+          RAISE EXCEPTION 'intentional local persistence failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+    `),
+  );
+  await database.db.execute(
+    sql.raw(`
+      CREATE TRIGGER refund_persist_failure_test_trigger
+      BEFORE UPDATE ON refunds
+      FOR EACH ROW EXECUTE FUNCTION refund_persist_failure_test();
+    `),
+  );
+
+  try {
+    const provider = refundProvider(
+      async () => {
+        requestCalls += 1;
+        return {
+          externalRefundReference: "TKT_DB_PERSISTENCE_FAILURE",
+          status: "pending" as const,
+        };
+      },
+      async () => {
+        settlementReads += 1;
+        return {
+          status: "succeeded" as const,
+          externalRefundReference: "TKT_DB_PERSISTENCE_FAILURE",
+          externalSettlementReference: "REF_DB_PERSISTENCE_FAILURE",
+          amount: { currency: "USD" as const, minor: 700n },
+        };
+      },
+    );
+
+    await expect(
+      runCommerceCommandWorker({
+        database: database.db,
+        provider,
+        owner: `refund-worker-${crypto.randomUUID()}`,
+        now: workerNow,
+        clock: () => workerNow,
+        limit: 1,
+      }),
+    ).resolves.toBe(0);
+    expect(requestCalls).toBe(1);
+
+    await database.db.execute(
+      sql.raw("DROP TRIGGER refund_persist_failure_test_trigger ON refunds"),
+    );
+    await database.db.execute(sql.raw("DROP FUNCTION refund_persist_failure_test()"));
+
+    await expect(
+      runCommerceCommandWorker({
+        database: database.db,
+        provider,
+        owner: `refund-worker-${crypto.randomUUID()}`,
+        now: new Date(workerNow.getTime() + 2_000),
+        clock: () => new Date(workerNow.getTime() + 2_000),
+        limit: 1,
+      }),
+    ).resolves.toBe(1);
+    expect(requestCalls).toBe(1);
+    expect(settlementReads).toBe(1);
+    expect(
+      await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+    ).toMatchObject({ status: "succeeded", externalRefundReference: "TKT_DB_PERSISTENCE_FAILURE" });
+  } finally {
+    await database.db.execute(
+      sql.raw("DROP TRIGGER IF EXISTS refund_persist_failure_test_trigger ON refunds"),
+    );
+    await database.db.execute(sql.raw("DROP FUNCTION IF EXISTS refund_persist_failure_test()"));
+  }
+});
+
+it("settles a dispatched refund from scheduled provider read without a webhook ledger event", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  const now = new Date("2030-07-01T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+
+  let requestCalls = 0;
+  let readCalls = 0;
+  const provider = refundProvider(
+    async () => {
+      requestCalls += 1;
+      throw new Error("scheduled reconciliation must not POST");
+    },
+    async (input) => {
+      readCalls += 1;
+      expect(input).toMatchObject({
+        externalPaymentId: fixture.payment.externalPaymentId,
+        refundIntentReference: fixture.refund.id,
+      });
+      return {
+        status: "succeeded" as const,
+        externalRefundReference: "TKT_SCHEDULED",
+        externalSettlementReference: "REF_SCHEDULED",
+        amount: { currency: "USD" as const, minor: 1000n },
+      };
+    },
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  expect(requestCalls).toBe(0);
+  expect(readCalls).toBe(1);
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+  ).toHaveLength(1);
+  expect(
+    await database.db
+      .select()
+      .from(commerceAppliedEvents)
+      .where(eq(commerceAppliedEvents.providerEventId, `provider-read:${fixture.refund.id}`)),
+  ).toHaveLength(0);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({ status: "succeeded", externalRefundReference: "TKT_SCHEDULED" });
+});
+
+it("preserves a legacy unsafe refund and never auto-rebinds it to provider state", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  await database.db
+    .update(refunds)
+    .set({
+      providerWriteState: "legacy_unsafe",
+      status: "pending",
+      externalRefundReference: null,
+      updatedAt: new Date("2000-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+
+  let writeCalls = 0;
+  let readCalls = 0;
+  const provider = refundProvider(
+    async () => {
+      writeCalls += 1;
+      throw new Error("legacy unsafe refund must not POST");
+    },
+    async () => {
+      readCalls += 1;
+      throw new Error("legacy unsafe refund must not be read-reconciled");
+    },
+  );
+
+  await expect(
+    reconcileStaleRefunds(database.db, {
+      now: new Date("2030-08-01T00:00:00Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 10,
+    }),
+  ).resolves.toBeGreaterThanOrEqual(0);
+  await expect(
+    runCommerceCommandWorker({
+      database: database.db,
+      provider,
+      owner: `refund-worker-${crypto.randomUUID()}`,
+      now: new Date("2030-08-01T00:00:00Z"),
+      limit: 1,
+    }),
+  ).resolves.toBe(1);
+
+  expect(writeCalls).toBe(0);
+  expect(readCalls).toBe(0);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    providerWriteState: "legacy_unsafe",
+    status: "pending",
+    externalRefundReference: null,
   });
 });
 
@@ -1136,7 +1405,7 @@ it("does not overwrite stale reconciliation when the final provider attempt dead
   });
   expect(persistedRefund).toMatchObject({
     status: "reconciliation_required",
-    reversalStatus: "pending",
+    reversalStatus: "reconciliation_required",
     operatorReviewReason: "provider refund settlement webhook did not arrive within threshold",
     externalRefundReference: null,
   });

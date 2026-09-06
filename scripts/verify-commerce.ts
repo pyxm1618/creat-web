@@ -66,6 +66,24 @@ for (const requirement of [
   }
 }
 
+const refundGateHeading = "## 退款写入与恢复合约";
+const refundGate = contract.slice(contract.indexOf(refundGateHeading));
+if (!refundGate.startsWith(refundGateHeading)) {
+  throw new Error("Waffo contract document must define the refund write/reconciliation gate");
+}
+for (const requirement of [
+  "refundTicketMerchantExternalId",
+  "metadata.creatWebRefundIntentId",
+  "不发送 `X-Idempotency-Key`",
+  "绝不能盲目再次调用 `createRefundTicket`",
+  "`commerce_applied_events`",
+  "`legacy_unsafe`",
+]) {
+  if (!refundGate.includes(requirement)) {
+    throw new Error(`Waffo refund reconciliation gate is incomplete: ${requirement}`);
+  }
+}
+
 console.log(
   JSON.stringify({
     event: "commerce_verified",

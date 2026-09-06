@@ -11,15 +11,21 @@ import type {
   CreateOneTimeCheckoutInput,
   PaymentLookupResult,
   PaymentProvider,
+  ProviderRefundSettlement,
   ProviderSubscriptionSnapshot,
   RefundRequest,
+  RefundSettlementLookupInput,
 } from "@/platform/commerce/application/payment-provider";
 import type {
   NormalizedPaymentSnapshot,
   NormalizedProviderEvent,
   NormalizedSubscriptionEvent,
 } from "@/platform/commerce/domain/events";
-import { formatDisplayAmount, parseDisplayAmount } from "@/platform/commerce/domain/money";
+import {
+  equalMoney,
+  formatDisplayAmount,
+  parseDisplayAmount,
+} from "@/platform/commerce/domain/money";
 import type { CommerceEnvironment } from "@/platform/commerce/domain/product";
 
 export type WaffoProviderConfig = {
@@ -32,11 +38,24 @@ export type WaffoProviderConfig = {
 };
 
 const PAYMENT_QUERY_LIMIT = 100;
+const REFUND_TICKET_QUERY_LIMIT = 20;
+const REFUND_QUERY_LIMIT = 2;
 const DEFAULT_PAYMENT_QUERY_TIMEOUT_MS = 5_000;
 
 type PaymentQueryResult = {
   readonly payments?: unknown;
   readonly paymentsCount?: unknown;
+};
+
+type RefundTicketQueryResult = {
+  readonly refundTicket?: unknown;
+  readonly refundTickets?: unknown;
+  readonly refundTicketsCount?: unknown;
+};
+
+type RefundQueryResult = {
+  readonly refunds?: unknown;
+  readonly refundsCount?: unknown;
 };
 
 function providerEnvironment(environment: CommerceEnvironment): "test" | "prod" {
@@ -84,6 +103,89 @@ function requireBoolean(value: unknown, field: string): boolean {
     throw new ProviderContractError(`invalid Waffo field: ${field}`);
   }
   return value;
+}
+
+type RefundTicketSnapshot = {
+  readonly id: string;
+  readonly status: string;
+  readonly subjectId: string;
+  readonly metadata: unknown;
+  readonly refundTicketMerchantExternalId: string | undefined;
+};
+
+type RefundSnapshot = {
+  readonly id: string;
+  readonly paymentId: string;
+  readonly ticketId: string | undefined;
+  readonly status: string;
+  readonly testMode: boolean;
+  readonly requestedAmountDetails: unknown;
+  readonly orderMerchantExternalId: string | undefined;
+  readonly refundTicketMerchantExternalId: string | undefined;
+};
+
+function refundTicketSnapshot(value: unknown): RefundTicketSnapshot {
+  const ticket = requireRecord(value, "refundTicket");
+  return {
+    id: requireString(ticket.id, "refundTicket.id"),
+    status: requireString(ticket.status, "refundTicket.status"),
+    subjectId: requireString(ticket.subjectId, "refundTicket.subjectId"),
+    metadata: ticket.metadata,
+    refundTicketMerchantExternalId: optionalString(ticket.refundTicketMerchantExternalId),
+  };
+}
+
+function refundSnapshot(value: unknown): RefundSnapshot {
+  const refund = requireRecord(value, "refund");
+  return {
+    id: requireString(refund.id, "refund.id"),
+    paymentId: requireString(refund.paymentId, "refund.paymentId"),
+    ticketId: optionalString(refund.ticketId),
+    status: requireString(refund.status, "refund.status"),
+    testMode: requireBoolean(refund.testMode, "refund.testMode"),
+    requestedAmountDetails: refund.requestedAmountDetails,
+    orderMerchantExternalId: optionalString(refund.orderMerchantExternalId),
+    refundTicketMerchantExternalId: optionalString(refund.refundTicketMerchantExternalId),
+  };
+}
+
+function refundMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "string") throw new ProviderContractError("invalid Waffo refund metadata");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ProviderContractError("invalid Waffo refund metadata JSON");
+  }
+  return requireRecord(parsed, "refundTicket.metadata");
+}
+
+function refundAmount(value: unknown) {
+  const details = requireRecord(value, "refund.requestedAmountDetails");
+  const amount = requireString(details.amount, "refund.requestedAmountDetails.amount");
+  const currency = requireString(details.currency, "refund.requestedAmountDetails.currency");
+  try {
+    return parseDisplayAmount(amount, currency);
+  } catch {
+    throw new ProviderContractError("invalid Waffo refund amount");
+  }
+}
+
+function refundTicketSettlementStatus(status: string): ProviderRefundSettlement["status"] {
+  if (status === "failed" || status === "rejected" || status === "returned") return "failed";
+  if (status === "pending" || status === "under_review") return "found_pending";
+  if (status === "approved" || status === "processing" || status === "succeeded") {
+    return "found_processing";
+  }
+  throw new ProviderContractError(`unsupported Waffo refund ticket status: ${status}`);
+}
+
+function refundSettlementStatus(status: string): ProviderRefundSettlement["status"] {
+  if (status === "succeeded") return "succeeded";
+  if (status === "pending") return "found_processing";
+  if (status === "failed") return "failed";
+  throw new ProviderContractError(`unsupported Waffo refund status: ${status}`);
 }
 
 function paymentDate(value: unknown): Date {
@@ -289,7 +391,8 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
           amount: formatDisplayAmount(input.amount),
           currency: input.amount.currency,
         },
-        refundTicketMerchantExternalId: input.idempotencyKey,
+        refundTicketMerchantExternalId: input.refundIntentReference,
+        metadata: { creatWebRefundIntentId: input.refundIntentReference },
       });
       const ticket = result.ticket;
       const status = String(ticket.status);
@@ -303,6 +406,282 @@ export function createWaffoPaymentProvider(config: WaffoProviderConfig): Payment
         externalRefundReference: ticket.id,
         status: status === "processing" ? ("processing" as const) : ("pending" as const),
       };
+    },
+    async getRefundSettlement(
+      input: RefundSettlementLookupInput,
+    ): Promise<ProviderRefundSettlement> {
+      const expectedStoreId = config.storeId;
+      if (!expectedStoreId) {
+        return { status: "contract_error" };
+      }
+      if (
+        input.externalPaymentId.trim().length === 0 ||
+        input.merchantOrderReference.trim().length === 0 ||
+        input.refundIntentReference.trim().length === 0 ||
+        (input.externalRefundReference !== undefined &&
+          input.externalRefundReference.trim().length === 0)
+      ) {
+        return { status: "contract_error" };
+      }
+
+      const request = scopedRequestSignal(input);
+      const scopedClient = createClient((requestInfo, init) =>
+        baseFetch(requestInfo, { ...init, signal: request.signal }),
+      );
+
+      const query = async <T extends Record<string, unknown>>(
+        queryText: string,
+        variables: Record<string, unknown>,
+      ): Promise<T> => {
+        const response = await scopedClient.graphql.query<T>({
+          query: queryText,
+          variables,
+        });
+        if (request.signal.aborted) {
+          throw request.signal.reason ?? new DOMException("aborted", "AbortError");
+        }
+        if (response.errors?.length) {
+          throw new ProviderContractError(response.errors.map((error) => error.message).join("; "));
+        }
+        return requireRecord(response.data, "Waffo refund query data") as T;
+      };
+
+      const paymentInput = {
+        environment: input.environment,
+        externalPaymentId: input.externalPaymentId,
+        ...(input.externalOrderId ? { externalOrderId: input.externalOrderId } : {}),
+        merchantOrderReference: input.merchantOrderReference,
+      } satisfies Parameters<PaymentProvider["getPayment"]>[0];
+
+      try {
+        const paymentFilter =
+          "{ id: { eq: $paymentId }, orderMerchantExternalId: { eq: $reference } }";
+        const paymentData = await query<PaymentQueryResult>(
+          `query ($paymentId: String!, $reference: String!) {
+            payments(limit: ${PAYMENT_QUERY_LIMIT}, filter: ${paymentFilter}) {
+              id
+              orderId
+              status
+              orderMerchantExternalId
+              snapshotAmountDetails { currency total }
+              onetimeOrder { id testMode store { id } }
+              subscriptionOrder { id store { id } }
+              createdAt
+            }
+            paymentsCount(filter: ${paymentFilter})
+          }`,
+          {
+            paymentId: input.externalPaymentId,
+            reference: input.merchantOrderReference,
+          },
+        );
+        if (!Array.isArray(paymentData.payments)) {
+          throw new ProviderContractError("invalid Waffo payments result");
+        }
+        if (!Number.isInteger(paymentData.paymentsCount) || Number(paymentData.paymentsCount) < 0) {
+          throw new ProviderContractError("invalid Waffo payments count");
+        }
+        const paymentCount = Number(paymentData.paymentsCount);
+        if (paymentCount > PAYMENT_QUERY_LIMIT) {
+          throw new ProviderContractError("Waffo payment query exceeded bounded limit");
+        }
+        if (paymentCount !== paymentData.payments.length) {
+          throw new ProviderContractError("Waffo payment query count mismatch");
+        }
+        if (paymentCount === 0) return { status: "not_found" };
+        if (paymentCount !== 1) return { status: "ambiguous" };
+
+        const payment = normalizedPayment(paymentData.payments[0], paymentInput, expectedStoreId);
+        if (payment.status !== "succeeded" || !equalMoney(payment.amount, input.paymentAmount)) {
+          return { status: "contract_error" };
+        }
+
+        const ticketFields = `
+          id
+          status
+          subjectId
+          metadata
+          refundTicketMerchantExternalId
+        `;
+        let ticket: RefundTicketSnapshot | undefined;
+        if (input.externalRefundReference) {
+          const ticketData = await query<RefundTicketQueryResult>(
+            `query ($ticketId: String!) {
+              refundTicket(id: $ticketId) { ${ticketFields} }
+            }`,
+            { ticketId: input.externalRefundReference },
+          );
+          if (ticketData.refundTicket !== null && ticketData.refundTicket !== undefined) {
+            ticket = refundTicketSnapshot(ticketData.refundTicket);
+          }
+        } else {
+          const merchantReferenceFilter = "{ refundTicketMerchantExternalId: { eq: $reference } }";
+          const merchantReferenceData = await query<RefundTicketQueryResult>(
+            `query ($reference: String!) {
+              refundTickets(limit: ${REFUND_TICKET_QUERY_LIMIT}, filter: ${merchantReferenceFilter}) {
+                ${ticketFields}
+              }
+              refundTicketsCount(filter: ${merchantReferenceFilter})
+            }`,
+            { reference: input.refundIntentReference },
+          );
+          if (!Array.isArray(merchantReferenceData.refundTickets)) {
+            throw new ProviderContractError("invalid Waffo refund tickets result");
+          }
+          if (
+            !Number.isInteger(merchantReferenceData.refundTicketsCount) ||
+            Number(merchantReferenceData.refundTicketsCount) < 0
+          ) {
+            throw new ProviderContractError("invalid Waffo refund tickets count");
+          }
+          const merchantReferenceCount = Number(merchantReferenceData.refundTicketsCount);
+          if (merchantReferenceCount > REFUND_TICKET_QUERY_LIMIT) {
+            throw new ProviderContractError("Waffo refund ticket query exceeded bounded limit");
+          }
+          if (merchantReferenceCount !== merchantReferenceData.refundTickets.length) {
+            throw new ProviderContractError("Waffo refund ticket query count mismatch");
+          }
+          if (merchantReferenceCount > 1) return { status: "ambiguous" };
+          if (merchantReferenceCount === 1) {
+            ticket = refundTicketSnapshot(merchantReferenceData.refundTickets[0]);
+          }
+
+          if (!ticket) {
+            const paymentFilter = "{ subjectId: { eq: $paymentId } }";
+            const paymentTicketData = await query<RefundTicketQueryResult>(
+              `query ($paymentId: String!) {
+                refundTickets(limit: ${REFUND_TICKET_QUERY_LIMIT}, filter: ${paymentFilter}) {
+                  ${ticketFields}
+                }
+                refundTicketsCount(filter: ${paymentFilter})
+              }`,
+              { paymentId: input.externalPaymentId },
+            );
+            if (!Array.isArray(paymentTicketData.refundTickets)) {
+              throw new ProviderContractError("invalid Waffo payment refund tickets result");
+            }
+            if (
+              !Number.isInteger(paymentTicketData.refundTicketsCount) ||
+              Number(paymentTicketData.refundTicketsCount) < 0
+            ) {
+              throw new ProviderContractError("invalid Waffo payment refund tickets count");
+            }
+            const paymentTicketCount = Number(paymentTicketData.refundTicketsCount);
+            if (paymentTicketCount > REFUND_TICKET_QUERY_LIMIT) {
+              throw new ProviderContractError(
+                "Waffo payment refund ticket query exceeded bounded limit",
+              );
+            }
+            if (paymentTicketCount !== paymentTicketData.refundTickets.length) {
+              throw new ProviderContractError("Waffo payment refund ticket query count mismatch");
+            }
+            const correlatedTickets = paymentTicketData.refundTickets
+              .map(refundTicketSnapshot)
+              .filter((candidate) => {
+                const metadata = refundMetadata(candidate.metadata);
+                return metadata?.creatWebRefundIntentId === input.refundIntentReference;
+              });
+            if (correlatedTickets.length > 1) return { status: "ambiguous" };
+            ticket = correlatedTickets[0];
+          }
+        }
+
+        if (!ticket) return { status: "not_found" };
+        if (ticket.subjectId !== input.externalPaymentId) {
+          return { status: "contract_error" };
+        }
+        const ticketMetadata = refundMetadata(ticket.metadata);
+        const metadataReference = ticketMetadata?.creatWebRefundIntentId;
+        if (
+          metadataReference !== undefined &&
+          (typeof metadataReference !== "string" ||
+            metadataReference !== input.refundIntentReference)
+        ) {
+          return { status: "contract_error" };
+        }
+        if (
+          ticket.refundTicketMerchantExternalId !== undefined &&
+          ticket.refundTicketMerchantExternalId !== input.refundIntentReference
+        ) {
+          return { status: "contract_error" };
+        }
+        if (
+          metadataReference !== input.refundIntentReference &&
+          ticket.refundTicketMerchantExternalId !== input.refundIntentReference
+        ) {
+          return { status: "contract_error" };
+        }
+
+        const refundFilter = "{ ticketId: { eq: $ticketId } }";
+        const refundData = await query<RefundQueryResult>(
+          `query ($ticketId: String!) {
+            refunds(limit: ${REFUND_QUERY_LIMIT}, filter: ${refundFilter}) {
+              id
+              paymentId
+              ticketId
+              status
+              testMode
+              requestedAmountDetails { amount currency }
+              orderMerchantExternalId
+              refundTicketMerchantExternalId
+            }
+            refundsCount(filter: ${refundFilter})
+          }`,
+          { ticketId: ticket.id },
+        );
+        if (!Array.isArray(refundData.refunds)) {
+          throw new ProviderContractError("invalid Waffo refunds result");
+        }
+        if (!Number.isInteger(refundData.refundsCount) || Number(refundData.refundsCount) < 0) {
+          throw new ProviderContractError("invalid Waffo refunds count");
+        }
+        const refundCount = Number(refundData.refundsCount);
+        if (refundCount > REFUND_QUERY_LIMIT) {
+          throw new ProviderContractError("Waffo refund query exceeded bounded limit");
+        }
+        if (refundCount !== refundData.refunds.length) {
+          throw new ProviderContractError("Waffo refund query count mismatch");
+        }
+        if (refundCount === 0) {
+          const status = refundTicketSettlementStatus(ticket.status);
+          return {
+            status,
+            externalRefundReference: ticket.id,
+            amount: input.amount,
+          };
+        }
+        if (refundCount !== 1) return { status: "ambiguous" };
+
+        const refund = refundSnapshot(refundData.refunds[0]);
+        if (refund.paymentId !== input.externalPaymentId || refund.ticketId !== ticket.id) {
+          return { status: "contract_error" };
+        }
+        if (refund.testMode !== (input.environment === "test")) {
+          return { status: "contract_error" };
+        }
+        if (refund.orderMerchantExternalId !== input.merchantOrderReference) {
+          return { status: "contract_error" };
+        }
+        if (
+          refund.refundTicketMerchantExternalId !== undefined &&
+          refund.refundTicketMerchantExternalId !== input.refundIntentReference
+        ) {
+          return { status: "contract_error" };
+        }
+        const amount = refundAmount(refund.requestedAmountDetails);
+        if (!equalMoney(amount, input.amount)) return { status: "contract_error" };
+        return {
+          status: refundSettlementStatus(refund.status),
+          externalRefundReference: ticket.id,
+          externalSettlementReference: refund.id,
+          amount,
+        };
+      } catch (error) {
+        if (error instanceof ProviderContractError) return { status: "contract_error" };
+        throw error;
+      } finally {
+        request.cleanup();
+      }
     },
     async getPayment(input): Promise<PaymentLookupResult> {
       if (

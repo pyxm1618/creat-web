@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, eq, inArray, lte, ne } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import { commerceReconciliationRuns } from "@/platform/database/commerce-schema";
@@ -23,7 +23,11 @@ export async function reconcileStaleRefunds(
       .select()
       .from(refunds)
       .where(
-        and(inArray(refunds.status, ["pending", "processing"]), lte(refunds.updatedAt, cutoff)),
+        and(
+          inArray(refunds.status, ["pending", "processing"]),
+          ne(refunds.providerWriteState, "legacy_unsafe"),
+          lte(refunds.updatedAt, cutoff),
+        ),
       )
       .orderBy(refunds.updatedAt)
       .limit(limit)
@@ -43,9 +47,11 @@ export async function reconcileStaleRefunds(
         .update(refunds)
         .set({
           status: "reconciliation_required",
+          providerWriteState: "ambiguous",
           reversalStatus,
           operatorReviewReason:
             "provider refund settlement webhook did not arrive within threshold",
+          nextProviderReconciliationAt: now,
           updatedAt: now,
         })
         .where(and(eq(refunds.id, refund.id), inArray(refunds.status, ["pending", "processing"])))
