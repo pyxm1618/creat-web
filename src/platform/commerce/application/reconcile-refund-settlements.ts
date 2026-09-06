@@ -6,6 +6,7 @@ import { refunds } from "@/platform/database/subscription-schema";
 
 import type { PaymentProvider, ProviderRefundSettlement } from "./payment-provider";
 import { applyProviderReadRefundSettlementInTransaction } from "./process-refund-event";
+import { PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON } from "../domain/refund";
 
 const REFUND_RECONCILIATION_DELAY_MS = 5 * 60 * 1000;
 const MAX_REFUND_RECONCILIATION_ATTEMPTS = 12;
@@ -457,7 +458,7 @@ async function ignoreAlreadyProjectedProviderSettlement(
         nextProviderReconciliationAt: null,
         reconciliationLeaseOwner: null,
         reconciliationLeaseExpiresAt: null,
-        operatorReviewReason: "provider settlement already applied by another local refund",
+        operatorReviewReason: PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON,
         updatedAt: now,
       })
       .where(eq(refunds.id, candidate.refund.id));
@@ -467,7 +468,7 @@ async function ignoreAlreadyProjectedProviderSettlement(
       beforeWriteState: candidate.refund.providerWriteState,
       result: result.status,
       afterStatus: current.refund.status,
-      reason: "provider settlement already applied by another local refund",
+      reason: PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON,
       auditResult: "provider_settlement_already_applied",
     });
     return true;

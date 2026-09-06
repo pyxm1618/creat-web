@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 
 import { lockAccountSubject } from "@/platform/accounts/account-subject-commerce-fence";
 import type { DatabaseClient } from "@/platform/database/client";
@@ -12,6 +12,7 @@ import {
 import type { Money } from "../domain/money";
 import { isCommerceIdempotencyKey } from "../domain/idempotency-key";
 import type { CommerceEnvironment } from "../domain/product";
+import { PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON } from "../domain/refund";
 
 type CommerceTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 
@@ -179,6 +180,10 @@ export async function enqueueRefundRequest(
         and(
           eq(refunds.paymentId, row.payment.id),
           inArray(refunds.status, ["pending", "processing", "reconciliation_required"]),
+          or(
+            isNull(refunds.operatorReviewReason),
+            ne(refunds.operatorReviewReason, PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON),
+          ),
         ),
       );
     const reserved = BigInt(open?.total ?? 0n);

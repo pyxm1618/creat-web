@@ -2009,6 +2009,16 @@ it("does not double-count a provider settlement already projected by a webhook",
       .from(fulfillmentJobs)
       .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
   ).toHaveLength(0);
+
+  const replacement = await enqueueRefundRequest(database.db, {
+    subjectId: fixture.subject.id,
+    paymentId: fixture.payment.id,
+    environment: "test",
+    amount: { currency: "USD", minor: 500n },
+    reason: "replacement after duplicate provider projection",
+    idempotencyKey: `refund:${crypto.randomUUID()}`,
+  });
+  expect(replacement.requestedMinor).toBe(500n);
 });
 
 it("stops automatic refund reads at the reconciliation attempt cap and serves a new candidate", async () => {
