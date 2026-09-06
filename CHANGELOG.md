@@ -2,6 +2,52 @@
 
 All notable starter-platform changes are recorded here. This repository is an internal starter; owned products do not automatically inherit changes and must follow the upgrade procedure in `docs/参考/扩展与升级.md`.
 
+## 0.2.2 - 2026-09-05
+
+### Fixed
+
+#### Waffo customer-session environment
+
+- Pinned `@waffo/pancake-ts` exactly from `0.16.0` to `0.18.0`.
+- Customer sessions now explicitly map local `production` to provider `prod` and every other local environment to provider `test`.
+- Refund, cancel, and resume customer operations now use the correct provider environment.
+
+#### Waffo webhook event identity
+
+- Real subscription lifecycle payloads confirmed that provider `id` is not a safe global webhook deduplication identity.
+- The verified `eventId` is mapped to local `providerEventId`.
+- Webhook deduplication is scoped by `(environment, providerEventId)`, so distinct lifecycle event IDs are not merged merely because their payload `id` values match.
+
+#### Subscription checkout 409 idempotency
+
+- A checkout HTTP 409, including operator review or other conflict states, keeps the original idempotency key and must not blindly retry with a new key.
+- The client enters an explicit review/conflict state, preventing duplicate provider checkouts.
+
+#### `verify:commerce`
+
+- The verifier now recognizes fulfillment operations dynamically generated from `creditFulfillmentDefinitions`.
+- Provider mappings are checked for the current `APP_ENV`: `production` uses the `production` mapping and every other environment uses `test`.
+- A Test Mode-only subscription product is no longer incorrectly required to have a Production mapping when the verifier runs outside production.
+
+#### `verify:credits`
+
+- Credit fulfillment definitions are now checked against any enabled product, including subscription products, rather than only enabled one-time products.
+
+### Added / Verification
+
+- Real Waffo Test Mode subscription E2E verified checkout, the initial subscription payment, signed activation/payment webhooks, local subscription/payment projection, credit fulfillment, cancel, resume/reactivate, and no duplicate entitlement.
+- Waffo Test Mode currently has no confirmed official billing-cycle acceleration or test clock. Real renewal E2E is therefore not claimed as a pass.
+- Subscription missed-webhook automatic recovery remains NO-GO until an authoritative immutable payment-level period boundary exists; a current subscription-order projection is not a substitute.
+
+### Documentation
+
+- Updated the Waffo contract to the SDK 0.18 contract and corrected `eventId` semantics.
+- Documented the corrected commerce verifier behavior, checkout-conflict invariant, deleted cron entry points, and the Test Mode renewal boundary in the operational/reference docs.
+
+### Owned-project action
+
+Projects based on an older starter must cherry-pick or port these platform fixes, then rerun the relevant provider contract, integration, and E2E checks. Do not overwrite the project's product, legal, or content configuration. Waffo-enabled projects particularly need the SDK/environment propagation, webhook `eventId` identity, and checkout-409 idempotency fixes.
+
 ## 0.2.1 - 2026-09-02
 
 ### Fixed
@@ -12,7 +58,7 @@ All notable starter-platform changes are recorded here. This repository is an in
 
 - `docs/建站手册.md`: added a tested local walkthrough for taking a one-time payment end to end (tunnel, `APP_ORIGIN`, registering the webhook through the SDK, the four rows to check in the database), the requirement that every `fulfillmentKey` has a handler, the legal-configuration facts that enabling commerce forces (and the misleading way that failure surfaces — a dozen unrelated security tests turning red because they shell out to `verify-release.ts`), and four newly hit traps — a `reviewed` SEO route without `reviewFingerprint` breaking every gate that imports `routes.config.ts`, `COMMERCE_RETENTION_KEY` needing exactly 32 base64 bytes, `drizzle.config.ts` not reading `.env.local`, and stale `.next` type files producing phantom typecheck errors.
 - Added `docs/建站手册.md` section 十一, a single feature matrix: every switchable module with its flag, which provider account it needs, its environment variables, and the configuration files enabling it forces. The information existed but was spread across several sections with no way to see it at once.
-- Recorded that `verify:commerce` cannot see credit-based fulfillment: it inspects only the static `fulfillmentHandlers` registry, while credit handlers are injected at runtime by `commerce-runtime.ts`. The gate is unchanged; the limitation is now documented rather than rediscovered.
+- At the time of 0.2.1, `verify:commerce` did not yet recognize credit-based fulfillment operations injected at runtime. This historical note is superseded by 0.2.2, which recognizes `creditFulfillmentDefinitions` and checks the mapping for the active provider environment.
 
 ### Owned-project action
 

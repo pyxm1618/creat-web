@@ -96,6 +96,14 @@ query ($reference: String!, $paymentId: String!) {
 
 **因此这套实现可能代码上是安全的，但所有者激活状态仍然是 NO-GO。**
 
+## Test Mode 订阅周期验收边界
+
+截至当前锁定的 SDK 版本和已验证的 Waffo Test Mode 能力，未发现/未确认官方的 test clock 或 billing-cycle acceleration 机制。因此不能通过本地改时间、fake webhook 或数据库 mutation 宣称 real renewal E2E PASS。
+
+activation、initial payment、cancel 和 resume 可以通过真实的 Test Mode provider 流程与签名事件验收。renewal、`past_due` 等依赖服务商推进时间的 lifecycle，只有官方 provider mechanism 或真实自然周期事实才能作为 REAL E2E 证据。
+
+订阅漏收 webhook 的自动恢复仍要求 authoritative immutable payment-level period boundary；不能把 `subscriptionOrder.currentPeriodStart` / `currentPeriodEnd` 当作历史 payment-level period。未来 Waffo 在 Test Mode 提供并确认官方周期推进机制后，可以据此重新验收，不应把本边界理解为永久性断言。
+
 ## Webhook 合约
 
 签名头：`x-waffo-signature`。
