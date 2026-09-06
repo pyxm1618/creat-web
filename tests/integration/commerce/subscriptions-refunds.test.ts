@@ -1258,6 +1258,44 @@ it("settles a dispatched refund from scheduled provider read without a webhook l
   ).toMatchObject({ status: "succeeded", externalRefundReference: "TKT_SCHEDULED" });
 });
 
+it("projects a provider-read failure onto the payment refund status", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  const now = new Date("2030-07-01T00:05:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+
+  const provider = refundProvider(
+    async () => {
+      throw new Error("provider-read failure scenario must not issue a provider write");
+    },
+    async () => ({
+      status: "failed" as const,
+      externalRefundReference: "TKT_READ_FAILED",
+    }),
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    status: "failed",
+    providerWriteState: "confirmed",
+    externalRefundReference: "TKT_READ_FAILED",
+  });
+  expect(
+    await database.db.query.payments.findFirst({ where: eq(payments.id, fixture.payment.id) }),
+  ).toMatchObject({ refundStatus: "failed", refundedMinor: 0n });
+});
+
 it("deduplicates a delayed webhook after provider-read settlement", async () => {
   const fixture = await refundCommandFixture(500n);
   const now = new Date("2030-07-02T00:00:00Z");

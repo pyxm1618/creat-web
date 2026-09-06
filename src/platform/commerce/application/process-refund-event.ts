@@ -42,7 +42,9 @@ function parseOrderStatus(value: string): OrderStatus {
   throw new Error(`invalid persisted order status: ${value}`);
 }
 
-function aggregateRefundStatus(payment: typeof payments.$inferSelect): PaymentRefundStatus {
+export function aggregateRefundStatus(
+  payment: Pick<typeof payments.$inferSelect, "amountMinor" | "refundedMinor">,
+): PaymentRefundStatus {
   if (payment.refundedMinor === payment.amountMinor && payment.amountMinor > 0n) return "refunded";
   if (payment.refundedMinor > 0n) return "partial";
   return "failed";

@@ -5,7 +5,10 @@ import { commerceReconciliationRuns, orders, payments } from "@/platform/databas
 import { refunds } from "@/platform/database/subscription-schema";
 
 import type { PaymentProvider, ProviderRefundSettlement } from "./payment-provider";
-import { applyProviderReadRefundSettlementInTransaction } from "./process-refund-event";
+import {
+  aggregateRefundStatus,
+  applyProviderReadRefundSettlementInTransaction,
+} from "./process-refund-event";
 import {
   PROVIDER_SETTLEMENT_ALREADY_APPLIED_REASON,
   REFUND_SETTLEMENT_WEBHOOK_TIMEOUT_REASON,
@@ -214,6 +217,16 @@ async function applyReadResult(
   }
 
   if (result.status === "failed") {
+    await tx
+      .update(payments)
+      .set({
+        refundStatus: aggregateRefundStatus({
+          amountMinor: candidate.paymentAmount.minor,
+          refundedMinor: candidate.sourceState.paymentRefundedMinor,
+        }),
+        updatedAt: now,
+      })
+      .where(eq(payments.id, candidate.refund.paymentId));
     await tx
       .update(refunds)
       .set({
