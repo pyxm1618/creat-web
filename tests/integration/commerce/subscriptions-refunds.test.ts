@@ -1430,6 +1430,140 @@ it("claims a refund candidate before provider lookup so overlapping jobs read it
   expect(readCalls).toBe(1);
 });
 
+it("lets stale refund reconciliation escalate after provider pending polling", async () => {
+  const fixture = await refundCommandFixture(400n);
+  const now = new Date("2030-09-17T00:00:00Z");
+  const staleUpdatedAt = new Date("2000-01-01T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+      updatedAt: staleUpdatedAt,
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null, updatedAt: now })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  const provider = refundProvider(
+    async () => {
+      throw new Error("pending reconciliation must not issue a provider write");
+    },
+    async () => ({
+      status: "found_pending" as const,
+      externalRefundReference: "TKT_PENDING_STALE",
+    }),
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({ status: "processing", updatedAt: staleUpdatedAt });
+
+  expect(
+    await reconcileStaleRefunds(database.db, {
+      now: new Date("2030-09-18T00:00:01Z"),
+      staleAfterMs: 24 * 60 * 60 * 1000,
+      limit: 1,
+    }),
+  ).toBe(1);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    status: "reconciliation_required",
+    operatorReviewReason: "provider refund settlement webhook did not arrive within threshold",
+  });
+});
+
+it("does not retire a pending partial refund after an unrelated partial settlement", async () => {
+  const fixture = await refundCommandFixture(400n);
+  const otherRefund = await enqueueRefundRequest(database.db, {
+    subjectId: fixture.subject.id,
+    paymentId: fixture.payment.id,
+    environment: "test",
+    amount: { currency: "USD", minor: 400n },
+    reason: "second partial refund",
+    idempotencyKey: `refund:${crypto.randomUUID()}`,
+  });
+  const now = new Date("2030-09-19T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null, updatedAt: now })
+    .where(ne(refunds.id, otherRefund.id));
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      externalRefundReference: "TKT_OTHER_PARTIAL",
+      nextProviderReconciliationAt: null,
+      updatedAt: now,
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+      updatedAt: now,
+    })
+    .where(eq(refunds.id, otherRefund.id));
+
+  const readStarted = deferred<void>();
+  const releaseRead = deferred<void>();
+  const provider = refundProvider(
+    async () => {
+      throw new Error("partial settlement reconciliation must not issue a provider write");
+    },
+    async (input) => {
+      expect(input.refundIntentReference).toBe(otherRefund.id);
+      readStarted.resolve();
+      await releaseRead.promise;
+      return { status: "not_found" as const };
+    },
+  );
+
+  const reconciliation = reconcileRefundSettlements(database.db, provider, { now, limit: 1 });
+  await readStarted.promise;
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-refund-unrelated-partial-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      externalRefundReference: "TKT_OTHER_PARTIAL",
+      amount: { currency: "USD", minor: 400n },
+      occurredAt: new Date("2030-09-19T00:00:01Z"),
+    },
+    "g".repeat(64),
+  );
+  releaseRead.resolve();
+  await expect(reconciliation).resolves.toBe(1);
+
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, otherRefund.id) }),
+  ).toMatchObject({
+    status: "processing",
+    providerReconciliationAttempts: 0,
+    operatorReviewReason: null,
+  });
+  expect(
+    (await database.db.query.refunds.findFirst({ where: eq(refunds.id, otherRefund.id) }))
+      ?.nextProviderReconciliationAt,
+  ).not.toBeNull();
+});
+
 it("stops automatic refund reads at the reconciliation attempt cap and serves a new candidate", async () => {
   const exhausted = await refundCommandFixture(1000n);
   const now = new Date("2030-10-01T00:00:00Z");

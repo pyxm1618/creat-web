@@ -227,7 +227,6 @@ async function applyReadResult(
         nextProviderReconciliationAt: retryAt(now),
         operatorReviewReason: null,
         providerUpdatedAt: now,
-        updatedAt: now,
       })
       .where(eq(refunds.id, candidate.refund.id));
     await insertReadAudit(tx, {
@@ -297,12 +296,13 @@ function reflectsAuthoritativeSettlement(
   candidate: RefundSettlementCandidate,
   current: CurrentRefundSettlementState,
 ): boolean {
+  const remainingPaymentMinor = candidate.paymentAmount.minor - current.paymentRefundedMinor;
   return (
     current.refund.status === "succeeded" ||
     current.refund.reversalStatus === "completed" ||
-    current.paymentRefundedMinor > candidate.sourceState.paymentRefundedMinor ||
     current.paymentRefundStatus === "refunded" ||
-    current.orderStatus === "refunded"
+    current.orderStatus === "refunded" ||
+    remainingPaymentMinor < candidate.refund.requestedMinor
   );
 }
 
@@ -509,7 +509,7 @@ export async function reconcileRefundSettlements(
     for (const row of rows) {
       const [claimedRefund] = await tx
         .update(refunds)
-        .set({ nextProviderReconciliationAt: claimedAt, updatedAt: now })
+        .set({ nextProviderReconciliationAt: claimedAt })
         .where(eq(refunds.id, row.refund.id))
         .returning();
       if (claimedRefund) {
