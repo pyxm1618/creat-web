@@ -24,8 +24,10 @@ async function migrationsThrough0012(): Promise<string> {
   temporaryFolders.add(folder);
   const migrationsDirectory = path.join(folder, "drizzle");
   await cp(path.resolve("drizzle"), migrationsDirectory, { recursive: true });
-  await rm(path.join(migrationsDirectory, "0013_exotic_iron_man.sql"));
-  await rm(path.join(migrationsDirectory, "meta", "0013_snapshot.json"));
+  for (const migration of ["0013_exotic_iron_man", "0014_spooky_mandrill"]) {
+    await rm(path.join(migrationsDirectory, `${migration}.sql`));
+    await rm(path.join(migrationsDirectory, "meta", `${migration.slice(0, 4)}_snapshot.json`));
+  }
 
   const journalPath = path.join(migrationsDirectory, "meta", "_journal.json");
   const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
@@ -33,7 +35,7 @@ async function migrationsThrough0012(): Promise<string> {
   };
   await writeFile(
     journalPath,
-    `${JSON.stringify({ ...journal, entries: journal.entries.slice(0, -1) }, null, 2)}\n`,
+    `${JSON.stringify({ ...journal, entries: journal.entries.slice(0, -2) }, null, 2)}\n`,
     "utf8",
   );
   return migrationsDirectory;

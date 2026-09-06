@@ -257,6 +257,8 @@ async function processRefundEventInternal(
           reversalStatus: "not_required",
           providerWriteState: "confirmed",
           nextProviderReconciliationAt: null,
+          reconciliationLeaseOwner: null,
+          reconciliationLeaseExpiresAt: null,
           providerUpdatedAt: event.occurredAt,
           updatedAt: new Date(),
         })
@@ -268,6 +270,8 @@ async function processRefundEventInternal(
           status: "reconciliation_required",
           reversalStatus: "reconciliation_required",
           operatorReviewReason: "ambiguous failed refund webhook",
+          reconciliationLeaseOwner: null,
+          reconciliationLeaseExpiresAt: null,
           updatedAt: new Date(),
         })
         .where(
@@ -324,6 +328,8 @@ async function processRefundEventInternal(
           status: "reconciliation_required",
           reversalStatus: "reconciliation_required",
           operatorReviewReason: "ambiguous successful refund webhook",
+          reconciliationLeaseOwner: null,
+          reconciliationLeaseExpiresAt: null,
           updatedAt: new Date(),
         })
         .where(
@@ -418,6 +424,8 @@ async function processRefundEventInternal(
         reversalStatus: "reconciliation_required",
         providerWriteState: "confirmed",
         nextProviderReconciliationAt: null,
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
         operatorReviewReason: "partial refund entitlement reversal requires operator policy",
         providerUpdatedAt: event.occurredAt,
         updatedAt: new Date(),
@@ -441,6 +449,8 @@ async function processRefundEventInternal(
       reversalStatus: "pending",
       providerWriteState: "confirmed",
       nextProviderReconciliationAt: null,
+      reconciliationLeaseOwner: null,
+      reconciliationLeaseExpiresAt: null,
       providerUpdatedAt: event.occurredAt,
       updatedAt: new Date(),
     })

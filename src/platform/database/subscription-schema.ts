@@ -105,6 +105,11 @@ export const refunds = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    reconciliationLeaseOwner: text("reconciliation_lease_owner"),
+    reconciliationLeaseExpiresAt: timestamp("reconciliation_lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     currency: text("currency").notNull(),
     requestedMinor: bigint("requested_minor", { mode: "bigint" }).notNull(),
     succeededMinor: bigint("succeeded_minor", { mode: "bigint" })

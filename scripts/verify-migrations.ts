@@ -83,6 +83,8 @@ async function assertLatestSchema(label: string): Promise<void> {
     "provider_write_state",
     "provider_reconciliation_attempts",
     "next_provider_reconciliation_at",
+    "reconciliation_lease_owner",
+    "reconciliation_lease_expires_at",
   ]) {
     if (!actualRefundColumns.has(column)) {
       throw new Error(`${label}: refunds.${column} is missing`);

@@ -9,7 +9,10 @@ import {
 import { createPlatformAccountDeletionCoordinator } from "@/platform/accounts/platform-account-deletion-coordinator";
 import { createPostgresAccountSubjectRepository } from "@/platform/accounts/postgres-account-subject-repository";
 import type { PaymentProvider } from "@/platform/commerce/application/payment-provider";
-import { processProviderEvent } from "@/platform/commerce/application/process-provider-event";
+import {
+  processProviderEvent,
+  processProviderEventInTransaction,
+} from "@/platform/commerce/application/process-provider-event";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
 import {
   applyRefundSettlementResultInTransaction,
@@ -178,6 +181,19 @@ function deferred<T>() {
     resolve = settled;
   });
   return { promise, resolve };
+}
+
+async function waitForDatabaseLockWait(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const activity = await database.db.execute(
+      sql`select wait_event_type from pg_stat_activity where pid = ${pid}`,
+    );
+    const waitEventType = (activity[0] as { wait_event_type?: string | null } | undefined)
+      ?.wait_event_type;
+    if (waitEventType === "Lock") return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`database transaction ${pid} did not wait on a lock`);
 }
 
 async function refundCommandFixture(requestedMinor = 700n) {
@@ -1271,6 +1287,8 @@ it("does not apply a stale provider read after a webhook settlement commits", as
       succeededMinor: staleRefund.succeededMinor,
       externalRefundReference: staleRefund.externalRefundReference,
       nextProviderReconciliationAt: staleRefund.nextProviderReconciliationAt,
+      reconciliationLeaseOwner: staleRefund.reconciliationLeaseOwner,
+      reconciliationLeaseExpiresAt: staleRefund.reconciliationLeaseExpiresAt,
       paymentRefundStatus: fixture.payment.refundStatus,
       paymentRefundedMinor: fixture.payment.refundedMinor,
       orderStatus: fixture.order.status,
@@ -1421,6 +1439,12 @@ it("claims a refund candidate before provider lookup so overlapping jobs read it
     limit: 1,
   });
   await firstReadStarted.promise;
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    reconciliationLeaseOwner: expect.any(String),
+    reconciliationLeaseExpiresAt: expect.any(Date),
+  });
   await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
     0,
   );
@@ -1428,6 +1452,214 @@ it("claims a refund candidate before provider lookup so overlapping jobs read it
   releaseFirstRead.resolve();
   await expect(firstReconciliation).resolves.toBe(1);
   expect(readCalls).toBe(1);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    providerReconciliationAttempts: 1,
+    reconciliationLeaseOwner: null,
+    reconciliationLeaseExpiresAt: null,
+  });
+});
+
+it("reclaims a refund reconciliation lease after a worker aborts", async () => {
+  const fixture = await refundCommandFixture(1000n);
+  const now = new Date("2030-09-16T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  const firstReadStarted = deferred<void>();
+  const controller = new AbortController();
+  let readCalls = 0;
+  const provider = refundProvider(
+    async () => {
+      throw new Error("lease recovery must not issue a provider write");
+    },
+    async () => {
+      readCalls += 1;
+      if (readCalls === 1) {
+        firstReadStarted.resolve();
+        await new Promise<never>((_resolve, reject) => {
+          const rejectOnAbort = () =>
+            reject(controller.signal.reason ?? new DOMException("aborted", "AbortError"));
+          if (controller.signal.aborted) {
+            rejectOnAbort();
+            return;
+          }
+          controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
+        });
+      }
+      return { status: "not_found" as const };
+    },
+  );
+
+  const abortedReconciliation = reconcileRefundSettlements(database.db, provider, {
+    now,
+    limit: 1,
+    signal: controller.signal,
+  });
+  await firstReadStarted.promise;
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    reconciliationLeaseOwner: expect.any(String),
+    reconciliationLeaseExpiresAt: expect.any(Date),
+  });
+
+  controller.abort(new DOMException("worker aborted", "AbortError"));
+  await expect(abortedReconciliation).rejects.toMatchObject({ name: "AbortError" });
+
+  await expect(
+    reconcileRefundSettlements(database.db, provider, {
+      now: new Date(now.getTime() + 29_000),
+      limit: 1,
+    }),
+  ).resolves.toBe(0);
+  expect(readCalls).toBe(1);
+
+  await expect(
+    reconcileRefundSettlements(database.db, provider, {
+      now: new Date(now.getTime() + 31_000),
+      limit: 1,
+    }),
+  ).resolves.toBe(1);
+  expect(readCalls).toBe(2);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    providerReconciliationAttempts: 1,
+    reconciliationLeaseOwner: null,
+    reconciliationLeaseExpiresAt: null,
+  });
+});
+
+it("keeps webhook and reconciliation settlement lock order consistent under concurrency", async () => {
+  for (let round = 0; round < 5; round += 1) {
+    const fixture = await refundCommandFixture(1000n);
+    const reconciliationAt = new Date(`2030-09-${20 + round}T00:00:00.000Z`);
+    await database.db
+      .update(refunds)
+      .set({
+        status: "processing",
+        reversalStatus: "pending",
+        providerWriteState: "dispatched",
+        externalRefundReference: `TKT_CONCURRENT_${round}`,
+        nextProviderReconciliationAt: new Date("2000-01-01T00:00:00Z"),
+      })
+      .where(eq(refunds.id, fixture.refund.id));
+    await database.db
+      .update(refunds)
+      .set({ nextProviderReconciliationAt: null })
+      .where(ne(refunds.id, fixture.refund.id));
+
+    const staleRefund = await database.db.query.refunds.findFirst({
+      where: eq(refunds.id, fixture.refund.id),
+    });
+    if (!staleRefund) throw new Error("concurrent refund fixture missing");
+    const candidate = {
+      refund: staleRefund,
+      externalPaymentId: fixture.payment.externalPaymentId,
+      paymentAmount: { currency: "USD" as const, minor: 1000n },
+      orderId: fixture.order.id,
+      externalOrderId: fixture.order.externalOrderId,
+      sourceState: {
+        refundStatus: staleRefund.status,
+        providerWriteState: staleRefund.providerWriteState,
+        reversalStatus: staleRefund.reversalStatus,
+        succeededMinor: staleRefund.succeededMinor,
+        externalRefundReference: staleRefund.externalRefundReference,
+        nextProviderReconciliationAt: staleRefund.nextProviderReconciliationAt,
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
+        paymentRefundStatus: fixture.payment.refundStatus,
+        paymentRefundedMinor: fixture.payment.refundedMinor,
+        orderStatus: fixture.order.status,
+      },
+    } as Parameters<typeof applyRefundSettlementResultInTransaction>[1];
+    const event = {
+      type: "refund_succeeded" as const,
+      eventId: `evt-refund-lock-order-${round}-${crypto.randomUUID()}`,
+      environment: "test" as const,
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      externalRefundReference: `TKT_CONCURRENT_${round}`,
+      amount: { currency: "USD" as const, minor: 1000n },
+      occurredAt: new Date(reconciliationAt.getTime() + 1_000),
+    };
+    const paymentLocked = deferred<void>();
+    const releaseWebhook = deferred<void>();
+    const reconciliationPid = deferred<number>();
+
+    const webhook = database.db.transaction(async (tx) => {
+      await tx.select().from(payments).where(eq(payments.id, fixture.payment.id)).for("update");
+      paymentLocked.resolve();
+      await releaseWebhook.promise;
+      return processProviderEventInTransaction(tx, event, "h".repeat(64));
+    });
+    await paymentLocked.promise;
+
+    const reconciliation = database.db.transaction(async (tx) => {
+      const [backend] = await tx.execute(sql`select pg_backend_pid() as pid`);
+      reconciliationPid.resolve(Number((backend as { pid: number }).pid));
+      await applyRefundSettlementResultInTransaction(
+        tx,
+        candidate,
+        {
+          status: "succeeded",
+          externalRefundReference: `TKT_CONCURRENT_${round}`,
+          externalSettlementReference: `REF_CONCURRENT_${round}`,
+          amount: { currency: "USD", minor: 1000n },
+        },
+        reconciliationAt,
+      );
+    });
+
+    try {
+      await waitForDatabaseLockWait(await reconciliationPid.promise);
+      releaseWebhook.resolve();
+      await expect(Promise.all([webhook, reconciliation])).resolves.toBeDefined();
+    } finally {
+      releaseWebhook.resolve();
+      await Promise.allSettled([webhook, reconciliation]);
+    }
+
+    await processProviderEvent(database.db, event, "h".repeat(64));
+    expect(
+      await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+    ).toMatchObject({
+      status: "succeeded",
+      succeededMinor: 1000n,
+      externalRefundReference: `TKT_CONCURRENT_${round}`,
+    });
+    expect(
+      await database.db.query.payments.findFirst({ where: eq(payments.id, fixture.payment.id) }),
+    ).toMatchObject({ refundStatus: "refunded", refundedMinor: 1000n });
+    expect(
+      await database.db.query.orders.findFirst({ where: eq(orders.id, fixture.order.id) }),
+    ).toMatchObject({ status: "refunded" });
+    expect(
+      await database.db
+        .select()
+        .from(fulfillmentJobs)
+        .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+    ).toHaveLength(1);
+    expect(
+      await database.db
+        .select()
+        .from(commerceAppliedEvents)
+        .where(eq(commerceAppliedEvents.providerEventId, event.eventId)),
+    ).toHaveLength(1);
+  }
 });
 
 it("lets stale refund reconciliation escalate after provider pending polling", async () => {

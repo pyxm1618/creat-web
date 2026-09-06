@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, lt, or, sql } from "drizzle-orm";
 
 import type { DatabaseClient, DatabaseTransaction } from "@/platform/database/client";
 import { commerceReconciliationRuns, orders, payments } from "@/platform/database/commerce-schema";
@@ -33,6 +33,8 @@ type RefundSettlementCandidate = {
     readonly succeededMinor: bigint;
     readonly externalRefundReference: string | null;
     readonly nextProviderReconciliationAt: Date | null;
+    readonly reconciliationLeaseOwner: string | null;
+    readonly reconciliationLeaseExpiresAt: Date | null;
     readonly paymentRefundStatus: string;
     readonly paymentRefundedMinor: bigint;
     readonly orderStatus: string;
@@ -119,6 +121,8 @@ async function markAmbiguous(
       operatorReviewReason: reason,
       providerReconciliationAttempts: sql`least(${refunds.providerReconciliationAttempts} + 1, ${MAX_REFUND_RECONCILIATION_ATTEMPTS})`,
       nextProviderReconciliationAt: sql`case when ${refunds.providerReconciliationAttempts} >= ${MAX_REFUND_RECONCILIATION_ATTEMPTS - 1} then null else ${retryAt(now).toISOString()}::timestamptz end`,
+      reconciliationLeaseOwner: null,
+      reconciliationLeaseExpiresAt: null,
       updatedAt: now,
     })
     .where(eq(refunds.id, candidate.refund.id));
@@ -179,6 +183,8 @@ async function applyReadResult(
         externalRefundReference: result.externalRefundReference,
         providerWriteState: "confirmed",
         nextProviderReconciliationAt: null,
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
         operatorReviewReason: null,
         updatedAt: now,
       })
@@ -203,6 +209,8 @@ async function applyReadResult(
         reversalStatus: "not_required",
         operatorReviewReason: null,
         nextProviderReconciliationAt: null,
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
         providerUpdatedAt: now,
         updatedAt: now,
       })
@@ -225,6 +233,8 @@ async function applyReadResult(
         providerWriteState: "confirmed",
         status: "processing",
         nextProviderReconciliationAt: retryAt(now),
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
         operatorReviewReason: null,
         providerUpdatedAt: now,
       })
@@ -252,20 +262,36 @@ async function reloadRefundSettlementState(
   tx: DatabaseTransaction,
   candidate: RefundSettlementCandidate,
 ) {
-  const [current] = await tx
-    .select({
-      refund: refunds,
-      paymentRefundStatus: payments.refundStatus,
-      paymentRefundedMinor: payments.refundedMinor,
-      orderStatus: orders.status,
-    })
-    .from(refunds)
-    .innerJoin(payments, eq(payments.id, refunds.paymentId))
-    .innerJoin(orders, eq(orders.id, payments.orderId))
-    .where(eq(refunds.id, candidate.refund.id))
+  const [payment] = await tx
+    .select()
+    .from(payments)
+    .where(eq(payments.id, candidate.refund.paymentId))
     .limit(1)
     .for("update");
-  return current;
+  if (!payment) return undefined;
+
+  const [order] = await tx
+    .select()
+    .from(orders)
+    .where(eq(orders.id, payment.orderId))
+    .limit(1)
+    .for("update");
+  if (!order) return undefined;
+
+  const [refund] = await tx
+    .select()
+    .from(refunds)
+    .where(and(eq(refunds.id, candidate.refund.id), eq(refunds.paymentId, payment.id)))
+    .limit(1)
+    .for("update");
+  if (!refund) return undefined;
+
+  return {
+    refund,
+    paymentRefundStatus: payment.refundStatus,
+    paymentRefundedMinor: payment.refundedMinor,
+    orderStatus: order.status,
+  };
 }
 
 type CurrentRefundSettlementState = NonNullable<
@@ -275,6 +301,7 @@ type CurrentRefundSettlementState = NonNullable<
 function matchesSourceState(
   candidate: RefundSettlementCandidate,
   current: CurrentRefundSettlementState,
+  now: Date,
 ): boolean {
   return (
     current.refund.status === candidate.sourceState.refundStatus &&
@@ -286,6 +313,14 @@ function matchesSourceState(
       current.refund.nextProviderReconciliationAt,
       candidate.sourceState.nextProviderReconciliationAt,
     ) &&
+    current.refund.reconciliationLeaseOwner === candidate.sourceState.reconciliationLeaseOwner &&
+    sameDate(
+      current.refund.reconciliationLeaseExpiresAt,
+      candidate.sourceState.reconciliationLeaseExpiresAt,
+    ) &&
+    (candidate.sourceState.reconciliationLeaseOwner === null ||
+      (candidate.sourceState.reconciliationLeaseExpiresAt !== null &&
+        candidate.sourceState.reconciliationLeaseExpiresAt > now)) &&
     current.paymentRefundStatus === candidate.sourceState.paymentRefundStatus &&
     current.paymentRefundedMinor === candidate.sourceState.paymentRefundedMinor &&
     current.orderStatus === candidate.sourceState.orderStatus
@@ -319,6 +354,8 @@ async function ignoreStaleProviderRead(
       .update(refunds)
       .set({
         nextProviderReconciliationAt: null,
+        reconciliationLeaseOwner: null,
+        reconciliationLeaseExpiresAt: null,
         operatorReviewReason:
           current.refund.status === "succeeded"
             ? null
@@ -350,7 +387,7 @@ export async function applyRefundSettlementResultInTransaction(
     await ignoreStaleProviderRead(tx, candidate, current, result, now, true);
     return;
   }
-  if (!matchesSourceState(candidate, current)) {
+  if (!matchesSourceState(candidate, current, now)) {
     await ignoreStaleProviderRead(tx, candidate, current, result, now, false);
     return;
   }
@@ -448,6 +485,8 @@ function candidateFromRow(row: {
       succeededMinor: row.refund.succeededMinor,
       externalRefundReference: row.refund.externalRefundReference,
       nextProviderReconciliationAt: row.refund.nextProviderReconciliationAt,
+      reconciliationLeaseOwner: row.refund.reconciliationLeaseOwner,
+      reconciliationLeaseExpiresAt: row.refund.reconciliationLeaseExpiresAt,
       paymentRefundStatus: row.paymentRefundStatus,
       paymentRefundedMinor: row.paymentRefundedMinor,
       orderStatus: row.orderStatus,
@@ -474,6 +513,8 @@ export async function reconcileRefundSettlements(
 
   if (!isRootDatabase(database))
     throw new Error("refund reconciliation requires a database client");
+  const leaseOwner = crypto.randomUUID();
+  const leaseExpiresAt = leaseUntil(now);
   const candidates = await database.transaction(async (tx) => {
     input.signal?.throwIfAborted();
     const rows = await tx
@@ -499,18 +540,35 @@ export async function reconcileRefundSettlements(
           inArray(refunds.status, ["processing", "reconciliation_required"]),
           lt(refunds.providerReconciliationAttempts, MAX_REFUND_RECONCILIATION_ATTEMPTS),
           lte(refunds.nextProviderReconciliationAt, now),
+          or(
+            isNull(refunds.reconciliationLeaseOwner),
+            isNull(refunds.reconciliationLeaseExpiresAt),
+            lte(refunds.reconciliationLeaseExpiresAt, now),
+          ),
         ),
       )
       .orderBy(refunds.nextProviderReconciliationAt, refunds.updatedAt)
       .limit(limit)
       .for("update", { skipLocked: true });
-    const claimedAt = leaseUntil(now);
     const candidates: RefundSettlementCandidate[] = [];
     for (const row of rows) {
       const [claimedRefund] = await tx
         .update(refunds)
-        .set({ nextProviderReconciliationAt: claimedAt })
-        .where(eq(refunds.id, row.refund.id))
+        .set({
+          nextProviderReconciliationAt: leaseExpiresAt,
+          reconciliationLeaseOwner: leaseOwner,
+          reconciliationLeaseExpiresAt: leaseExpiresAt,
+        })
+        .where(
+          and(
+            eq(refunds.id, row.refund.id),
+            or(
+              isNull(refunds.reconciliationLeaseOwner),
+              isNull(refunds.reconciliationLeaseExpiresAt),
+              lte(refunds.reconciliationLeaseExpiresAt, now),
+            ),
+          ),
+        )
         .returning();
       if (claimedRefund) {
         candidates.push(candidateFromRow({ ...row, refund: claimedRefund }));

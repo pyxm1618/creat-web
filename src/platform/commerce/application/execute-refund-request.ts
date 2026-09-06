@@ -150,6 +150,8 @@ function candidateFromRow(row: {
       succeededMinor: row.refund.succeededMinor,
       externalRefundReference: row.refund.externalRefundReference,
       nextProviderReconciliationAt: row.refund.nextProviderReconciliationAt,
+      reconciliationLeaseOwner: row.refund.reconciliationLeaseOwner,
+      reconciliationLeaseExpiresAt: row.refund.reconciliationLeaseExpiresAt,
       paymentRefundStatus: row.paymentRefundStatus,
       paymentRefundedMinor: row.paymentRefundedMinor,
       orderStatus: row.orderStatus,
