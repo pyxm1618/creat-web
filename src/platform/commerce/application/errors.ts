@@ -18,3 +18,10 @@ export class ProviderStatusUnknownError extends Error {
     this.name = "ProviderStatusUnknownError";
   }
 }
+
+export class ProviderWriteOutcomeUnknownError extends Error {
+  constructor(message = "provider refund write outcome is unknown") {
+    super(message);
+    this.name = "ProviderWriteOutcomeUnknownError";
+  }
+}

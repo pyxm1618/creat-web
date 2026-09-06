@@ -1,0 +1,2 @@
+ALTER TABLE "refunds" ADD COLUMN "external_settlement_reference" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "refund_environment_external_settlement_reference_uq" ON "refunds" USING btree ("environment","external_settlement_reference") WHERE "refunds"."external_settlement_reference" is not null;

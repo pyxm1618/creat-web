@@ -7,6 +7,7 @@ import {
   type PaymentReconciliationResult,
 } from "@/platform/commerce/application/reconcile-stale-payments";
 import { reconcileStaleRefunds } from "@/platform/commerce/application/reconcile-stale-refunds";
+import { reconcileRefundSettlements } from "@/platform/commerce/application/reconcile-refund-settlements";
 import { getWebhookRetentionMetrics } from "@/platform/commerce/application/webhook-retention-metrics";
 import { getCommerceRuntime } from "@/platform/commerce/commerce-runtime";
 import { env } from "@/platform/config/env";
@@ -29,6 +30,8 @@ export const dynamic = "force-dynamic";
 
 const PAYMENT_RECONCILIATION_LIMIT = 5;
 const PAYMENT_RECONCILIATION_RUNTIME_MS = 5_000;
+const REFUND_RECONCILIATION_RUNTIME_MS = 5_000;
+const REFUND_RECONCILIATION_MIN_REMAINING_MS = 6_000;
 const EMPTY_PAYMENT_RECONCILIATION = {
   scanned: 0,
   applied: 0,
@@ -37,6 +40,14 @@ const EMPTY_PAYMENT_RECONCILIATION = {
 } as const;
 
 function isPaymentSliceAbort(error: unknown, signal: AbortSignal): boolean {
+  return (
+    signal.aborted &&
+    signal.reason instanceof JobRuntimeBudgetExceededError &&
+    error === signal.reason
+  );
+}
+
+function isRefundSliceAbort(error: unknown, signal: AbortSignal): boolean {
   return (
     signal.aborted &&
     signal.reason instanceof JobRuntimeBudgetExceededError &&
@@ -77,6 +88,33 @@ export async function GET(request: Request): Promise<Response> {
       job.signal.throwIfAborted();
 
       let remaining = job.batchLimit;
+      let refundSettlementsReconciled = 0;
+      if (remaining > 0 && job.canContinue(REFUND_RECONCILIATION_MIN_REMAINING_MS)) {
+        const refundSliceController = new AbortController();
+        const refundTimeoutId = setTimeout(
+          () => refundSliceController.abort(new JobRuntimeBudgetExceededError()),
+          REFUND_RECONCILIATION_RUNTIME_MS,
+        );
+        try {
+          refundSettlementsReconciled = await reconcileRefundSettlements(
+            commerce.database,
+            commerce.provider,
+            {
+              limit: remaining,
+              signal: AbortSignal.any([job.signal, refundSliceController.signal]),
+              canContinue: job.canContinue,
+            },
+          );
+        } catch (error) {
+          if (job.signal.aborted) throw job.signal.reason ?? error;
+          if (!isRefundSliceAbort(error, refundSliceController.signal)) throw error;
+        } finally {
+          clearTimeout(refundTimeoutId);
+        }
+      }
+      remaining = Math.max(0, remaining - refundSettlementsReconciled);
+      job.assertWithinBudget();
+
       const staleRefundsReconciled = await reconcileStaleRefunds(commerce.database, {
         limit: remaining,
       });
@@ -126,6 +164,7 @@ export async function GET(request: Request): Promise<Response> {
         paymentApplied: paymentReconciliation.applied,
         paymentRetried: paymentReconciliation.retried,
         paymentOperatorReview: paymentReconciliation.operatorReview,
+        refundSettlementsReconciled,
         staleRefundsReconciled,
         purgedPayloads,
         creditReconciliationIssues: creditReconciliation?.issues.length ?? 0,

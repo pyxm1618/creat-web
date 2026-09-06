@@ -72,6 +72,61 @@ async function assertLatestSchema(label: string): Promise<void> {
     throw new Error(`${label}: credit_finalization_jobs.lease_token is missing`);
   }
 
+  const refundColumns = await database.db.execute(sql<{ column_name: string }>`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'refunds'
+  `);
+  const actualRefundColumns = new Set(refundColumns.map((row) => row.column_name));
+  for (const column of [
+    "provider_write_state",
+    "provider_reconciliation_attempts",
+    "next_provider_reconciliation_at",
+    "reconciliation_lease_owner",
+    "reconciliation_lease_expires_at",
+    "external_settlement_reference",
+  ]) {
+    if (!actualRefundColumns.has(column)) {
+      throw new Error(`${label}: refunds.${column} is missing`);
+    }
+  }
+
+  const refundConstraints = await database.db.execute(sql<{ constraint_name: string }>`
+    select constraint_name
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'refunds'
+  `);
+  const actualRefundConstraints = new Set(refundConstraints.map((row) => row.constraint_name));
+  for (const constraint of [
+    "refund_provider_write_state_valid",
+    "refund_provider_reconciliation_attempts_valid",
+  ]) {
+    if (!actualRefundConstraints.has(constraint)) {
+      throw new Error(`${label}: missing refund constraint ${constraint}`);
+    }
+  }
+
+  const refundIndexes = await database.db.execute(sql<{ indexname: string }>`
+    select indexname
+    from pg_indexes
+    where schemaname = 'public'
+      and indexname in (
+        'refund_provider_reconciliation_due_idx',
+        'refund_environment_external_settlement_reference_uq'
+      )
+  `);
+  const actualRefundIndexes = new Set(refundIndexes.map((row) => row.indexname));
+  for (const index of [
+    "refund_provider_reconciliation_due_idx",
+    "refund_environment_external_settlement_reference_uq",
+  ]) {
+    if (!actualRefundIndexes.has(index)) {
+      throw new Error(`${label}: refund index ${index} is missing`);
+    }
+  }
+
   const reconciliationColumns = await database.db.execute(sql<{ column_name: string }>`
     select column_name
     from information_schema.columns

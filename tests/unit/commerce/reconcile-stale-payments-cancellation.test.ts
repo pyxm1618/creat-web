@@ -188,6 +188,7 @@ function paymentProvider(getPayment: PaymentProvider["getPayment"]): PaymentProv
     cancelSubscription: unsupported,
     resumeSubscription: unsupported,
     requestRefund: unsupported,
+    getRefundSettlement: async () => ({ status: "not_found" as const }),
     getPayment,
     verifyAndNormalizeWebhook: unsupported,
   };

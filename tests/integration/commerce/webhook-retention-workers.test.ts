@@ -55,6 +55,9 @@ const invalidSignatureProvider: PaymentProvider = {
   async requestRefund() {
     throw new Error("not used");
   },
+  async getRefundSettlement() {
+    return { status: "not_found" as const };
+  },
   async getPayment() {
     return { payments: [], warnings: [] };
   },

@@ -143,6 +143,9 @@ Non-negotiable domain invariants:
 - Entitlement is never granted from a checkout return page — only from provider events applied with local idempotency and durable fulfillment jobs.
 - Product versions are immutable snapshots; change commercial facts by adding a version.
 - Refunds are serialized in the database so successful + in-flight refunds cannot exceed the captured amount.
+- Refund provider writes are durable one-shot intents: after `dispatched`, an unknown outcome must never cause a second POST; reconcile by read first and fail closed on mismatch.
+- The local refund ID is the provider correlation token (`refundTicketMerchantExternalId` plus `metadata.creatWebRefundIntentId`); the Waffo customer-session SDK path does not provide gateway idempotency.
+- Webhook and provider-read settlement share one idempotent projection, but provider-read recovery must not fabricate webhook inbox/applied-event records. Existing uncorrelated rows are `legacy_unsafe` and are never auto-rebound.
 
 ### Durable work, not background timers
 

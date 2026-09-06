@@ -107,6 +107,9 @@ vi.mock("@/platform/commerce/application/reconcile-stale-refunds", () => ({
     return 0;
   },
 }));
+vi.mock("@/platform/commerce/application/reconcile-refund-settlements", () => ({
+  reconcileRefundSettlements: async () => 0,
+}));
 vi.mock("@/platform/commerce/application/purge-webhook-payloads", () => ({
   purgeExpiredWebhookPayloads: async () => {
     state.purgeCalls += 1;
