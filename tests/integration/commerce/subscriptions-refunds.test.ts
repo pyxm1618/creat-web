@@ -1258,6 +1258,123 @@ it("settles a dispatched refund from scheduled provider read without a webhook l
   ).toMatchObject({ status: "succeeded", externalRefundReference: "TKT_SCHEDULED" });
 });
 
+it("deduplicates a delayed webhook after provider-read settlement", async () => {
+  const fixture = await refundCommandFixture(500n);
+  const now = new Date("2030-07-02T00:00:00Z");
+  const ticketReference = `TKT_READ_FIRST_${crypto.randomUUID()}`;
+  const settlementReference = `REF_READ_FIRST_${crypto.randomUUID()}`;
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  let readCalls = 0;
+  const provider = refundProvider(
+    async () => {
+      throw new Error("delayed webhook scenario must not issue a provider write");
+    },
+    async () => {
+      readCalls += 1;
+      return {
+        status: "succeeded" as const,
+        externalRefundReference: ticketReference,
+        externalSettlementReference: settlementReference,
+        amount: { currency: "USD" as const, minor: 500n },
+      };
+    },
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  expect(readCalls).toBe(1);
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    status: "succeeded",
+    externalRefundReference: ticketReference,
+    externalSettlementReference: settlementReference,
+  });
+
+  await processProviderEvent(
+    database.db,
+    {
+      type: "refund_succeeded",
+      eventId: `evt-delayed-refund-webhook-${crypto.randomUUID()}`,
+      environment: "test",
+      externalPaymentId: fixture.payment.externalPaymentId,
+      merchantOrderReference: fixture.order.id,
+      externalRefundReference: settlementReference,
+      amount: { currency: "USD", minor: 500n },
+      occurredAt: new Date(now.getTime() + 1_000),
+    },
+    "delayed-refund-webhook".padEnd(64, "0"),
+  );
+
+  expect(
+    await database.db.query.payments.findFirst({ where: eq(payments.id, fixture.payment.id) }),
+  ).toMatchObject({ refundStatus: "partial", refundedMinor: 500n });
+  expect(
+    await database.db.select().from(refunds).where(eq(refunds.paymentId, fixture.payment.id)),
+  ).toHaveLength(1);
+  expect(
+    await database.db
+      .select()
+      .from(fulfillmentJobs)
+      .where(eq(fulfillmentJobs.sourceId, fixture.refund.id)),
+  ).toHaveLength(0);
+});
+
+it("preserves partial-refund operator review after provider-read settlement", async () => {
+  const fixture = await refundCommandFixture(500n);
+  const now = new Date("2030-07-03T00:00:00Z");
+  await database.db
+    .update(refunds)
+    .set({
+      status: "processing",
+      reversalStatus: "pending",
+      providerWriteState: "dispatched",
+      nextProviderReconciliationAt: new Date("1900-01-01T00:00:00Z"),
+    })
+    .where(eq(refunds.id, fixture.refund.id));
+  await database.db
+    .update(refunds)
+    .set({ nextProviderReconciliationAt: null })
+    .where(ne(refunds.id, fixture.refund.id));
+
+  const provider = refundProvider(
+    async () => {
+      throw new Error("partial provider-read scenario must not issue a provider write");
+    },
+    async () => ({
+      status: "succeeded" as const,
+      externalRefundReference: "TKT_PARTIAL_READ",
+      externalSettlementReference: "REF_PARTIAL_READ",
+      amount: { currency: "USD" as const, minor: 500n },
+    }),
+  );
+
+  await expect(reconcileRefundSettlements(database.db, provider, { now, limit: 1 })).resolves.toBe(
+    1,
+  );
+  expect(
+    await database.db.query.refunds.findFirst({ where: eq(refunds.id, fixture.refund.id) }),
+  ).toMatchObject({
+    status: "succeeded",
+    reversalStatus: "reconciliation_required",
+    operatorReviewReason: "partial refund entitlement reversal requires operator policy",
+  });
+});
+
 it("does not apply a stale provider read after a webhook settlement commits", async () => {
   const fixture = await refundCommandFixture(1000n);
   await database.db
@@ -1286,6 +1403,7 @@ it("does not apply a stale provider read after a webhook settlement commits", as
       reversalStatus: staleRefund.reversalStatus,
       succeededMinor: staleRefund.succeededMinor,
       externalRefundReference: staleRefund.externalRefundReference,
+      externalSettlementReference: staleRefund.externalSettlementReference,
       nextProviderReconciliationAt: staleRefund.nextProviderReconciliationAt,
       reconciliationLeaseOwner: staleRefund.reconciliationLeaseOwner,
       reconciliationLeaseExpiresAt: staleRefund.reconciliationLeaseExpiresAt,
@@ -1578,6 +1696,7 @@ it("keeps webhook and reconciliation settlement lock order consistent under conc
         reversalStatus: staleRefund.reversalStatus,
         succeededMinor: staleRefund.succeededMinor,
         externalRefundReference: staleRefund.externalRefundReference,
+        externalSettlementReference: staleRefund.externalSettlementReference,
         nextProviderReconciliationAt: staleRefund.nextProviderReconciliationAt,
         reconciliationLeaseOwner: null,
         reconciliationLeaseExpiresAt: null,

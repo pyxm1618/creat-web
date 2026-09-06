@@ -32,6 +32,7 @@ type RefundSettlementCandidate = {
     readonly reversalStatus: string;
     readonly succeededMinor: bigint;
     readonly externalRefundReference: string | null;
+    readonly externalSettlementReference: string | null;
     readonly nextProviderReconciliationAt: Date | null;
     readonly reconciliationLeaseOwner: string | null;
     readonly reconciliationLeaseExpiresAt: Date | null;
@@ -177,15 +178,24 @@ async function applyReadResult(
       amount: result.amount!,
       occurredAt: now,
     });
+    const [projectedRefund] = await tx
+      .select({ operatorReviewReason: refunds.operatorReviewReason })
+      .from(refunds)
+      .where(eq(refunds.id, candidate.refund.id))
+      .limit(1);
+    if (!projectedRefund) throw new Error("refund settlement projection disappeared");
     await tx
       .update(refunds)
       .set({
         externalRefundReference: result.externalRefundReference,
+        ...(result.externalSettlementReference
+          ? { externalSettlementReference: result.externalSettlementReference }
+          : {}),
         providerWriteState: "confirmed",
         nextProviderReconciliationAt: null,
         reconciliationLeaseOwner: null,
         reconciliationLeaseExpiresAt: null,
-        operatorReviewReason: null,
+        operatorReviewReason: projectedRefund.operatorReviewReason,
         updatedAt: now,
       })
       .where(eq(refunds.id, candidate.refund.id));
@@ -204,6 +214,9 @@ async function applyReadResult(
       .update(refunds)
       .set({
         externalRefundReference: result.externalRefundReference,
+        ...(result.externalSettlementReference
+          ? { externalSettlementReference: result.externalSettlementReference }
+          : {}),
         providerWriteState: "confirmed",
         status: "failed",
         reversalStatus: "not_required",
@@ -230,6 +243,9 @@ async function applyReadResult(
       .update(refunds)
       .set({
         externalRefundReference: result.externalRefundReference,
+        ...(result.externalSettlementReference
+          ? { externalSettlementReference: result.externalSettlementReference }
+          : {}),
         providerWriteState: "confirmed",
         status: "processing",
         nextProviderReconciliationAt: retryAt(now),
@@ -309,6 +325,8 @@ function matchesSourceState(
     current.refund.reversalStatus === candidate.sourceState.reversalStatus &&
     current.refund.succeededMinor === candidate.sourceState.succeededMinor &&
     current.refund.externalRefundReference === candidate.sourceState.externalRefundReference &&
+    current.refund.externalSettlementReference ===
+      candidate.sourceState.externalSettlementReference &&
     sameDate(
       current.refund.nextProviderReconciliationAt,
       candidate.sourceState.nextProviderReconciliationAt,
@@ -399,7 +417,10 @@ async function ignoreAlreadyProjectedProviderSettlement(
     .where(
       and(
         eq(refunds.environment, candidate.refund.environment),
-        eq(refunds.externalRefundReference, result.externalSettlementReference),
+        or(
+          eq(refunds.externalRefundReference, result.externalSettlementReference),
+          eq(refunds.externalSettlementReference, result.externalSettlementReference),
+        ),
       ),
     )
     .limit(2)
@@ -576,6 +597,7 @@ function candidateFromRow(row: {
       reversalStatus: row.refund.reversalStatus,
       succeededMinor: row.refund.succeededMinor,
       externalRefundReference: row.refund.externalRefundReference,
+      externalSettlementReference: row.refund.externalSettlementReference,
       nextProviderReconciliationAt: row.refund.nextProviderReconciliationAt,
       reconciliationLeaseOwner: row.refund.reconciliationLeaseOwner,
       reconciliationLeaseExpiresAt: row.refund.reconciliationLeaseExpiresAt,

@@ -96,6 +96,7 @@ export const refunds = pgTable(
       .references(() => accountSubjects.id, { onDelete: "restrict" }),
     environment: text("environment").notNull(),
     externalRefundReference: text("external_refund_reference"),
+    externalSettlementReference: text("external_settlement_reference"),
     idempotencyKey: text("idempotency_key").notNull(),
     providerWriteState: text("provider_write_state").default("not_started").notNull(),
     providerReconciliationAttempts: integer("provider_reconciliation_attempts")
@@ -128,6 +129,9 @@ export const refunds = pgTable(
     uniqueIndex("refund_environment_external_reference_uq")
       .on(table.environment, table.externalRefundReference)
       .where(sql`${table.externalRefundReference} is not null`),
+    uniqueIndex("refund_environment_external_settlement_reference_uq")
+      .on(table.environment, table.externalSettlementReference)
+      .where(sql`${table.externalSettlementReference} is not null`),
     index("refund_payment_idx").on(table.paymentId, table.createdAt),
     index("refund_operator_review_idx").on(table.status, table.reversalStatus),
     index("refund_provider_reconciliation_due_idx").on(

@@ -85,6 +85,7 @@ async function assertLatestSchema(label: string): Promise<void> {
     "next_provider_reconciliation_at",
     "reconciliation_lease_owner",
     "reconciliation_lease_expires_at",
+    "external_settlement_reference",
   ]) {
     if (!actualRefundColumns.has(column)) {
       throw new Error(`${label}: refunds.${column} is missing`);
@@ -111,10 +112,19 @@ async function assertLatestSchema(label: string): Promise<void> {
     select indexname
     from pg_indexes
     where schemaname = 'public'
-      and indexname = 'refund_provider_reconciliation_due_idx'
+      and indexname in (
+        'refund_provider_reconciliation_due_idx',
+        'refund_environment_external_settlement_reference_uq'
+      )
   `);
-  if (refundIndexes.length !== 1) {
-    throw new Error(`${label}: refund provider reconciliation index is missing`);
+  const actualRefundIndexes = new Set(refundIndexes.map((row) => row.indexname));
+  for (const index of [
+    "refund_provider_reconciliation_due_idx",
+    "refund_environment_external_settlement_reference_uq",
+  ]) {
+    if (!actualRefundIndexes.has(index)) {
+      throw new Error(`${label}: refund index ${index} is missing`);
+    }
   }
 
   const reconciliationColumns = await database.db.execute(sql<{ column_name: string }>`

@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 
 import type { DatabaseClient } from "@/platform/database/client";
 import {
@@ -75,7 +75,10 @@ async function matchingRefunds(
       .where(
         and(
           eq(refunds.environment, event.environment),
-          eq(refunds.externalRefundReference, event.externalRefundReference),
+          or(
+            eq(refunds.externalRefundReference, event.externalRefundReference),
+            eq(refunds.externalSettlementReference, event.externalRefundReference),
+          ),
         ),
       )
       .limit(2)
@@ -128,7 +131,8 @@ async function handleSettledRefundReplay(
   const sameCurrency = refund.currency === event.amount.currency;
   const sameReference =
     !event.externalRefundReference ||
-    refund.externalRefundReference === event.externalRefundReference;
+    refund.externalRefundReference === event.externalRefundReference ||
+    refund.externalSettlementReference === event.externalRefundReference;
   if (sameAmount && sameCurrency && sameReference) return true;
 
   await recordRefundReconciliation(tx, {
@@ -357,6 +361,7 @@ async function processRefundEventInternal(
         subjectId: order.subjectId,
         environment: event.environment,
         externalRefundReference: event.externalRefundReference,
+        externalSettlementReference: event.externalRefundReference,
         idempotencyKey: `provider-refund:${event.environment}:${event.eventId}`,
         currency: event.amount.currency,
         requestedMinor: event.amount.minor,
@@ -423,6 +428,8 @@ async function processRefundEventInternal(
         succeededMinor: event.amount.minor,
         reversalStatus: "reconciliation_required",
         providerWriteState: "confirmed",
+        externalSettlementReference:
+          context.source === "webhook" ? event.externalRefundReference : undefined,
         nextProviderReconciliationAt: null,
         reconciliationLeaseOwner: null,
         reconciliationLeaseExpiresAt: null,
@@ -448,6 +455,9 @@ async function processRefundEventInternal(
       succeededMinor: event.amount.minor,
       reversalStatus: "pending",
       providerWriteState: "confirmed",
+      externalSettlementReference:
+        context.source === "webhook" ? event.externalRefundReference : undefined,
+      operatorReviewReason: null,
       nextProviderReconciliationAt: null,
       reconciliationLeaseOwner: null,
       reconciliationLeaseExpiresAt: null,
