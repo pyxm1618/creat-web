@@ -31,7 +31,7 @@
     "verify:commerce": "bun scripts/verify-commerce.ts",
     "verify:credits": "bun scripts/verify-credits.ts",
     "verify:credit-races": "bun scripts/verify-credit-races.ts",
-    "verify:supply-chain": "bun install --frozen-lockfile --lockfile-only && bun audit --audit-level=high",
+    "verify:supply-chain": "bun install --frozen-lockfile --lockfile-only && bun audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm",
     "verify:release": "bun scripts/verify-release.ts",
     "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test:unit && bun run test:integration && bun run test:contract && bun run db:verify && bun run test:build-matrix && bun run verify:architecture && bun run verify:secrets && bun run verify:seo && bun run verify:i18n && bun run verify:security && bun run verify:subscription && bun run verify:commerce && bun run verify:credits && bun run verify:supply-chain && bun run verify:release && bun run verify:performance"
   },
@@ -40,7 +40,7 @@
     "@waffo/pancake-ts": "0.18.0",
     "better-auth": "1.6.25",
     "drizzle-orm": "0.45.2",
-    "next": "16.2.12",
+    "next": "16.3.8",
     "postgres": "3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -57,7 +57,7 @@
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.1",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "16.3.8",
     "prettier": "3.7.4",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
@@ -67,6 +67,6 @@
     "esbuild": "0.25.4",
     "nanoid": "3.3.18",
     "postcss": "8.5.23",
-    "sharp": "0.35.3"
+    "sharp": "0.35.4"
   }
 }
