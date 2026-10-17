@@ -15,7 +15,7 @@ export function buildContentSecurityPolicy(input: ContentSecurityPolicyInput): s
     `'nonce-${input.nonce}'`,
     ...(input.development ? ["'unsafe-eval'"] : []),
     ...(input.analytics.ga4 ? ["https://www.googletagmanager.com"] : []),
-    ...(input.analytics.clarity ? ["https://www.clarity.ms"] : []),
+    ...(input.analytics.clarity ? ["https://www.clarity.ms", "https://scripts.clarity.ms"] : []),
     ...(input.turnstile ? [turnstileOrigin] : []),
   ];
   const connectSources = [
