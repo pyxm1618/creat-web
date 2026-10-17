@@ -64,9 +64,12 @@
     "vitest": "4.1.7"
   },
   "overrides": {
+    "brace-expansion@>=4": "5.0.12",
     "esbuild": "0.25.4",
+    "js-yaml": "4.3.2",
     "nanoid": "3.3.18",
     "postcss": "8.5.23",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5",
+    "source-map-js": "1.2.2"
   }
 }
