@@ -66,7 +66,10 @@ function emitAnalyticsEvent(event: SanitizedAnalyticsEvent): void {
 
 function startGa4(measurementId: string): void {
   window.dataLayer = window.dataLayer ?? [];
-  window.gtag = (...args: unknown[]) => window.dataLayer?.push(args);
+  window.gtag = function gtag() {
+    // eslint-disable-next-line prefer-rest-params
+    window.dataLayer?.push(arguments);
+  };
   window.gtag("js", new Date());
   window.gtag("consent", "default", { analytics_storage: "granted" });
   window.gtag("config", measurementId, {

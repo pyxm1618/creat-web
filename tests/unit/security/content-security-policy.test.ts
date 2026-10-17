@@ -33,6 +33,7 @@ describe("buildContentSecurityPolicy", () => {
     expect(csp).toContain("https://www.google-analytics.com");
     expect(csp).toContain("https://region1.google-analytics.com");
     expect(csp).toContain("https://www.clarity.ms");
+    expect(csp).toContain("https://scripts.clarity.ms");
     expect(csp).toContain("https://*.clarity.ms");
     expect(csp).toContain("https://challenges.cloudflare.com");
     expect(csp).toContain("'unsafe-eval'");

@@ -37,6 +37,17 @@ test("analytics makes zero third-party requests before consent", async ({ page }
   await expect(consent).toBeVisible();
   await consent.getByRole("button", { name: "Allow analytics" }).click();
   await expect.poll(() => requests.length).toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const commands = window.dataLayer ?? [];
+        return (
+          commands.length > 0 &&
+          commands.every((item) => Object.prototype.toString.call(item) === "[object Arguments]")
+        );
+      }),
+    )
+    .toBe(true);
 });
 
 test("declining analytics persists and settings can be reopened", async ({ page }) => {
