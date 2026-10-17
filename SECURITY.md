@@ -23,6 +23,10 @@ Do not include real credentials, production webhook bodies, payment data, privat
 
 For every security/platform fix, record affected modules/files, migrations, environment/provider changes, verification commands, rollback considerations, and whether owned products require a manual port or cherry-pick. Update `CHANGELOG.md` when the starter version changes.
 
+## Temporary audit exception
+
+The release audit currently ignores only `GHSA-vfj7-8cjw-p6xm` for `braces <=3.0.3`. As of 2026-10-17, the GitHub advisory lists no patched npm release. In this starter, the affected `braces` path is development/build tooling through ESLint/fast-glob/micromatch rather than a production runtime dependency. All other high/critical advisories remain release-blocking, and `bun audit --prod --audit-level=high` must remain clean. Remove this exception as soon as a patched upstream release is available.
+
 ## Disclosure
 
 This repository does not promise a fixed public-disclosure deadline. Coordinate disclosure only after the issue is validated, affected maintainers have a practical remediation path, and disclosure will not unnecessarily increase user risk.
